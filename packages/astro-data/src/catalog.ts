@@ -1,0 +1,126 @@
+import { CONSTELLATION_ZH } from './constellations';
+import type { CelestialObject } from './types';
+
+/**
+ * 精选星表原始数据（真实 J2000 天文数据）。
+ * 坐标 raDeg/decDeg 为 J2000 历元的赤经/赤纬（度）；mag 为视星等；distLy 为距离（光年）。
+ * 数据取自 Hipparcos / Bright Star Catalogue 等公开星表的常用取值。
+ */
+interface RawStar {
+  uid: string;
+  en: string;
+  zh: string;
+  bayer: string;
+  con: string;
+  ra: number;
+  dec: number;
+  mag: number;
+  dist: number;
+  spec: string;
+  hip: string;
+  hd?: string;
+  aliases?: string[];
+  desc?: string;
+}
+
+const RAW_STARS: RawStar[] = [
+  { uid: 'HIP32349', en: 'Sirius', zh: '天狼星', bayer: 'α CMa', con: 'Canis Major', ra: 101.287, dec: -16.716, mag: -1.46, dist: 8.6, spec: 'A1V', hip: '32349', hd: '48915', aliases: ['天狼', 'Dog Star', 'Alpha Canis Majoris'], desc: '全天最亮的恒星，位于大犬座，距地球仅约 8.6 光年。' },
+  { uid: 'HIP30438', en: 'Canopus', zh: '老人星', bayer: 'α Car', con: 'Carina', ra: 95.988, dec: -52.696, mag: -0.74, dist: 310, spec: 'A9II', hip: '30438', hd: '45348', aliases: ['南极老人', 'Alpha Carinae'], desc: '全天第二亮星，中国古代称之为寿星、南极老人。' },
+  { uid: 'HIP69673', en: 'Arcturus', zh: '大角星', bayer: 'α Boo', con: 'Boötes', ra: 213.915, dec: 19.182, mag: -0.05, dist: 37, spec: 'K0III', hip: '69673', hd: '124897', aliases: ['大角', 'Alpha Boötis'], desc: '北天最亮的恒星，一颗橙色巨星。' },
+  { uid: 'HIP71683', en: 'Rigil Kentaurus', zh: '南门二', bayer: 'α Cen', con: 'Centaurus', ra: 219.902, dec: -60.834, mag: -0.27, dist: 4.37, spec: 'G2V', hip: '71683', hd: '128620', aliases: ['半人马座α', 'Alpha Centauri', 'Toliman'], desc: '离太阳系最近的恒星系统之一，肉眼可见为一颗亮星。' },
+  { uid: 'HIP91262', en: 'Vega', zh: '织女星', bayer: 'α Lyr', con: 'Lyra', ra: 279.234, dec: 38.784, mag: 0.03, dist: 25, spec: 'A0V', hip: '91262', hd: '172167', aliases: ['织女一', '织女', 'Alpha Lyrae'], desc: '天琴座主星，牛郎织女传说中的织女，夏季大三角之一。' },
+  { uid: 'HIP24608', en: 'Capella', zh: '五车二', bayer: 'α Aur', con: 'Auriga', ra: 79.172, dec: 45.998, mag: 0.08, dist: 43, spec: 'G3III', hip: '24608', hd: '34029', aliases: ['Alpha Aurigae'], desc: '御夫座最亮星，北天冬季显眼的黄色亮星。' },
+  { uid: 'HIP24436', en: 'Rigel', zh: '参宿七', bayer: 'β Ori', con: 'Orion', ra: 78.634, dec: -8.202, mag: 0.13, dist: 860, spec: 'B8Ia', hip: '24436', hd: '34085', aliases: ['Beta Orionis'], desc: '猎户座最亮星，一颗蓝白色超巨星。' },
+  { uid: 'HIP37279', en: 'Procyon', zh: '南河三', bayer: 'α CMi', con: 'Canis Minor', ra: 114.825, dec: 5.225, mag: 0.34, dist: 11.5, spec: 'F5IV', hip: '37279', hd: '61421', aliases: ['Alpha Canis Minoris'], desc: '小犬座主星，冬季大三角之一，距地球约 11.5 光年。' },
+  { uid: 'HIP7588', en: 'Achernar', zh: '水委一', bayer: 'α Eri', con: 'Eridanus', ra: 24.429, dec: -57.237, mag: 0.46, dist: 139, spec: 'B6V', hip: '7588', hd: '10144', aliases: ['Alpha Eridani'], desc: '波江座最亮星，位于长河的南端。' },
+  { uid: 'HIP27989', en: 'Betelgeuse', zh: '参宿四', bayer: 'α Ori', con: 'Orion', ra: 88.793, dec: 7.407, mag: 0.42, dist: 640, spec: 'M1Ia', hip: '27989', hd: '39801', aliases: ['Alpha Orionis'], desc: '猎户座右肩的红超巨星，亮度会明显变化。' },
+  { uid: 'HIP68702', en: 'Hadar', zh: '马腹一', bayer: 'β Cen', con: 'Centaurus', ra: 210.956, dec: -60.373, mag: 0.61, dist: 390, spec: 'B1III', hip: '68702', hd: '122451', aliases: ['Agena', 'Beta Centauri'], desc: '半人马座第二亮星，与南门二一同指向南十字。' },
+  { uid: 'HIP97649', en: 'Altair', zh: '牛郎星', bayer: 'α Aql', con: 'Aquila', ra: 297.696, dec: 8.868, mag: 0.77, dist: 16.7, spec: 'A7V', hip: '97649', hd: '187642', aliases: ['河鼓二', '牛郎', 'Alpha Aquilae'], desc: '天鹰座主星，牛郎织女传说中的牛郎，夏季大三角之一。' },
+  { uid: 'HIP60718', en: 'Acrux', zh: '十字架二', bayer: 'α Cru', con: 'Crux', ra: 186.65, dec: -63.099, mag: 0.77, dist: 320, spec: 'B0.5IV', hip: '60718', hd: '108248', aliases: ['Alpha Crucis'], desc: '南十字座最亮星，南十字底端。' },
+  { uid: 'HIP21421', en: 'Aldebaran', zh: '毕宿五', bayer: 'α Tau', con: 'Taurus', ra: 68.98, dec: 16.509, mag: 0.85, dist: 65, spec: 'K5III', hip: '21421', hd: '29139', aliases: ['Alpha Tauri'], desc: '金牛座之眼，一颗橙红色巨星。' },
+  { uid: 'HIP65474', en: 'Spica', zh: '角宿一', bayer: 'α Vir', con: 'Virgo', ra: 201.298, dec: -11.161, mag: 1.04, dist: 250, spec: 'B1III', hip: '65474', hd: '116658', aliases: ['Alpha Virginis'], desc: '室女座最亮星，一颗蓝白色双星。' },
+  { uid: 'HIP80763', en: 'Antares', zh: '心宿二', bayer: 'α Sco', con: 'Scorpius', ra: 247.352, dec: -26.432, mag: 1.09, dist: 550, spec: 'M1.5Iab', hip: '80763', hd: '148478', aliases: ['大火', 'Alpha Scorpii'], desc: '天蝎座心脏，一颗红超巨星，中国古称「大火」。' },
+  { uid: 'HIP37826', en: 'Pollux', zh: '北河三', bayer: 'β Gem', con: 'Gemini', ra: 116.329, dec: 28.026, mag: 1.14, dist: 34, spec: 'K0III', hip: '37826', hd: '62509', aliases: ['Beta Geminorum'], desc: '双子座最亮星，与北河二并称双子。' },
+  { uid: 'HIP113368', en: 'Fomalhaut', zh: '北落师门', bayer: 'α PsA', con: 'Piscis Austrinus', ra: 344.413, dec: -29.622, mag: 1.16, dist: 25, spec: 'A3V', hip: '113368', hd: '216956', aliases: ['Alpha Piscis Austrini'], desc: '南鱼座主星，秋季南天孤独的亮星。' },
+  { uid: 'HIP102098', en: 'Deneb', zh: '天津四', bayer: 'α Cyg', con: 'Cygnus', ra: 310.358, dec: 45.28, mag: 1.25, dist: 2600, spec: 'A2Ia', hip: '102098', hd: '197345', aliases: ['Alpha Cygni'], desc: '天鹅座尾部的蓝白超巨星，夏季大三角之一，极为遥远。' },
+  { uid: 'HIP62434', en: 'Mimosa', zh: '十字架三', bayer: 'β Cru', con: 'Crux', ra: 191.93, dec: -59.689, mag: 1.25, dist: 350, spec: 'B0.5III', hip: '62434', hd: '111123', aliases: ['Becrux', 'Beta Crucis'], desc: '南十字座第二亮星。' },
+  { uid: 'HIP49669', en: 'Regulus', zh: '轩辕十四', bayer: 'α Leo', con: 'Leo', ra: 152.093, dec: 11.967, mag: 1.35, dist: 79, spec: 'B8IV', hip: '49669', hd: '87901', aliases: ['Alpha Leonis'], desc: '狮子座心脏，黄道附近的蓝白亮星。' },
+  { uid: 'HIP33579', en: 'Adhara', zh: '弧矢七', bayer: 'ε CMa', con: 'Canis Major', ra: 104.656, dec: -28.972, mag: 1.5, dist: 430, spec: 'B2II', hip: '33579', hd: '52089', aliases: ['Epsilon Canis Majoris'], desc: '大犬座第二亮星。' },
+  { uid: 'HIP36850', en: 'Castor', zh: '北河二', bayer: 'α Gem', con: 'Gemini', ra: 113.65, dec: 31.888, mag: 1.57, dist: 51, spec: 'A1V', hip: '36850', hd: '60179', aliases: ['Alpha Geminorum'], desc: '双子座之一，实为六合星系统。' },
+  { uid: 'HIP85927', en: 'Shaula', zh: '尾宿八', bayer: 'λ Sco', con: 'Scorpius', ra: 263.402, dec: -37.104, mag: 1.63, dist: 570, spec: 'B2IV', hip: '85927', hd: '158926', aliases: ['Lambda Scorpii'], desc: '天蝎座尾刺上的亮星。' },
+  { uid: 'HIP61084', en: 'Gacrux', zh: '十字架一', bayer: 'γ Cru', con: 'Crux', ra: 187.791, dec: -57.113, mag: 1.63, dist: 88, spec: 'M3.5III', hip: '61084', hd: '108903', aliases: ['Gamma Crucis'], desc: '南十字座顶端的红巨星。' },
+  { uid: 'HIP25336', en: 'Bellatrix', zh: '参宿五', bayer: 'γ Ori', con: 'Orion', ra: 81.283, dec: 6.35, mag: 1.64, dist: 250, spec: 'B2III', hip: '25336', hd: '35468', aliases: ['Gamma Orionis', '女武神星'], desc: '猎户座左肩的蓝色亮星，又称「女武神星」。' },
+  { uid: 'HIP25428', en: 'Elnath', zh: '五车五', bayer: 'β Tau', con: 'Taurus', ra: 81.573, dec: 28.608, mag: 1.65, dist: 130, spec: 'B7III', hip: '25428', hd: '35497', aliases: ['Beta Tauri'], desc: '金牛座北角，御夫五车与金牛共享的亮星。' },
+  { uid: 'HIP45238', en: 'Miaplacidus', zh: '南船五', bayer: 'β Car', con: 'Carina', ra: 138.3, dec: -69.717, mag: 1.68, dist: 110, spec: 'A2IV', hip: '45238', hd: '80007', aliases: ['Beta Carinae'], desc: '船底座第二亮星，深南天的白色亮星。' },
+  { uid: 'HIP26311', en: 'Alnilam', zh: '参宿二', bayer: 'ε Ori', con: 'Orion', ra: 84.053, dec: -1.202, mag: 1.69, dist: 1300, spec: 'B0Ia', hip: '26311', hd: '37128', aliases: ['Epsilon Orionis'], desc: '猎户腰带三星中间那颗蓝超巨星。' },
+  { uid: 'HIP26727', en: 'Alnitak', zh: '参宿一', bayer: 'ζ Ori', con: 'Orion', ra: 85.19, dec: -1.943, mag: 1.77, dist: 1260, spec: 'O9.5Ib', hip: '26727', hd: '37742', aliases: ['Zeta Orionis'], desc: '猎户腰带东端的亮星，附近有著名的火焰星云。' },
+  { uid: 'HIP62956', en: 'Alioth', zh: '玉衡', bayer: 'ε UMa', con: 'Ursa Major', ra: 193.507, dec: 55.96, mag: 1.77, dist: 81, spec: 'A1III', hip: '62956', hd: '112185', aliases: ['Epsilon Ursae Majoris'], desc: '北斗七星之一，斗柄上最亮的星。' },
+  { uid: 'HIP54061', en: 'Dubhe', zh: '天枢', bayer: 'α UMa', con: 'Ursa Major', ra: 165.932, dec: 61.751, mag: 1.79, dist: 123, spec: 'K0III', hip: '54061', hd: '95689', aliases: ['Alpha Ursae Majoris', '北斗一'], desc: '北斗七星斗口，与天璇连线指向北极星。' },
+  { uid: 'HIP15863', en: 'Mirfak', zh: '天船三', bayer: 'α Per', con: 'Perseus', ra: 51.081, dec: 49.861, mag: 1.79, dist: 510, spec: 'F5Ib', hip: '15863', hd: '20902', aliases: ['Alpha Persei'], desc: '英仙座最亮星。' },
+  { uid: 'HIP34444', en: 'Wezen', zh: '弧矢一', bayer: 'δ CMa', con: 'Canis Major', ra: 107.098, dec: -26.393, mag: 1.83, dist: 1600, spec: 'F8Ia', hip: '34444', hd: '54605', aliases: ['Delta Canis Majoris'], desc: '大犬座黄白色超巨星，极为遥远明亮。' },
+  { uid: 'HIP90185', en: 'Kaus Australis', zh: '箕宿三', bayer: 'ε Sgr', con: 'Sagittarius', ra: 276.043, dec: -34.385, mag: 1.85, dist: 143, spec: 'B9.5III', hip: '90185', hd: '169022', aliases: ['Epsilon Sagittarii'], desc: '人马座「茶壶」底部的亮星。' },
+  { uid: 'HIP41037', en: 'Avior', zh: '海石二', bayer: 'ε Car', con: 'Carina', ra: 125.628, dec: -59.509, mag: 1.86, dist: 630, spec: 'K3III', hip: '41037', hd: '71129', aliases: ['Epsilon Carinae'], desc: '船底座的橙色亮星。' },
+  { uid: 'HIP67301', en: 'Alkaid', zh: '摇光', bayer: 'η UMa', con: 'Ursa Major', ra: 206.885, dec: 49.313, mag: 1.86, dist: 104, spec: 'B3V', hip: '67301', hd: '120315', aliases: ['Eta Ursae Majoris', '北斗七'], desc: '北斗七星斗柄末端。' },
+  { uid: 'HIP28360', en: 'Menkalinan', zh: '五车三', bayer: 'β Aur', con: 'Auriga', ra: 89.882, dec: 44.947, mag: 1.9, dist: 82, spec: 'A2IV', hip: '28360', hd: '40183', aliases: ['Beta Aurigae'], desc: '御夫座第二亮星，一对食双星。' },
+  { uid: 'HIP31681', en: 'Alhena', zh: '井宿三', bayer: 'γ Gem', con: 'Gemini', ra: 99.428, dec: 16.399, mag: 1.9, dist: 109, spec: 'A0IV', hip: '31681', hd: '56537', aliases: ['Gamma Geminorum'], desc: '双子座脚部的亮星。' },
+  { uid: 'HIP11767', en: 'Polaris', zh: '北极星', bayer: 'α UMi', con: 'Ursa Minor', ra: 37.955, dec: 89.264, mag: 1.98, dist: 433, spec: 'F7Ib', hip: '11767', hd: '8890', aliases: ['勾陈一', '北辰', 'Alpha Ursae Minoris', 'North Star'], desc: '当前的北极星，几乎正对天球北极，指示正北方向。' },
+  { uid: 'HIP30324', en: 'Mirzam', zh: '军市一', bayer: 'β CMa', con: 'Canis Major', ra: 95.675, dec: -17.956, mag: 1.98, dist: 500, spec: 'B1II', hip: '30324', hd: '44743', aliases: ['Beta Canis Majoris'], desc: '大犬座蓝色亮星，天狼星旁的报信者。' },
+  { uid: 'HIP46390', en: 'Alphard', zh: '星宿一', bayer: 'α Hya', con: 'Hydra', ra: 141.897, dec: -8.659, mag: 1.98, dist: 177, spec: 'K3III', hip: '46390', hd: '81797', aliases: ['Alpha Hydrae'], desc: '长蛇座之心，孤悬一方的橙色亮星。' },
+  { uid: 'HIP9884', en: 'Hamal', zh: '娄宿三', bayer: 'α Ari', con: 'Aries', ra: 31.793, dec: 23.462, mag: 2.0, dist: 66, spec: 'K2III', hip: '9884', hd: '12929', aliases: ['Alpha Arietis'], desc: '白羊座最亮星。' },
+  { uid: 'HIP677', en: 'Alpheratz', zh: '壁宿二', bayer: 'α And', con: 'Andromeda', ra: 2.097, dec: 29.091, mag: 2.06, dist: 97, spec: 'B8IV', hip: '677', hd: '358', aliases: ['Alpha Andromedae', 'Sirrah'], desc: '仙女座与飞马座共享的亮星，秋季四边形一角。' },
+  { uid: 'HIP65378', en: 'Mizar', zh: '开阳', bayer: 'ζ UMa', con: 'Ursa Major', ra: 200.981, dec: 54.925, mag: 2.04, dist: 83, spec: 'A2V', hip: '65378', hd: '116656', aliases: ['Zeta Ursae Majoris', '北斗六'], desc: '北斗七星斗柄中的著名双星，旁有辅星（开阳增一）。' },
+  { uid: 'HIP14576', en: 'Algol', zh: '大陵五', bayer: 'β Per', con: 'Perseus', ra: 47.042, dec: 40.956, mag: 2.12, dist: 90, spec: 'B8V', hip: '14576', hd: '19356', aliases: ['Beta Persei', 'Demon Star', '魔星'], desc: '著名食变星，古称「魔星」，亮度周期性变暗。' },
+  { uid: 'HIP57632', en: 'Denebola', zh: '五帝座一', bayer: 'β Leo', con: 'Leo', ra: 177.265, dec: 14.572, mag: 2.11, dist: 36, spec: 'A3V', hip: '57632', hd: '102647', aliases: ['Beta Leonis'], desc: '狮子座尾巴上的亮星。' },
+  { uid: 'HIP27366', en: 'Saiph', zh: '参宿六', bayer: 'κ Ori', con: 'Orion', ra: 86.939, dec: -9.67, mag: 2.06, dist: 650, spec: 'B0.5Ia', hip: '27366', hd: '38771', aliases: ['Kappa Orionis'], desc: '猎户座右膝的蓝超巨星。' },
+  { uid: 'HIP25930', en: 'Mintaka', zh: '参宿三', bayer: 'δ Ori', con: 'Orion', ra: 83.002, dec: -0.299, mag: 2.23, dist: 1200, spec: 'O9.5II', hip: '25930', hd: '36486', aliases: ['Delta Orionis'], desc: '猎户腰带西端，几乎正压天赤道。' },
+  { uid: 'HIP92855', en: 'Nunki', zh: '斗宿四', bayer: 'σ Sgr', con: 'Sagittarius', ra: 283.816, dec: -26.297, mag: 2.05, dist: 220, spec: 'B2.5V', hip: '92855', hd: '175191', aliases: ['Sigma Sagittarii'], desc: '人马座茶壶把手上的亮星。' },
+  { uid: 'HIP72607', en: 'Kochab', zh: '北极二', bayer: 'β UMi', con: 'Ursa Minor', ra: 222.676, dec: 74.156, mag: 2.08, dist: 131, spec: 'K4III', hip: '72607', hd: '131873', aliases: ['Beta Ursae Minoris', '帝'], desc: '小熊座橙色亮星，古代曾充当北极星。' },
+  { uid: 'HIP86032', en: 'Rasalhague', zh: '侯', bayer: 'α Oph', con: 'Ophiuchus', ra: 263.734, dec: 12.56, mag: 2.08, dist: 49, spec: 'A5III', hip: '86032', hd: '159561', aliases: ['Alpha Ophiuchi'], desc: '蛇夫座头部的亮星。' },
+  { uid: 'HIP68933', en: 'Menkent', zh: '库楼三', bayer: 'θ Cen', con: 'Centaurus', ra: 211.671, dec: -36.37, mag: 2.06, dist: 61, spec: 'K0III', hip: '68933', hd: '123139', aliases: ['Theta Centauri'], desc: '半人马座橙色巨星。' },
+  { uid: 'HIP3419', en: 'Diphda', zh: '土司空', bayer: 'β Cet', con: 'Cetus', ra: 10.897, dec: -17.987, mag: 2.04, dist: 96, spec: 'K0III', hip: '3419', hd: '4128', aliases: ['Beta Ceti', 'Deneb Kaitos'], desc: '鲸鱼座最亮星，秋季南天的橙色亮星。' },
+  { uid: 'HIP50583', en: 'Algieba', zh: '轩辕十二', bayer: 'γ Leo', con: 'Leo', ra: 154.993, dec: 19.842, mag: 2.01, dist: 130, spec: 'K1III', hip: '50583', hd: '89484', aliases: ['Gamma Leonis'], desc: '狮子座金黄色双星，镰刀形的一环。' },
+  { uid: 'HIP100751', en: 'Peacock', zh: '孔雀十一', bayer: 'α Pav', con: 'Pavo', ra: 306.412, dec: -56.735, mag: 1.94, dist: 180, spec: 'B2IV', hip: '100751', hd: '193924', aliases: ['Alpha Pavonis'], desc: '孔雀座最亮星。' },
+  { uid: 'HIP70890', en: 'Proxima Centauri', zh: '比邻星', bayer: 'α Cen C', con: 'Centaurus', ra: 217.429, dec: -62.679, mag: 11.13, dist: 4.24, spec: 'M5.5Ve', hip: '70890', aliases: ['半人马座比邻星', 'Proxima'], desc: '距太阳最近的恒星（约 4.24 光年），一颗红矮星，肉眼不可见。' },
+  { uid: 'HIP95947', en: 'Albireo', zh: '辇道增七', bayer: 'β Cyg', con: 'Cygnus', ra: 292.68, dec: 27.96, mag: 3.05, dist: 430, spec: 'K3II', hip: '95947', hd: '183912', aliases: ['Beta Cygni'], desc: '天鹅座喙部著名的金蓝双星，望远镜下极美。' },
+  { uid: 'HIP17702', en: 'Alcyone', zh: '昴宿六', bayer: 'η Tau', con: 'Taurus', ra: 56.871, dec: 24.105, mag: 2.87, dist: 440, spec: 'B7III', hip: '17702', hd: '23630', aliases: ['Eta Tauri', '昴星团'], desc: '昴星团（七姊妹星团）中最亮的成员。' },
+];
+
+/** 由原始数据构造完整的星体对象。 */
+function buildStar(raw: RawStar): CelestialObject {
+  const catalogIds: Record<string, string> = { hip: raw.hip };
+  if (raw.hd) catalogIds.hd = raw.hd;
+  return {
+    objectUid: raw.uid,
+    type: 'star',
+    nameEn: raw.en,
+    nameZh: raw.zh,
+    aliases: raw.aliases ?? [],
+    bayer: raw.bayer,
+    constellation: raw.con,
+    constellationZh: CONSTELLATION_ZH[raw.con] ?? raw.con,
+    raDeg: raw.ra,
+    decDeg: raw.dec,
+    magnitude: raw.mag,
+    distanceLy: raw.dist,
+    spectralType: raw.spec,
+    catalogIds,
+    isNamable: true,
+    isFeatured: true,
+    descriptionZh: raw.desc,
+  };
+}
+
+/** 精选真实星表：按视星等从亮到暗排序。 */
+export const CELESTIAL_CATALOG: CelestialObject[] = RAW_STARS.map(buildStar).sort(
+  (a, b) => a.magnitude - b.magnitude,
+);
+
+/** 按 objectUid 建立索引，便于快速取用。 */
+export const CATALOG_BY_UID: Map<string, CelestialObject> = new Map(
+  CELESTIAL_CATALOG.map((s) => [s.objectUid, s]),
+);
+
+/** 按 objectUid 取星体。 */
+export function getCelestialByUid(uid: string): CelestialObject | undefined {
+  return CATALOG_BY_UID.get(uid);
+}

@@ -1,0 +1,53 @@
+/** 星体数据公共类型。与后端 celestial_object 主表字段保持一致，便于多端与库表对齐。 */
+
+export type CelestialObjectType = 'star' | 'galaxy' | 'nebula' | 'cluster';
+
+/**
+ * 一个天体的主数据。
+ * 字段命名刻意贴近后端主表（celestial_object），方便前后端与小程序共用同一套模型。
+ */
+export interface CelestialObject {
+  /** 稳定唯一标识，优先用星表编号，如 'HIP32349'。 */
+  objectUid: string;
+  /** 天体类型。 */
+  type: CelestialObjectType;
+  /** 英文主名，如 'Sirius'。 */
+  nameEn: string;
+  /** 中文主名，如 '天狼星'。 */
+  nameZh: string;
+  /** 别名集合（拜耳命名、旧称、俗称、中文简称等），用于搜索。 */
+  aliases: string[];
+  /** 拜耳/佛兰斯蒂德命名，如 'α CMa'。 */
+  bayer?: string;
+  /** 所属星座（英文）。 */
+  constellation: string;
+  /** 所属星座（中文）。 */
+  constellationZh: string;
+  /** 赤经，单位度（J2000，0–360）。 */
+  raDeg: number;
+  /** 赤纬，单位度（J2000，-90–90）。 */
+  decDeg: number;
+  /** 视星等（越小越亮）。 */
+  magnitude: number;
+  /** 距离，单位光年；未知为 null。 */
+  distanceLy: number | null;
+  /** 光谱型，如 'A1V'。 */
+  spectralType?: string;
+  /** 各星表交叉编号，如 { hip: '32349', hd: '48915' }。 */
+  catalogIds: Record<string, string>;
+  /** 是否允许作为纪念命名对象。 */
+  isNamable: boolean;
+  /** 是否为「精选/著名」星体（首页展示、搜索优先）。 */
+  isFeatured: boolean;
+  /** 中文简介。 */
+  descriptionZh?: string;
+}
+
+/** 搜索命中结果。 */
+export interface StarSearchResult {
+  object: CelestialObject;
+  /** 相关性得分，越大越相关。 */
+  score: number;
+  /** 命中的字段类型，便于前端高亮说明。 */
+  matchedOn: 'name' | 'alias' | 'bayer' | 'catalog' | 'constellation';
+}

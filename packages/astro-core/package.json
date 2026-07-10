@@ -1,0 +1,19 @@
+{
+  "name": "@star/astro-core",
+  "version": "0.1.0",
+  "description": "共享天文计算核心：坐标投影、赤道->地平转换、可见性与最佳观测时间。web / api / 小程序多端复用。",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
