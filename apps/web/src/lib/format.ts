@@ -28,6 +28,18 @@ export function formatDistance(distanceLy: number | null): string {
   return `${Math.round(distanceLy).toLocaleString('zh-CN')} 光年`;
 }
 
+/** ISO 日期串 -> 中文日期，如 "2026年7月10日"；解析失败原样返回。 */
+export function formatDateZh(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat('zh-CN', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'Asia/Shanghai',
+  }).format(date);
+}
+
 /** 高度角/方位角格式化。 */
 export function formatDegrees(deg: number): string {
   return `${deg.toFixed(1)}°`;

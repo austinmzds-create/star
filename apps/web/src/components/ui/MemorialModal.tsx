@@ -3,6 +3,7 @@
 import { getCelestialByUid } from '@star/astro-data';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
+import { createMemorialRegistration, isApiConfigured } from '@/lib/api';
 import { formatDec, formatRA } from '@/lib/format';
 import { useUniverse } from '@/lib/store';
 
@@ -17,16 +18,11 @@ const OCCASIONS = [
   '其他',
 ];
 
-function makeRegistrationNo(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  const rand = Math.floor(Math.random() * 36 ** 4)
-    .toString(36)
-    .toUpperCase()
-    .padStart(4, '0');
-  return `STAR-${y}${m}${d}-${rand}`;
+/** 成功态：live = 服务端真实登记（带公开纪念页 slug）；demo = 本地演示回退。 */
+interface DoneState {
+  regNo: string;
+  slug: string | null;
+  mode: 'live' | 'demo';
 }
 
 export function MemorialModal() {
@@ -39,15 +35,33 @@ export function MemorialModal() {
   const [memorialName, setMemorialName] = useState('');
   const [date, setDate] = useState('');
   const [blessing, setBlessing] = useState('');
-  const [done, setDone] = useState<{ regNo: string } | null>(null);
+  const [done, setDone] = useState<DoneState | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const close = () => {
+    if (submitting) return;
     closeMemorial();
     window.setTimeout(() => setDone(null), 300);
   };
 
-  const submit = () => {
-    setDone({ regNo: makeRegistrationNo() });
+  // createMemorialRegistration 永不 reject：失败一律以 mode='demo' 回退，UI 恒定走向成功态
+  const submit = async () => {
+    if (!star || submitting) return;
+    setSubmitting(true);
+    const outcome = await createMemorialRegistration({
+      objectUid: star.objectUid,
+      occasion,
+      // 后端 DTO 要求纪念名 1-40 字非空：空串在此用展示层同款兜底名补齐
+      memorialName: memorialName.trim() || `${star.nameZh}的纪念星`,
+      memorialDate: date || undefined,
+      blessing: blessing.trim() || undefined,
+    });
+    setSubmitting(false);
+    setDone(
+      outcome.mode === 'live'
+        ? { regNo: outcome.data.registrationNo, slug: outcome.data.publicSlug, mode: 'live' }
+        : { regNo: outcome.data.registrationNo, slug: null, mode: 'demo' },
+    );
   };
 
   const displayName = memorialName.trim() || (star ? `${star.nameZh}的纪念星` : '我的纪念星');
@@ -137,19 +151,23 @@ export function MemorialModal() {
                 <div className="mt-7 flex gap-3">
                   <button
                     onClick={close}
-                    className="flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5"
+                    disabled={submitting}
+                    className="flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-60"
                   >
                     取消
                   </button>
                   <button
                     onClick={submit}
-                    className="flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+                    disabled={submitting}
+                    className="flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
                   >
-                    生成纪念预览
+                    {submitting ? '正在登记…' : '生成纪念预览'}
                   </button>
                 </div>
                 <p className="mt-4 text-center text-[11px] leading-relaxed text-nebula-200/40">
-                  当前为演示预览。正式版将生成纪念证书、星图与可扫码纪念页。
+                  {isApiConfigured()
+                    ? '提交后将生成在线纪念页，可分享给重要的人。'
+                    : '当前为演示预览。正式版将生成纪念证书、星图与可扫码纪念页。'}
                   <br />
                   本服务为私人纪念命名登记，不代表 IAU 或任何官方命名。
                 </p>
@@ -185,6 +203,25 @@ export function MemorialModal() {
                   <div className="mt-5 text-[12px] tracking-wider text-nebula-200/60">
                     纪念编号 {done.regNo}
                   </div>
+
+                  {done.mode === 'live' && done.slug ? (
+                    <div className="mt-2">
+                      <a
+                        href={`/m/${done.slug}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-[12px] text-nebula-200/80 underline underline-offset-4 transition hover:text-white"
+                      >
+                        查看在线纪念页 →
+                      </a>
+                    </div>
+                  ) : (
+                    <div className="mt-2">
+                      <span className="text-[11px] text-nebula-200/40">
+                        演示模式 · 未连接服务，编号仅供预览
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="mt-6 flex gap-3">

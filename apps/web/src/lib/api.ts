@@ -1,0 +1,381 @@
+/**
+ * API 客户端：apps/web 与 services/api 之间的唯一通信层。
+ *
+ * 设计原则：
+ * 1. 「是否有后端」的判断全部收敛在本文件——未配置基址、网络错误、超时、
+ *    非 2xx、JSON 解析失败，任何一种情况都优雅回退，
+ *    绝不向 UI 抛出异常（纪念场景产品，体验必须温柔）。
+ * 2. 本文件不依赖 React，可同时被服务端组件与客户端组件 import。
+ * 3. 线上契约以 services/api 实际实现为准（见 docs/api-spec.md）：
+ *    - 成功响应无信封，body 即资源对象（如 { registration, compliance }）；
+ *    - 失败响应为 { code, message, details? }，HTTP 状态按错误码映射；
+ *    - 纪念场景走 OccasionType 英文枚举码，中文标签仅为展示层映射（见下方码表）。
+ *    本文件负责「UI 友好形状 ↔ 线上契约形状」的双向转换，UI 层不感知枚举码。
+ */
+
+/** 请求超时（毫秒）。纪念登记是情绪时刻，宁可快速回退演示模式也不让用户干等。 */
+const REQUEST_TIMEOUT_MS = 8000;
+
+// ─────────────────────────── 场景码表（与 services/api OccasionType 枚举一致） ───────────────────────────
+
+/** 后端 OccasionType 枚举码（DB 存码，中文仅为展示层映射）。 */
+export type OccasionCode =
+  | 'LOVE'
+  | 'BIRTHDAY'
+  | 'WEDDING'
+  | 'GRADUATION'
+  | 'NEWBORN'
+  | 'PET_MEMORIAL'
+  | 'IN_MEMORIAM'
+  | 'OTHER';
+
+/** 中文标签 → 枚举码（与 MemorialModal 的 OCCASIONS 选项一一对应）。 */
+const OCCASION_LABEL_TO_CODE: Record<string, OccasionCode> = {
+  情侣纪念: 'LOVE',
+  生日: 'BIRTHDAY',
+  婚礼: 'WEDDING',
+  毕业: 'GRADUATION',
+  宝宝出生: 'NEWBORN',
+  宠物纪念: 'PET_MEMORIAL',
+  逝者纪念: 'IN_MEMORIAM',
+  其他: 'OTHER',
+};
+
+/** 枚举码 → 中文标签（公开纪念页展示用）。 */
+const OCCASION_CODE_TO_LABEL: Record<OccasionCode, string> = {
+  LOVE: '情侣纪念',
+  BIRTHDAY: '生日',
+  WEDDING: '婚礼',
+  GRADUATION: '毕业',
+  NEWBORN: '宝宝出生',
+  PET_MEMORIAL: '宠物纪念',
+  IN_MEMORIAM: '逝者纪念',
+  OTHER: '其他',
+};
+
+/** 中文场景标签转枚举码；未知标签兜底 OTHER（后端枚举校验拒绝任意自由文本）。 */
+function occasionLabelToCode(label: string): OccasionCode {
+  return OCCASION_LABEL_TO_CODE[label] ?? 'OTHER';
+}
+
+/** 枚举码转中文标签；未知码原样返回（向前兼容后端新增场景）。 */
+function occasionCodeToLabel(code: string): string {
+  return OCCASION_CODE_TO_LABEL[code as OccasionCode] ?? code;
+}
+
+// ─────────────────────────── UI 层类型（保持中文友好形状，UI 不感知枚举码） ───────────────────────────
+
+/** 创建纪念登记的输入（UI 形状）。star 快照由后端根据 objectUid 从目录回填，前端只传 uid。 */
+export interface CreateMemorialRegistrationInput {
+  /** 星体唯一标识，来自 @star/astro-data 的 CelestialObject.objectUid */
+  objectUid: string;
+  /** 纪念场景中文标签（情侣纪念/生日/...），发送前会映射为 OccasionType 枚举码 */
+  occasion: string;
+  /** 星星纪念名，1-40 字；调用方需保证非空（Modal 侧空串已用「{nameZh}的纪念星」兜底） */
+  memorialName: string;
+  /** 纪念日期，ISO 8601 日期（YYYY-MM-DD），可选 */
+  memorialDate?: string;
+  /** 祝福语，<= 140 字，可选 */
+  blessing?: string;
+}
+
+/** 创建成功的响应（UI 形状）。 */
+export interface MemorialRegistrationResult {
+  /** 服务端生成的纪念编号，格式 STAR-YYYYMMDD-XXXX（与演示模式格式一致，便于回退无感） */
+  registrationNo: string;
+  /** 公开纪念页 slug，用于 /m/[slug] */
+  publicSlug: string;
+  /** 登记状态：ACTIVE 生效；PENDING_REVIEW 命中审核待复核（公开页暂不可见） */
+  status: 'ACTIVE' | 'PENDING_REVIEW' | 'REJECTED';
+  /** ISO 8601 创建时间 */
+  createdAt: string;
+}
+
+/** 公开纪念页视图（UI 形状）。star 为登记时刻的目录快照（后端持久化，避免目录变更影响历史页面）。 */
+export interface PublicMemorialView {
+  registrationNo: string;
+  publicSlug: string;
+  memorialName: string;
+  /** 纪念场景中文标签（已从枚举码映射） */
+  occasion: string;
+  memorialDate: string | null;
+  blessing: string | null;
+  createdAt: string;
+  /** 登记时刻的星体快照子集 */
+  star: {
+    objectUid: string;
+    nameZh: string;
+    nameEn: string;
+    constellationZh: string;
+    raDeg: number;
+    decDeg: number;
+    magnitude: number | null;
+    /** 快照不含距离；由前端本地目录按 objectUid 补充，仅用于展示 */
+    distanceLy: number | null;
+  };
+}
+
+// ─────────────────────────── 线上契约类型（与 services/api 响应逐字段对齐） ───────────────────────────
+
+/** 失败响应 envelope（全局异常过滤器统一形状）。 */
+interface WireErrorBody {
+  code?: string;
+  message?: string;
+  details?: unknown;
+}
+
+/** 登记时刻的星体快照（MemorialService.StarSnapshot 的镜像）。 */
+interface WireStarSnapshot {
+  objectUid: string;
+  nameZh: string;
+  nameEn: string;
+  constellationZh: string;
+  raDeg: number;
+  decDeg: number;
+  magnitude: number;
+}
+
+/** POST /api/memorial/registrations 成功 body。 */
+interface WireCreateResponse {
+  registration: {
+    registrationNo: string;
+    publicSlug: string;
+    status: 'ACTIVE' | 'PENDING_REVIEW' | 'REJECTED';
+    memorialName: string;
+    occasionType: string;
+    memorialDate: string | null;
+    blessingText: string | null;
+    createdAt: string;
+    star: WireStarSnapshot;
+  };
+  compliance: string;
+}
+
+/** GET /api/memorial/public/:slug 成功 body。 */
+interface WirePublicResponse {
+  memorial: {
+    registrationNo: string;
+    memorialName: string;
+    occasionType: string;
+    memorialDate: string | null;
+    blessingText: string | null;
+    storyText: string | null;
+    createdAt: string;
+    star: WireStarSnapshot;
+  };
+  compliance: string;
+}
+
+// ─────────────────────────── 基址与配置 ───────────────────────────
+
+/**
+ * 取 API 基址；未配置（或为空串）视为纯前端演示模式。
+ * 服务端优先内网地址 API_BASE_URL；NEXT_PUBLIC_ 前缀保证在客户端 bundle 里被内联。
+ */
+export function getApiBaseUrl(): string | null {
+  const base =
+    (typeof window === 'undefined' ? process.env.API_BASE_URL : undefined) ??
+    process.env.NEXT_PUBLIC_API_BASE_URL;
+  const trimmed = base?.trim();
+  return trimmed ? trimmed.replace(/\/+$/, '') : null;
+}
+
+/** 是否已配置后端 API（false = 纯前端演示模式）。 */
+export function isApiConfigured(): boolean {
+  return getApiBaseUrl() !== null;
+}
+
+// ─────────────────────────── 低层请求封装 ───────────────────────────
+
+/** API 错误归一：HTTP 非 2xx / 网络异常 / 解析失败，统一为此类型。 */
+export class ApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+/** Next.js 扩展了 RequestInit（fetch 缓存指令），本地收窄以通过 strict 检查。 */
+interface NextFetchInit extends RequestInit {
+  next?: { revalidate?: number };
+}
+
+/**
+ * 低层请求：拼接基址、附带超时，任何异常统一抛 ApiError，由高层出口捕获转成回退。
+ * 成功（2xx）时 body 即资源对象（后端无成功信封）；失败时尽力解析
+ * { code, message } 错误 envelope 以保留错误码。调用前必须确认 isApiConfigured() 为 true。
+ */
+async function request<T>(path: string, init?: NextFetchInit): Promise<T> {
+  const base = getApiBaseUrl();
+  if (!base) {
+    throw new ApiError('NOT_CONFIGURED', '未配置 API 基址');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${base}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      // 失败 body 为 { code, message, details? }；解析失败则退回 HTTP 状态码
+      const errBody = (await res.json().catch(() => null)) as WireErrorBody | null;
+      throw new ApiError(
+        errBody?.code ?? `HTTP_${res.status}`,
+        errBody?.message ?? `请求失败：${res.status}`,
+      );
+    }
+    return (await res.json()) as T;
+  } catch (err) {
+    // 网络错误 / AbortError / JSON 解析失败等，全部归一为 ApiError
+    if (err instanceof ApiError) throw err;
+    throw new ApiError('NETWORK', err instanceof Error ? err.message : '网络异常');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 生成幂等键：优先 crypto.randomUUID（浏览器安全上下文与 Node 22 原生支持），退化为时间戳随机串。 */
+function makeIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `idem-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// ─────────────────────────── 演示模式 ───────────────────────────
+
+/**
+ * 演示模式编号生成：与后端 registrationNo 同格式（STAR-YYYYMMDD-XXXX），
+ * 保证回退时用户无感。从 MemorialModal 迁移至此，逻辑不变。
+ */
+export function makeDemoRegistrationNo(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const rand = Math.floor(Math.random() * 36 ** 4)
+    .toString(36)
+    .toUpperCase()
+    .padStart(4, '0');
+  return `STAR-${y}${m}${d}-${rand}`;
+}
+
+// ─────────────────────────── 高层出口（永不 throw） ───────────────────────────
+
+/** 创建结果判别联合：live = 服务端真实登记；demo = 本地演示回退。 */
+export type CreateRegistrationOutcome =
+  | { mode: 'live'; data: MemorialRegistrationResult }
+  | { mode: 'demo'; data: { registrationNo: string } };
+
+/**
+ * 创建纪念登记。
+ * 未配置 API 基址、或请求失败（网络/超时/校验/服务端异常），一律优雅回退演示模式，
+ * 保持既有纯前端行为。不做自动重试（避免重复登记），幂等键先埋好供后端选用。
+ */
+export async function createMemorialRegistration(
+  input: CreateMemorialRegistrationInput,
+): Promise<CreateRegistrationOutcome> {
+  if (!isApiConfigured()) {
+    return { mode: 'demo', data: { registrationNo: makeDemoRegistrationNo() } };
+  }
+  try {
+    // UI 形状 → 后端 DTO 形状（CreateRegistrationDto）：字段名与枚举码在此转换
+    const body = {
+      starObjectUid: input.objectUid,
+      memorialName: input.memorialName,
+      occasionType: occasionLabelToCode(input.occasion),
+      ...(input.memorialDate ? { memorialDate: input.memorialDate } : {}),
+      ...(input.blessing ? { blessingText: input.blessing } : {}),
+    };
+    const res = await request<WireCreateResponse>('/api/memorial/registrations', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': makeIdempotencyKey(),
+      },
+      body: JSON.stringify(body),
+    });
+    const reg = res.registration;
+    return {
+      mode: 'live',
+      data: {
+        registrationNo: reg.registrationNo,
+        publicSlug: reg.publicSlug,
+        status: reg.status,
+        createdAt: reg.createdAt,
+      },
+    };
+  } catch (err) {
+    // 后端不可达 → 回退演示模式；仅开发环境提示，生产静默
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] 创建纪念登记失败，已回退演示模式：', err);
+    }
+    return { mode: 'demo', data: { registrationNo: makeDemoRegistrationNo() } };
+  }
+}
+
+/** 按编号查登记（预留给后续订单/证书页）。失败返回 null。 */
+export async function getRegistration(
+  registrationNo: string,
+): Promise<MemorialRegistrationResult | null> {
+  if (!isApiConfigured()) return null;
+  try {
+    const res = await request<WireCreateResponse>(
+      `/api/memorial/registrations/${encodeURIComponent(registrationNo)}`,
+    );
+    const reg = res.registration;
+    return {
+      registrationNo: reg.registrationNo,
+      publicSlug: reg.publicSlug,
+      status: reg.status,
+      createdAt: reg.createdAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 拉取公开纪念页数据（仅服务端组件调用）。
+ * 失败返回 null，由页面渲染优雅降级占位，绝不抛错触发 Next error boundary。
+ * 登记内容基本不变，60 秒 ISR 足够，同时减轻后端压力。
+ */
+export async function getPublicMemorial(slug: string): Promise<PublicMemorialView | null> {
+  if (!isApiConfigured()) return null;
+  try {
+    const res = await request<WirePublicResponse>(
+      `/api/memorial/public/${encodeURIComponent(slug)}`,
+      { next: { revalidate: 60 } },
+    );
+    const m = res.memorial;
+    // 快照不含 distanceLy：从共享目录按 uid 补充（仅展示用，找不到则显示「未知」）
+    const { getCelestialByUid } = await import('@star/astro-data');
+    const catalogStar = getCelestialByUid(m.star.objectUid);
+    return {
+      registrationNo: m.registrationNo,
+      publicSlug: slug,
+      memorialName: m.memorialName,
+      occasion: occasionCodeToLabel(m.occasionType),
+      memorialDate: m.memorialDate,
+      blessing: m.blessingText,
+      createdAt: m.createdAt,
+      star: {
+        objectUid: m.star.objectUid,
+        nameZh: m.star.nameZh,
+        nameEn: m.star.nameEn,
+        constellationZh: m.star.constellationZh,
+        raDeg: m.star.raDeg,
+        decDeg: m.star.decDeg,
+        magnitude: m.star.magnitude,
+        distanceLy: catalogStar?.distanceLy ?? null,
+      },
+    };
+  } catch {
+    return null;
+  }
+}

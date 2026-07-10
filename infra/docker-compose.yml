@@ -1,0 +1,33 @@
+# 本地/真实环境基础设施：仅 Postgres + Redis（OSS 用云上真实服务）。
+# 用法（在仓库根）：
+#   docker compose -f infra/docker-compose.yml up -d
+#   pnpm --filter @star/api db:migrate   # 首次先 prisma migrate dev --name init 生成迁移
+#   pnpm --filter @star/api db:seed
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: star
+      POSTGRES_PASSWORD: star_password
+      POSTGRES_DB: star_memorial
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U star -d star_memorial"]
+      interval: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+volumes:
+  pgdata:
+  redisdata:
