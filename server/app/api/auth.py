@@ -15,7 +15,7 @@ from ..db import get_db
 from ..deps import current_user, make_token
 from ..models import Influencer, User
 from ..security import verify_password
-from ..services.sms import send_code, verify_code
+from ..services.sms import SmsError, send_code, verify_code
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -32,7 +32,10 @@ class PhoneIn(BaseModel):
 async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
     if len(body.phone) != 11 or not body.phone.startswith("1"):
         raise HTTPException(400, "手机号格式不正确")
-    await send_code(db, body.phone)
+    try:
+        await send_code(db, body.phone)
+    except SmsError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 

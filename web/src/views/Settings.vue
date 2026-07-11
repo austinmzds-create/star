@@ -56,7 +56,7 @@
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import api from '../api'
 
 const configs = ref([])

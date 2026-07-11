@@ -311,3 +311,5 @@ class SmsCode(Base):
     code: Mapped[str] = mapped_column(String(8))
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     used: Mapped[bool] = mapped_column(Boolean, default=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)          # 校验失败次数,超限作废
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 发送频控用

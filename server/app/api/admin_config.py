@@ -1,5 +1,5 @@
 """配置中心(管理员):等级权益(版本化)、催拍天数、拒绝理由库、商务账号。"""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -38,6 +38,8 @@ def update_level_config(level: str, body: LevelConfigIn,
                         admin: User = Depends(current_admin), db: Session = Depends(get_db)):
     """插入新版本 —— 只影响之后新产生的业务记录(快照语义)"""
     from decimal import Decimal
+    if level not in ("L1", "L2", "L3"):
+        raise HTTPException(400, "无效等级")
     fields = body.model_dump()
     if fields.get("commission_tier") is not None:
         fields["commission_tier"] = Decimal(str(fields["commission_tier"]))

@@ -14,7 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       MaterialDownloadLog, Product, SampleOrder)
 from ..services import storage
 from ..services.parser import parse_influencer_text
-from ..services.sms import send_code, verify_code
+from ..services.sms import SmsError, send_code, verify_code
 
 router = APIRouter(prefix="/api/h5", tags=["h5"])
 
@@ -27,7 +27,10 @@ class PhoneIn(BaseModel):
 async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
     if len(body.phone) != 11 or not body.phone.startswith("1"):
         raise HTTPException(400, "手机号格式不正确")
-    await send_code(db, body.phone)
+    try:
+        await send_code(db, body.phone)
+    except SmsError as e:
+        raise HTTPException(400, str(e))
     return {"ok": True}
 
 
@@ -84,9 +87,10 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
     result = await parse_influencer_text(body.text)
     f = result["fields"]
     inf.raw_intro = body.text
+    # 注意:不写 phone —— 它是 H5 登录标识,不能被解析出的"收件电话"覆盖
     for field in ("nickname", "douyin_id", "douyin_uid", "homepage_url",
                   "fans_count", "category_tags", "shoot_type", "real_name",
-                  "phone", "cooperation_code", "default_address"):
+                  "cooperation_code", "default_address"):
         if f.get(field):
             setattr(inf, field, f[field])
     db.commit()
@@ -117,6 +121,8 @@ def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
                  db: Session = Depends(get_db)):
     _assert_granted(db, inf.id, product_id)
     p = db.get(Product, product_id)
+    if not p:
+        raise HTTPException(404, "产品不存在")
     return {"name": p.name, "selling_points": p.selling_points,
             "shooting_notes": p.shooting_notes,
             "materials": [{"id": m.id, "type": m.type, "title": m.title,

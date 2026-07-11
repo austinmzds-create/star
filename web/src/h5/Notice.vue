@@ -9,11 +9,13 @@
       <div class="head">
         <el-tag v-if="r.starred" size="small" type="warning" effect="dark">重点</el-tag>
         <el-tag v-if="r.tag" size="small" type="danger">{{ r.tag }}</el-tag>
-        <span class="date">{{ fmt(r.happened_at) }}</span>
+        <span class="date">{{ ft(r.happened_at) }}</span>
       </div>
       <div v-if="r.text" class="text">{{ r.text }}</div>
-      <el-image v-if="r.screenshot_url" :src="r.screenshot_url" :preview-src-list="[r.screenshot_url]"
-                fit="cover" class="shot" />
+      <div v-if="r.screenshots?.length" class="shots">
+        <el-image v-for="(u, i) in r.screenshots" :key="i" :src="u" :preview-src-list="r.screenshots"
+                  :initial-index="i" fit="cover" class="shot" />
+      </div>
     </el-card>
   </div>
 </template>
@@ -21,10 +23,9 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import api from '../api'
+import { formatTime as ft } from '../utils/time'
 
 const rows = ref([])
-
-function fmt(s) { return s ? String(s).replace('T', ' ').slice(0, 10) : '' }
 
 onMounted(async () => {
   rows.value = await api.get('/api/h5/notice')
@@ -39,5 +40,6 @@ onMounted(async () => {
 .head { display: flex; align-items: center; gap: 6px; }
 .head .date { color: #999; font-size: 12px; margin-left: auto; }
 .text { margin: 8px 0; line-height: 1.5; white-space: pre-wrap; }
-.shot { width: 100%; border-radius: 6px; }
+.shots { display: flex; flex-wrap: wrap; gap: 6px; }
+.shot { width: 96px; height: 96px; border-radius: 6px; }
 </style>

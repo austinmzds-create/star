@@ -11,7 +11,9 @@
     <el-table :data="rows" v-loading="loading">
       <el-table-column prop="influencer_nickname" label="达人" />
       <el-table-column prop="note" label="待办" />
-      <el-table-column prop="created_at" label="生成时间" width="200" />
+      <el-table-column label="生成时间" width="200">
+        <template #default="{ row }">{{ ft(row.created_at) }}</template>
+      </el-table-column>
       <el-table-column label="操作" width="140">
         <template #default="{ row }">
           <el-button v-if="row.status === 'open'" size="small" type="primary" @click="done(row)">
@@ -29,6 +31,7 @@
 import { ElMessage } from 'element-plus'
 import { onMounted, ref } from 'vue'
 import api from '../api'
+import { formatTime as ft } from '../utils/time'
 
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isAdmin = user.role === 'admin'

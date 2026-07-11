@@ -123,7 +123,6 @@ async def ship(order_id: int, body: ShipIn,
 @router.post("/{order_id}/track")
 async def track(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """实时查询最新物流轨迹并回写(手动刷新;订阅回调未到时的兜底)"""
-    from datetime import datetime
     order = db.get(SampleOrder, order_id)
     if not order or not order.tracking_no or not order.courier_company:
         raise HTTPException(400, "该寄样单尚未发货或缺快递公司")

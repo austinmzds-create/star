@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_admin, current_user
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      OrderRecord, Product, Promotion, SampleOrder, User,
+                      OrderRecord, Product, SampleOrder, User,
                       VideoTask)
 from ..services import storage
 
@@ -212,8 +212,12 @@ class OrderIn(BaseModel):
 def record_order(product_id: int, body: OrderIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     """出单登记(蝉妈妈接入前人工登记 GMV)"""
+    try:
+        order_date = datetime.fromisoformat(body.order_date)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "出单日期格式不正确")
     db.add(OrderRecord(influencer_id=body.influencer_id, product_id=product_id,
-                       order_date=datetime.fromisoformat(body.order_date),
+                       order_date=order_date,
                        amount=Decimal(str(body.amount)), note=body.note, recorded_by=user.id))
     db.commit()
     return {"ok": True}

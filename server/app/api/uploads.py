@@ -4,7 +4,7 @@
 """
 import os
 
-from fastapi import APIRouter, Depends, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from ..deps import current_user
@@ -25,9 +25,11 @@ async def upload(file: UploadFile, prefix: str = "materials",
 # 本地兜底静态服务(未配 OSS 时;配了 OSS 走签名 URL 不经这里)
 @router.get("/files/{key:path}")
 def serve_local(key: str):
-    path = os.path.join(storage.LOCAL_DIR, key)
-    if not os.path.abspath(path).startswith(os.path.abspath(storage.LOCAL_DIR)):
-        return {"detail": "非法路径"}
-    if not os.path.exists(path):
-        return {"detail": "文件不存在"}
+    base = os.path.abspath(storage.LOCAL_DIR)
+    path = os.path.abspath(os.path.join(base, key))
+    # 加分隔符防止 /uploads 前缀误配 /uploads_evil,且拦截 ../ 穿越
+    if path != base and not path.startswith(base + os.sep):
+        raise HTTPException(400, "非法路径")
+    if not os.path.isfile(path):
+        raise HTTPException(404, "文件不存在")
     return FileResponse(path)

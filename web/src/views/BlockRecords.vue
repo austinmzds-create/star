@@ -122,7 +122,8 @@ function openCreate() {
 }
 async function save() {
   if (!form.text && !form.tag) return ElMessage.warning('请至少填写违规类型或说明')
-  await api.post('/api/block-records', { ...form })
+  // 空字符串会让后端 datetime 解析 422,置空交由后端用默认 now
+  await api.post('/api/block-records', { ...form, happened_at: form.happened_at || null })
   createVisible.value = false
   ElMessage.success('已新增')
   loadList(); loadTags()

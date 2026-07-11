@@ -44,6 +44,9 @@ SEED_REASONS = [
 
 @app.on_event("startup")
 def startup():
+    # 生产环境(debug=False)必须显式设置 SECRET_KEY,否则签发的 token 可被伪造
+    if not settings.debug and settings.secret_key == "change-me":
+        raise RuntimeError("生产环境必须设置 SECRET_KEY(当前仍为默认值)")
     # 骨架阶段用 create_all;上生产前切 alembic 迁移
     Base.metadata.create_all(engine)
     with SessionLocal() as db:

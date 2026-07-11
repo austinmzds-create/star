@@ -75,8 +75,11 @@ def parse_regex(text: str) -> dict:
     if homepage := next((u for u in urls if "douyin.com" in u), None):
         out["homepage_url"] = homepage
     if m := RE_FANS.search(text):
-        n = float(m.group(1))
-        out["fans_count"] = int(n * 10000) if m.group(2) else int(n)
+        try:  # [\d.]+ 可能匹配到 "1.2.3"/"." 等非法浮点,容错跳过
+            n = float(m.group(1))
+            out["fans_count"] = int(n * 10000) if m.group(2) else int(n)
+        except ValueError:
+            pass
     out.update(parse_labeled(text))  # 标注解析覆盖旧结果,来源仍归 "regex"
     return out
 
@@ -103,7 +106,8 @@ async def parse_llm(text: str) -> dict:
             resp.raise_for_status()
             import json
             content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+            parsed = json.loads(content)
+            return parsed if isinstance(parsed, dict) else {}
     except Exception:
         return {}
 

@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_admin, current_user
+from ..deps import current_user
 from ..models import (Cooperation, Influencer, LevelChangeLog, Product,
                       Promotion, SampleOrder, User, VideoTask)
 from ..services import levels
@@ -137,8 +137,8 @@ def update(influencer_id: int, body: UpdateIn,
     inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
     if not inf:
         raise HTTPException(404, "达人不存在或无权限")
-    if body.owner_bd_id is not None and user.role not in ("admin", "bd"):
-        raise HTTPException(403, "无权转移达人")
+    if body.owner_bd_id is not None and user.role != "admin":
+        raise HTTPException(403, "无权转移达人(仅管理员可分配归属)")
 
     for field in TRACKED_FIELDS:
         new_val = getattr(body, field, None)

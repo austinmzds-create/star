@@ -102,9 +102,15 @@ class Kd100Provider(LogisticsProvider):
         param = json.dumps(p, ensure_ascii=False)
         data = {"customer": settings.kd100_customer, "sign": self._sign(param),
                 "param": param, "signType": "MD5"}
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(self.QUERY_URL, data=data)
-            body = resp.json()
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(self.QUERY_URL, data=data)
+                body = resp.json()
+        except Exception as e:
+            # 网络/解析异常兜底,避免手动刷新时 500(轨迹为空即可)
+            return {"ok": False, "message": str(e), "tracking_no": tracking_no,
+                    "courier": courier, "status": None, "signed": False,
+                    "last_event": None, "events": []}
         state = str(body.get("state", ""))
         events = body.get("data", []) or []
         return {

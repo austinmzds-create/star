@@ -20,7 +20,7 @@
 <script setup>
 import { Close, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed } from 'vue'
+import { computed, reactive } from 'vue'
 import api from '../api'
 
 const props = defineProps({
@@ -31,7 +31,9 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue'])
 
 const keys = computed(() => props.modelValue || [])
-const urlOf = (k) => `/api/files/${k}` // OSS 时后端也可返回公共 URL;此处预览走本地/公共代理
+// 上传后记录 key→预览URL(OSS 走签名URL,本地走 /api/files);未知则回退本地代理
+const previews = reactive({})
+const urlOf = (k) => previews[k] || `/api/files/${k}`
 
 async function doUpload({ file }) {
   const fd = new FormData()
@@ -39,6 +41,7 @@ async function doUpload({ file }) {
   const r = await api.post(`/api/upload?prefix=${props.prefix}`, fd, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
+  if (r.url) previews[r.key] = r.url
   emit('update:modelValue', [...keys.value, r.key])
   ElMessage.success('已上传')
 }

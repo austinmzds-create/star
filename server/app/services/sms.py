@@ -20,6 +20,8 @@ from ..models import SmsCode
 
 logger = logging.getLogger(__name__)
 CODE_TTL_MINUTES = 5
+SEND_COOLDOWN_SECONDS = 50   # 同一手机号发送间隔
+MAX_VERIFY_ATTEMPTS = 5      # 单个验证码最大尝试次数
 SMS_ENDPOINT = "https://dysmsapi.aliyuncs.com/"
 
 
@@ -60,7 +62,19 @@ async def _send_aliyun(phone: str, code: str) -> None:
         raise RuntimeError(f"短信发送失败:{body.get('Code')} {body.get('Message')}")
 
 
+class SmsError(Exception):
+    """短信发送/频控错误(端点转 400)"""
+
+
 async def send_code(db: Session, phone: str) -> None:
+    # 发送频控:同号 50s 内不重发
+    last = (db.query(SmsCode).filter(SmsCode.phone == phone)
+            .order_by(SmsCode.id.desc()).first())
+    if last and (datetime.now() - last.created_at).total_seconds() < SEND_COOLDOWN_SECONDS:
+        raise SmsError("验证码发送过于频繁,请稍后再试")
+    # 作废该号所有历史未用码(避免多码并存放大爆破)
+    db.query(SmsCode).filter(SmsCode.phone == phone, SmsCode.used.is_(False)) \
+        .update({SmsCode.used: True})
     code = f"{random.randint(0, 999999):06d}"
     db.add(SmsCode(phone=phone, code=code,
                    expires_at=datetime.now() + timedelta(minutes=CODE_TTL_MINUTES)))
@@ -73,11 +87,18 @@ async def send_code(db: Session, phone: str) -> None:
 
 
 def verify_code(db: Session, phone: str, code: str) -> bool:
+    """只校验该号最新的未用未过期码;失败累计,超限作废(防爆破)"""
     row = (db.query(SmsCode)
-           .filter(SmsCode.phone == phone, SmsCode.code == code,
-                   SmsCode.used.is_(False), SmsCode.expires_at > datetime.now())
+           .filter(SmsCode.phone == phone, SmsCode.used.is_(False),
+                   SmsCode.expires_at > datetime.now())
            .order_by(SmsCode.id.desc()).first())
     if not row:
+        return False
+    if row.code != code:
+        row.attempts += 1
+        if row.attempts >= MAX_VERIFY_ATTEMPTS:
+            row.used = True  # 超限作废,必须重新发码
+        db.commit()
         return False
     row.used = True
     db.commit()
