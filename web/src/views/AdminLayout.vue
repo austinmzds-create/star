@@ -5,6 +5,10 @@
       <el-menu :default-active="$route.path" router>
         <el-menu-item index="/influencers">达人库</el-menu-item>
         <el-menu-item index="/samples">寄样管理</el-menu-item>
+        <el-menu-item index="/followups">
+          催拍待办
+          <el-badge v-if="followupCount" :value="followupCount" style="margin-left: 6px" />
+        </el-menu-item>
         <el-menu-item index="/products">产品中心</el-menu-item>
         <el-menu-item v-if="isAdmin" index="/dashboard">总览看板</el-menu-item>
         <el-menu-item v-if="isAdmin" index="/settings">配置中心</el-menu-item>
@@ -21,17 +25,25 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import api from '../api'
 
 const router = useRouter()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isAdmin = computed(() => user.role === 'admin')
+const followupCount = ref(0)
 
 function logout() {
   localStorage.clear()
   router.push('/login')
 }
+
+onMounted(async () => {
+  try {
+    followupCount.value = (await api.get('/api/followups/open-count')).count
+  } catch (e) { /* ignore */ }
+})
 </script>
 
 <style scoped>

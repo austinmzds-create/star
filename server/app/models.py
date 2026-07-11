@@ -276,6 +276,21 @@ class BlockRecord(Base, TimestampMixin):
 
 # ---------- 达人 H5 会话 ----------
 
+class FollowUpTask(Base):
+    """催拍待办:签收满 N 天(默认7,可配)无视频 → 系统生成,派给归属商务。"""
+    __tablename__ = "follow_up_tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sample_order_id: Mapped[int] = mapped_column(ForeignKey("sample_orders.id"), index=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    assignee_bd_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24), default="follow_up_shoot")  # 催拍
+    note: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open / done
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class SmsCode(Base):
     __tablename__ = "sms_codes"
 

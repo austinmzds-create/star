@@ -8,10 +8,52 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_user
-from ..models import Cooperation, Influencer, RejectReason, SampleOrder, User
+from ..models import (Cooperation, Influencer, Product, RejectReason,
+                      SampleOrder, User)
 from ..services.logistics import get_provider
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
+
+
+@router.get("")
+def list_samples(status: str | None = None,
+                 user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """寄样单列表(商务只见自己达人的单;管理员全量)。status 可选过滤。"""
+    stmt = (select(SampleOrder, Cooperation, Influencer, Product)
+            .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
+            .join(Influencer, Cooperation.influencer_id == Influencer.id)
+            .join(Product, SampleOrder.product_id == Product.id)
+            .order_by(SampleOrder.created_at.desc()))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    if status:
+        stmt = stmt.where(SampleOrder.status == status)
+    out = []
+    for order, coop, inf, prod in db.execute(stmt.limit(300)).all():
+        out.append({
+            "id": order.id, "status": order.status,
+            "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+            "product_id": prod.id, "product_name": prod.name,
+            "round_no": coop.round_no,
+            "tracking_no": order.tracking_no, "courier_company": order.courier_company,
+            "logistics_status": order.logistics_status,
+            "signed_at": order.signed_at.isoformat() if order.signed_at else None,
+            "reject_reason": order.reject_reason,
+            "created_at": order.created_at.isoformat(),
+        })
+    return out
+
+
+@router.get("/status-counts")
+def status_counts(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    from sqlalchemy import func
+    stmt = (select(SampleOrder.status, func.count())
+            .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
+            .join(Influencer, Cooperation.influencer_id == Influencer.id)
+            .group_by(SampleOrder.status))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    return {status: count for status, count in db.execute(stmt).all()}
 
 
 class CreateIn(BaseModel):

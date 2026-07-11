@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from .api import admin_config, auth, dashboard, h5, influencers, products, samples
+from .api import (admin_config, auth, dashboard, followups, h5, influencers,
+                  products, samples, uploads)
 from .config import settings
 from .db import Base, SessionLocal, engine
 from .models import RejectReason, User
@@ -24,7 +25,8 @@ app.add_middleware(
 )
 
 for r in (auth.router, influencers.router, samples.router, samples.webhook_router,
-          products.router, dashboard.router, h5.router, admin_config.router):
+          products.router, dashboard.router, h5.router, admin_config.router,
+          followups.router, uploads.router):
     app.include_router(r)
 
 # 拒绝理由库初始数据(采自样例平台,docs/01 §2.1)

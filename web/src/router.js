@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 // 内部端(管理员/商务)
 import AdminLayout from './views/AdminLayout.vue'
 import Dashboard from './views/Dashboard.vue'
+import Followups from './views/Followups.vue'
 import InfluencerDetail from './views/InfluencerDetail.vue'
 import Influencers from './views/Influencers.vue'
 import Login from './views/Login.vue'
@@ -24,6 +25,7 @@ const routes = [
       { path: 'influencers', component: Influencers },
       { path: 'influencers/:id', component: InfluencerDetail },
       { path: 'samples', component: Samples },
+      { path: 'followups', component: Followups },
       { path: 'products', component: Products },
       { path: 'dashboard', component: Dashboard },
       { path: 'settings', component: Settings },
