@@ -6,13 +6,13 @@
     </el-tabs>
 
     <!-- ===================== 视频审核 ===================== -->
-    <template v-if="mainTab === 'video'">
+    <div v-if="mainTab === 'video'" key="video-pane">
       <el-tabs v-model="vTab" @tab-change="loadVideos">
         <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key"
           :label="`${s.label}${vCounts[s.key] ? ' ' + vCounts[s.key] : ''}`" />
       </el-tabs>
 
-      <el-table :data="videos" v-loading="vLoading">
+      <el-table :data="videos">
         <el-table-column prop="influencer_nickname" label="达人" />
         <el-table-column prop="product_name" label="产品" />
         <el-table-column prop="round_no" label="轮次" width="70" />
@@ -54,16 +54,16 @@
           <el-button type="danger" @click="doReject">确认拒绝</el-button>
         </template>
       </el-dialog>
-    </template>
+    </div>
 
     <!-- ===================== 投流管理 ===================== -->
-    <template v-else>
+    <div v-else key="promo-pane">
       <el-tabs v-model="pTab" @tab-change="loadPromotions">
         <el-tab-pane v-for="s in PROMO_TABS" :key="s.key" :name="s.key"
           :label="`${s.label}${pCounts[s.key] ? ' ' + pCounts[s.key] : ''}`" />
       </el-tabs>
 
-      <el-table :data="promotions" v-loading="pLoading">
+      <el-table :data="promotions">
         <el-table-column prop="influencer_nickname" label="达人" />
         <el-table-column prop="product_name" label="产品" />
         <el-table-column label="投流方式" width="100">
@@ -99,13 +99,13 @@
           <el-button type="danger" @click="doFail">确认</el-button>
         </template>
       </el-dialog>
-    </template>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import api from '../api'
 
 const mainTab = ref('video')
@@ -276,5 +276,6 @@ function onMainTab(name) {
   else loadPromotions()
 }
 
-onMounted(loadVideos)
+// 延到首帧之后再触发加载,避免 vLoading 在挂载中同步翻转导致 v-loading 指令报错
+onMounted(() => nextTick(loadVideos))
 </script>
