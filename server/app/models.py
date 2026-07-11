@@ -26,12 +26,13 @@ class TimestampMixin:
 # ---------- 组织 ----------
 
 class User(Base, TimestampMixin):
-    """内部账号:管理员 / 商务"""
+    """内部账号:管理员 / 商务(统一手机验证码登录,角色由后台决定)"""
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(String(64), unique=True)
-    password_hash: Mapped[str] = mapped_column(String(128))
+    phone: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)  # 登录标识
+    username: Mapped[str | None] = mapped_column(String(64), unique=True)  # 兼容旧账号密码登录
+    password_hash: Mapped[str | None] = mapped_column(String(128))         # 手机号加的商务可空
     display_name: Mapped[str] = mapped_column(String(64))
     role: Mapped[str] = mapped_column(String(16), default="bd")  # admin / bd
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

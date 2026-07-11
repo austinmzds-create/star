@@ -80,22 +80,42 @@ def add_reason(body: ReasonIn, admin: User = Depends(current_admin),
 
 
 class BdIn(BaseModel):
-    username: str
-    password: str
+    phone: str
     display_name: str
 
 
 @router.post("/bd-users")
 def create_bd(body: BdIn, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
-    u = User(username=body.username, password_hash=hash_password(body.password),
-             display_name=body.display_name, role="bd")
+    """手机号直接添加商务(该手机号登录即得商务身份)"""
+    if len(body.phone) != 11 or not body.phone.startswith("1"):
+        raise HTTPException(400, "手机号格式不正确")
+    existing = db.scalars(select(User).where(User.phone == body.phone)).first()
+    if existing:
+        raise HTTPException(400, "该手机号已是内部账号")
+    # 若该手机号已注册为达人,提示(达人与商务是不同身份)
+    u = User(phone=body.phone, display_name=body.display_name, role="bd")
     db.add(u)
     db.commit()
     return {"id": u.id}
 
 
+class BdToggleIn(BaseModel):
+    is_active: bool
+
+
+@router.patch("/bd-users/{user_id}")
+def toggle_bd(user_id: int, body: BdToggleIn,
+              admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if not u or u.role != "bd":
+        raise HTTPException(404, "商务不存在")
+    u.is_active = body.is_active
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/bd-users")
 def list_bd(admin: User = Depends(current_admin), db: Session = Depends(get_db)):
     rows = db.scalars(select(User).where(User.role == "bd")).all()
-    return [{"id": u.id, "username": u.username, "display_name": u.display_name,
+    return [{"id": u.id, "phone": u.phone, "display_name": u.display_name,
              "is_active": u.is_active} for u in rows]

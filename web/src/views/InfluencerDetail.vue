@@ -85,7 +85,7 @@ import api from '../api'
 
 const route = useRoute()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
-const isAdmin = user.role === 'admin'
+const isAdmin = user.role === 'admin' || user.role === 'bd'
 const d = ref(null)
 const edit = reactive({})
 const tags = ref([])

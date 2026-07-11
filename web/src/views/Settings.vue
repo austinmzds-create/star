@@ -32,17 +32,23 @@
       <el-button size="small" type="primary" @click="saveFollowUp">保存</el-button>
     </el-card>
 
-    <el-card header="商务账号" style="margin-top: 16px">
+    <el-card header="商务管理" style="margin-top: 16px">
+      <p style="color: #909399; font-size: 13px; margin-top: 0">
+        填手机号直接添加,该手机号登录即获得商务身份(权限同管理员)。
+      </p>
       <div class="bd-add">
-        <el-input v-model="newBd.display_name" placeholder="姓名" style="width: 120px" />
-        <el-input v-model="newBd.username" placeholder="登录账号" style="width: 140px" />
-        <el-input v-model="newBd.password" placeholder="初始密码" style="width: 140px" />
-        <el-button type="primary" @click="createBd">新建商务</el-button>
+        <el-input v-model="newBd.display_name" placeholder="姓名" style="width: 140px" />
+        <el-input v-model="newBd.phone" placeholder="手机号" style="width: 160px" maxlength="11" />
+        <el-button type="primary" @click="createBd">添加商务</el-button>
       </div>
       <el-table :data="bds">
         <el-table-column prop="display_name" label="姓名" />
-        <el-table-column prop="username" label="账号" />
-        <el-table-column prop="is_active" label="启用" />
+        <el-table-column prop="phone" label="手机号" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-switch v-model="row.is_active" @change="(v) => toggleBd(row, v)" />
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
   </div>
@@ -56,7 +62,7 @@ import api from '../api'
 const configs = ref([])
 const bds = ref([])
 const followUpDays = ref(7)
-const newBd = reactive({ display_name: '', username: '', password: '' })
+const newBd = reactive({ display_name: '', phone: '' })
 
 async function load() {
   configs.value = await api.get('/api/admin/level-configs')
@@ -81,14 +87,27 @@ async function saveFollowUp() {
 }
 
 async function createBd() {
-  if (!newBd.username || !newBd.password || !newBd.display_name) {
-    ElMessage.warning('请填写完整')
+  if (!newBd.phone || !newBd.display_name) {
+    ElMessage.warning('请填写姓名和手机号')
     return
   }
-  await api.post('/api/admin/bd-users', { ...newBd })
-  ElMessage.success('已新建商务账号')
-  newBd.display_name = newBd.username = newBd.password = ''
-  load()
+  try {
+    await api.post('/api/admin/bd-users', { ...newBd })
+    ElMessage.success('已添加商务')
+    newBd.display_name = newBd.phone = ''
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '添加失败')
+  }
+}
+
+async function toggleBd(row, v) {
+  try {
+    await api.patch(`/api/admin/bd-users/${row.id}`, { is_active: v })
+  } catch (e) {
+    row.is_active = !v
+    ElMessage.error('操作失败')
+  }
 }
 
 onMounted(load)

@@ -136,8 +136,8 @@ def update(influencer_id: int, body: UpdateIn,
     inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
     if not inf:
         raise HTTPException(404, "达人不存在或无权限")
-    if body.owner_bd_id is not None and user.role != "admin":
-        raise HTTPException(403, "转移达人需要管理员权限")
+    if body.owner_bd_id is not None and user.role not in ("admin", "bd"):
+        raise HTTPException(403, "无权转移达人")
 
     for field in TRACKED_FIELDS:
         new_val = getattr(body, field, None)

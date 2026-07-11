@@ -46,8 +46,13 @@ const router = createRouter({ history: createWebHistory(), routes })
 
 router.beforeEach((to) => {
   const isH5 = to.path.startsWith('/h5')
-  const token = localStorage.getItem(isH5 ? 'h5_token' : 'token')
-  if (!isH5 && to.path !== '/login' && !token) return '/login'
+  if (isH5) return true
+  if (to.path === '/login') return true
+  const token = localStorage.getItem('token')
+  if (!token) return '/login'
+  // 达人不得进入内部端页面
+  const user = JSON.parse(localStorage.getItem('user') || '{}')
+  if (user.role === 'influencer') return '/h5'
 })
 
 export default router

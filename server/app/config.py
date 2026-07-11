@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     # 达人 H5 站点(已拍板:二级域名)
     h5_base_url: str = "https://task.jisheng.yun"
 
+    # 管理员引导白名单:这些手机号登录即获得管理员身份(逗号分隔)
+    admin_phones: str = "13800000000"
+
     # 阿里云 OSS
     oss_endpoint: str = ""
     oss_bucket: str = ""

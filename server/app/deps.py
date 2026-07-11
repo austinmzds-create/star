@@ -35,8 +35,9 @@ def current_user(authorization: str = Header(""), db: Session = Depends(get_db))
 
 
 def current_admin(user: User = Depends(current_user)) -> User:
-    if user.role != "admin":
-        raise HTTPException(403, "需要管理员权限")
+    # 决策(2026-07):商务权限暂时 = 管理员,内部账号(admin/bd)均可
+    if user.role not in ("admin", "bd"):
+        raise HTTPException(403, "需要内部账号权限")
     return user
 
 
