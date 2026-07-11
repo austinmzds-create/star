@@ -56,7 +56,7 @@ async function login() {
       localStorage.setItem('h5_token', data.token)
       router.push('/h5')
     } else {
-      router.push('/influencers')
+      router.push('/workbench')
     }
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '登录失败')

@@ -3,6 +3,7 @@
     <el-aside width="200px">
       <div class="logo">达人管理平台</div>
       <el-menu :default-active="$route.path" router>
+        <el-menu-item index="/workbench">工作台</el-menu-item>
         <el-menu-item index="/influencers">达人库</el-menu-item>
         <el-menu-item index="/samples">寄样管理</el-menu-item>
         <el-menu-item index="/followups">

@@ -6,15 +6,64 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_admin
-from ..models import (Cooperation, Influencer, OrderRecord, SampleOrder, User,
-                      VideoTask)
+from ..deps import current_admin, current_user
+from ..models import (Cooperation, FollowUpTask, Influencer, OrderRecord,
+                      Promotion, SampleOrder, User, VideoTask)
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
 
 def _range(days: int | None):
     return datetime.now() - timedelta(days=days) if days else None
+
+
+@router.get("/workbench")
+def workbench(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """工作台:今日待办 + 数据速览(商务只看自己达人,管理员全量)"""
+    is_admin = user.role == "admin"
+    # 我的达人范围
+    inf_stmt = select(Influencer.id)
+    if not is_admin:
+        inf_stmt = inf_stmt.where(Influencer.owner_bd_id == user.id)
+    inf_ids = db.scalars(inf_stmt).all() or [0]
+    coop_ids = db.scalars(select(Cooperation.id)
+                          .where(Cooperation.influencer_id.in_(inf_ids))).all() or [0]
+
+    def cnt(model, *conds):
+        return db.scalar(select(func.count()).select_from(model).where(*conds)) or 0
+
+    pending_video = cnt(VideoTask, VideoTask.cooperation_id.in_(coop_ids),
+                        VideoTask.status == "submitted")
+    to_ship = cnt(SampleOrder, SampleOrder.cooperation_id.in_(coop_ids),
+                  SampleOrder.status == "approved")
+    pending_sample = cnt(SampleOrder, SampleOrder.cooperation_id.in_(coop_ids),
+                         SampleOrder.status == "pending")
+    followup = db.scalar(select(func.count()).select_from(FollowUpTask)
+                         .where(FollowUpTask.status == "open",
+                                *([] if is_admin else [FollowUpTask.assignee_bd_id == user.id]))) or 0
+    video_ids = db.scalars(select(VideoTask.id)
+                           .where(VideoTask.cooperation_id.in_(coop_ids))).all() or [0]
+    pending_promo = cnt(Promotion, Promotion.video_task_id.in_(video_ids),
+                        Promotion.auth_status.in_(["pending_request", "pending_confirm"]))
+
+    week = datetime.now() - timedelta(days=7)
+    inf_total = 0 if inf_ids == [0] else len(inf_ids)
+    week_new = cnt(Influencer, Influencer.id.in_(inf_ids), Influencer.created_at >= week)
+    week_gmv = db.scalar(select(func.coalesce(func.sum(OrderRecord.amount), 0))
+                         .where(OrderRecord.influencer_id.in_(inf_ids),
+                                OrderRecord.order_date >= week)) or 0
+
+    return {
+        "todos": {
+            "pending_sample": pending_sample, "to_ship": to_ship,
+            "pending_video": pending_video, "followup": followup,
+            "pending_promotion": pending_promo,
+        },
+        "stats": {
+            "influencer_total": inf_total, "week_new": week_new,
+            "week_gmv": float(week_gmv),
+        },
+    }
 
 
 @router.get("/by-bd")

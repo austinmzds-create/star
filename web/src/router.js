@@ -12,6 +12,7 @@ import Products from './views/Products.vue'
 import Samples from './views/Samples.vue'
 import Settings from './views/Settings.vue'
 import Videos from './views/Videos.vue'
+import Workbench from './views/Workbench.vue'
 
 // 达人端 H5(task.jisheng.yun)
 import H5Entry from './h5/Entry.vue'
@@ -24,7 +25,8 @@ const routes = [
     path: '/',
     component: AdminLayout,
     children: [
-      { path: '', redirect: '/influencers' },
+      { path: '', redirect: '/workbench' },
+      { path: 'workbench', component: Workbench },
       { path: 'influencers', component: Influencers },
       { path: 'influencers/:id', component: InfluencerDetail },
       { path: 'samples', component: Samples },
