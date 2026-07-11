@@ -6,11 +6,16 @@ import { ComplianceNote } from './ui/ComplianceNote';
 import { ConstellationInfoCard } from './ui/ConstellationInfoCard';
 import { ControlBar } from './ui/ControlBar';
 import { CoupleModal } from './ui/CoupleModal';
+import { CreditsPanel } from './ui/CreditsPanel';
 import { CoupleTray } from './ui/CoupleTray';
+import { DisplaySettings } from './ui/DisplaySettings';
 import { HintOverlay } from './ui/HintOverlay';
+import { HoverTooltip } from './ui/HoverTooltip';
 import { MemorialModal } from './ui/MemorialModal';
+import { PlanetViewerHost } from './planet3d/PlanetViewerHost';
 import { SearchPanel } from './ui/SearchPanel';
 import { StarInfoCard } from './ui/StarInfoCard';
+import { TimeMachineBar } from './ui/TimeMachineBar';
 
 // 3D 场景仅在客户端渲染，避免 SSR 触碰 WebGL。
 const UniverseScene = dynamic(
@@ -30,11 +35,19 @@ export function UniverseApp() {
       <StarInfoCard />
       <ConstellationInfoCard />
       <ControlBar />
+      {/* 时间机器：常驻挂载（播放循环/实时心跳不随面板开合中断），面板出现在 ControlBar 上方 */}
+      <TimeMachineBar />
+      {/* 显示设置面板：收纳低频开关（银河/标签/星座/旋转/坐标线/地平线/城市） */}
+      <DisplaySettings />
+      {/* 悬停识别名牌：hoverBus 驱动，跟随光标（触屏自然静默） */}
+      <HoverTooltip />
       <CoupleTray />
       <HintOverlay />
       <ComplianceNote />
+      <CreditsPanel />
       <MemorialModal />
       <CoupleModal />
+      <PlanetViewerHost />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   computeVisibility,
   equatorialToHorizontal,
   greenwichMeanSiderealTime,
+  horizontalToEquatorial,
   julianDate,
   localSiderealTime,
   normalizeDegrees,
@@ -83,6 +84,70 @@ describe('equatorialToHorizontal', () => {
     const date = new Date('2026-01-01T03:30:00Z');
     const h = equatorialToHorizontal({ raDeg: 10, decDeg: -12 }, observer, date);
     expect(h.altitudeDeg).toBeCloseTo(-12, 6);
+  });
+});
+
+describe('horizontalToEquatorial（equatorialToHorizontal 的逆变换）', () => {
+  /** RA 差取 mod 360 最短弧（度）。 */
+  const raDiff = (a: number, b: number): number =>
+    Math.abs(normalizeDegrees(a - b + 180) - 180);
+
+  const observers = [
+    { latitudeDeg: 39.9042, longitudeDeg: 116.4074 }, // 北京
+    { latitudeDeg: 29.652, longitudeDeg: 91.1721 }, // 拉萨
+    { latitudeDeg: -33.9, longitudeDeg: 151.2 }, // 南半球（悉尼附近）
+  ];
+  const dates = [
+    new Date('2026-07-10T18:00:00Z'),
+    new Date('2026-01-01T03:30:00Z'),
+  ];
+
+  it('往返自洽：eq → hor → eq（跳过近天顶的方位角奇点）', () => {
+    for (const observer of observers) {
+      for (const date of dates) {
+        for (const raDeg of [0, 87.3, 180, 271.5]) {
+          for (const decDeg of [-75, -30, 0, 45, 80]) {
+            const hor = equatorialToHorizontal({ raDeg, decDeg }, observer, date);
+            if (Math.abs(hor.altitudeDeg) > 89.9) continue; // 天顶/天底奇点
+            const eq = horizontalToEquatorial(hor, observer, date);
+            expect(raDiff(eq.raDeg, raDeg)).toBeLessThan(1e-9);
+            expect(Math.abs(eq.decDeg - decDeg)).toBeLessThan(1e-9);
+          }
+        }
+      }
+    }
+  });
+
+  it('反向往返自洽：hor → eq → hor', () => {
+    for (const observer of observers) {
+      const date = dates[0]!;
+      for (const altitudeDeg of [0, 30, 60]) {
+        for (let azimuthDeg = 0; azimuthDeg < 360; azimuthDeg += 30) {
+          const eq = horizontalToEquatorial({ altitudeDeg, azimuthDeg }, observer, date);
+          const hor = equatorialToHorizontal(eq, observer, date);
+          expect(Math.abs(hor.altitudeDeg - altitudeDeg)).toBeLessThan(1e-9);
+          expect(raDiff(hor.azimuthDeg, azimuthDeg)).toBeLessThan(1e-9);
+        }
+      }
+    }
+  });
+
+  it('已知值：天顶方向的赤道坐标为 dec=观测者纬度、ra=LST', () => {
+    const observer = { latitudeDeg: 39.9042, longitudeDeg: 116.4074 };
+    const date = new Date('2026-07-10T18:00:00Z');
+    // 极接近天顶（避开 alt=90 的 tan 奇点），方位角任意
+    const eq = horizontalToEquatorial({ altitudeDeg: 89.999, azimuthDeg: 123 }, observer, date);
+    expect(eq.decDeg).toBeCloseTo(observer.latitudeDeg, 2);
+    expect(raDiff(eq.raDeg, localSiderealTime(date, observer.longitudeDeg))).toBeLessThan(0.05);
+  });
+
+  it('已知值：北京看正北 alt=10°，指向下中天 dec ≈ 90 - 纬度 + 10', () => {
+    // 下中天几何：正北方向 alt = dec - (90 - lat) → dec = alt + 90 - lat ≈ 60.1°
+    const observer = { latitudeDeg: 39.9, longitudeDeg: 116.4 };
+    const date = new Date('2026-07-10T18:00:00Z');
+    const eq = horizontalToEquatorial({ altitudeDeg: 10, azimuthDeg: 0 }, observer, date);
+    expect(eq.decDeg).toBeGreaterThan(59.9);
+    expect(eq.decDeg).toBeLessThan(60.3);
   });
 });
 

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { raDecToVector3 } from '@star/astro-core';
 import { DEEP_SKY_CATALOG, type CelestialObject } from '@star/astro-data';
+import { shownDsoPhotos, subscribeDsoPhotoShown } from '@/lib/dso-photos';
 import { SPHERE_RADIUS } from '@/lib/universe';
 
 /**
@@ -18,6 +19,11 @@ import { SPHERE_RADIUS } from '@/lib/universe';
  * 转角旋转 gl_PointCoord，避免 500 个天体朝向一致的「贴纸感」）、加 uMap
  * 纹理采样；featured（Messier）带 ±0.06 的极缓呼吸 alpha（uTime，成本为零）。
  *
+ * 【宇宙 V3-B】DsoPhotoLayer 为 ≤16 个最著名 Messier 挂真实照片切平面；
+ * 某张照片真正可展示时（subscribeDsoPhotoShown），本层把对应点位经
+ * aPhotoHide attribute 在 ~0.8s 内淡出 —— 照片浮现、光斑隐去，二者交叠。
+ * 照片缺失/加载失败则事件不发生，程序 sprite 原样保留（零回退成本）。
+ *
  * 拾取全部走 lib/pickRegistry（featured DSO 优先级高于亮星），本层只管画。
  */
 
@@ -28,14 +34,16 @@ const DSO_VERTEX = /* glsl */ `
   attribute vec3 aColor;
   attribute float aRotation;
   attribute float aFeatured;
+  attribute float aPhotoHide;
   varying vec3 vColor;
   varying float vRot;
   varying float vAlpha;
   void main() {
     vColor = aColor;
     vRot = aRotation;
-    // featured 的极缓呼吸（±0.06），相位用固定转角错开
-    vAlpha = 1.0 + aFeatured * 0.06 * sin(uTime * 0.7 + aRotation * 7.0);
+    // featured 的极缓呼吸（±0.06），相位用固定转角错开；
+    // aPhotoHide（0→1）：真实照片可展示后本点位淡出（宇宙 V3-B）
+    vAlpha = (1.0 + aFeatured * 0.06 * sin(uTime * 0.7 + aRotation * 7.0)) * (1.0 - aPhotoHide);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_PointSize = aSize * uPixelRatio;
     gl_Position = projectionMatrix * mv;
@@ -230,6 +238,8 @@ interface DsoGroupData {
   sizes: Float32Array;
   rotations: Float32Array;
   featured: Float32Array;
+  /** 与顶点同序的 objectUid（照片淡出时按 uid 定位顶点下标）。 */
+  uids: string[];
   count: number;
 }
 
@@ -254,9 +264,11 @@ function buildDsoGroups(): DsoGroupData[] {
     const sizes = new Float32Array(count);
     const rotations = new Float32Array(count);
     const featured = new Float32Array(count);
+    const uids: string[] = [];
     const [tr, tg, tb] = GROUP_TINT[key];
 
     list.forEach((obj, i) => {
+      uids.push(obj.objectUid);
       const v = raDecToVector3({ raDeg: obj.raDeg, decDeg: obj.decDeg }, SPHERE_RADIUS * 0.99);
       positions[i * 3] = v.x;
       positions[i * 3 + 1] = v.y;
@@ -271,7 +283,7 @@ function buildDsoGroups(): DsoGroupData[] {
       featured[i] = obj.isFeatured ? 1 : 0;
     });
 
-    groups.push({ key, positions, colors, sizes, rotations, featured, count });
+    groups.push({ key, positions, colors, sizes, rotations, featured, uids, count });
   }
   return groups;
 }
@@ -295,6 +307,8 @@ export function DeepSkyLayer() {
       geometry.setAttribute('aSize', new THREE.BufferAttribute(g.sizes, 1));
       geometry.setAttribute('aRotation', new THREE.BufferAttribute(g.rotations, 1));
       geometry.setAttribute('aFeatured', new THREE.BufferAttribute(g.featured, 1));
+      // 照片淡出（0=正常显示，1=完全隐藏），由「照片可展示」事件驱动
+      geometry.setAttribute('aPhotoHide', new THREE.BufferAttribute(new Float32Array(g.count), 1));
       const material = new THREE.ShaderMaterial({
         vertexShader: DSO_VERTEX,
         fragmentShader: DSO_FRAGMENT,
@@ -315,6 +329,37 @@ export function DeepSkyLayer() {
 
   materialsRef.current = resources.map((r) => r.material);
 
+  // ── 照片淡出（宇宙 V3-B）：uid → (组下标, 顶点下标) 索引 ──
+  const uidIndex = useMemo(() => {
+    const map = new Map<string, { gi: number; idx: number }>();
+    groups.forEach((g, gi) => {
+      g.uids.forEach((uid, idx) => map.set(uid, { gi, idx }));
+    });
+    return map;
+  }, [groups]);
+
+  // 正在淡出的点位（帧循环推进，全部到 1 后清空 —— 平时零开销）
+  const fadingRef = useRef<Array<{ gi: number; idx: number }>>([]);
+
+  useEffect(() => {
+    const hide = (uid: string, immediate: boolean) => {
+      const loc = uidIndex.get(uid);
+      if (!loc) return;
+      const geometry = resources[loc.gi]?.geometry;
+      if (!geometry) return;
+      const attr = geometry.getAttribute('aPhotoHide') as THREE.BufferAttribute;
+      if (immediate) {
+        (attr.array as Float32Array)[loc.idx] = 1;
+        attr.needsUpdate = true;
+      } else if (!fadingRef.current.some((f) => f.gi === loc.gi && f.idx === loc.idx)) {
+        fadingRef.current.push(loc);
+      }
+    };
+    // 已可展示的照片（StrictMode 重挂载/晚订阅）直接置 1，避免二次淡出
+    for (const uid of shownDsoPhotos) hide(uid, true);
+    return subscribeDsoPhotoShown((uid) => hide(uid, false));
+  }, [uidIndex, resources]);
+
   // 卸载时释放 GPU 资源
   useEffect(() => {
     return () => {
@@ -330,6 +375,25 @@ export function DeepSkyLayer() {
     for (const mat of materialsRef.current) {
       mat.uniforms.uTime!.value += delta;
       mat.uniforms.uPixelRatio!.value = pixelRatio;
+    }
+    // 照片淡出推进（仅有照片刚就绪的 ~0.8s 内非空）
+    const fading = fadingRef.current;
+    if (fading.length > 0) {
+      const step = delta / 0.8;
+      for (let i = fading.length - 1; i >= 0; i--) {
+        const loc = fading[i]!;
+        const geometry = resources[loc.gi]?.geometry;
+        if (!geometry) {
+          fading.splice(i, 1);
+          continue;
+        }
+        const attr = geometry.getAttribute('aPhotoHide') as THREE.BufferAttribute;
+        const arr = attr.array as Float32Array;
+        const next = Math.min(1, (arr[loc.idx] ?? 0) + step);
+        arr[loc.idx] = next;
+        attr.needsUpdate = true;
+        if (next >= 1) fading.splice(i, 1);
+      }
     }
   });
 

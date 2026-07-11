@@ -74,6 +74,20 @@ export interface CelestialObject {
    * 按观测时刻实时计算；raDeg/decDeg 仅为某一时刻的快照。可选，向后兼容。
    */
   isEphemeris?: boolean;
+  /**
+   * 真实影像键：对应 web 端 public/dso-photos/{imageKey}.jpg（著名深空天体的真实天文照片）。
+   * 可选，向后兼容；仅 ~16 个著名 Messier 天体携带。
+   */
+  imageKey?: string;
+  /**
+   * 真实长轴角尺寸（度，由 OpenNGC MajAx 角分换算）。可选，向后兼容。
+   */
+  angularSizeDeg?: number;
+  /**
+   * 影像署名（如 'NASA, ESA, M. Robberto (STScI/ESA)，公有领域'），供 UI 就地署名（CC-BY 合规）。
+   * 可选，与 imageKey 成对出现。
+   */
+  imageCredit?: string;
 }
 
 /** 搜索命中结果。 */

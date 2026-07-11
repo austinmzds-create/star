@@ -2,7 +2,7 @@
 
 > **定位**：给新加入的工程师 30 分钟看懂整个系统怎么组装、请求怎么流动、为什么这么选型。
 > **读者**：全体工程师（前端 / 后端 / 数据）。
-> **最后更新**：2026-07-11（Phase 4 · 多端与升级：微信小程序扫码找星 / 情侣双星 / 纪念册 / 订单支付骨架）。
+> **最后更新**：2026-07-11（Phase 6A · 宇宙 V3：真实银河与深空影像 / 行星 3D / 悬停识别 / 时间机器 / 坐标线 / 晨昏地平线）。
 > **关联文档**：[数据模型](./data-model.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
 
 ---
@@ -357,6 +357,52 @@ sequenceDiagram
   「星座」开关（ControlBar）关闭即整层 unmount 并释放几何/纹理。
 - **信息卡**：`ConstellationInfoCard`（左下角 DOM），88 条原创中文神话/看点简介
   （`lib/constellation-lore.ts`），最亮星可点击飞往；星座不可命名，卡内无购买入口。
+
+### 5.4 宇宙 V3：交互与天象（Phase 6A · 悬停 / 时间机器 / 坐标线 / 晨昏地平线）
+
+在 V3 视觉核心（真实银河全景 `MilkyWayLayer`、著名 DSO 真实照片 `DsoPhotoLayer`、
+行星 3D 查看器 `planet3d/`，素材许可登记见 `public/credits.json` 与 [credits.md](./credits.md)）
+之上，新增四组交互天象能力。渲染顺序增量：
+
+| renderOrder | 层 | draw 增量 |
+| --- | --- | --- |
+| 0.5 | `GridLayer`（黄道 2 + 赤道 1 + 网格 1）+ `HorizonLayer` 地平线大圆 1 | 默认全关；开启才懒构建，关闭摘除不销毁 |
+| 8.5 | `HorizonLayer` 暗罩球（shader） | 默认关；开 +1 |
+
+- **悬停识别（D）**：`lib/hoverBus.ts` 模块单例（与 ephemRegistry 同一套「单例+回调」纪律，
+  刻意不进 zustand）。`CameraRig` 在 pointermove 里 70ms 节流走统一拾取 `pickAt`
+  （与点击共用遍历，悬停命中半径 ×0.75 减少擦边误报），节流间隙只挪坐标保持跟手；
+  `HoverTooltip` 订阅回调**直改 DOM transform**——坐标高频更新零 React 重渲染，仅 uid
+  变化才 setState 换名牌内容（中文名+类型+星等，素材复用 objectPresenter/solarSystem）。
+  拖拽/滚轮/镜头飞行/离开画布即清空；coarse pointer（触屏）整条管线不注册；点击行为不变。
+- **时间机器（E）**：`TimeMachineBar` 常驻挂载（UniverseApp），收起态为 ControlBar 左端的
+  时钟按钮（偏离实时时琥珀高亮，`selectTimeTravel` 派生选择器）。播放循环在 rAF 闭包内累加
+  权威时间（模拟秒 = 帧间隔 × timeSpeed，档位 ×1/1分/1时/1天/1周 每秒），**4Hz（250ms）节流**写
+  `store.observeTime` → `EphemDriver` 重算星历 → 行星/月相/信息卡可见性/地平线/晨昏全链路联动；
+  外部写入单向对齐（每帧比对「不是自己写出的值」即重置累加基准，无环）。实时模式
+  （`timeFollowsNow` 且未播放）60s 心跳对齐 `Date.now()`，顺带驱动 LST/晨昏缓慢演化。
+  UI：步进（±1时/±1天）、倍速 chips、`datetime-local`、±24h 弹簧滑条（松手回中可累积微调，
+  播放中拖动先自动暂停）、「回到现在」一键复位。
+- **坐标线（F）**：`GridLayer` 纯静态几何（J2000），分两组开关——黄道（金 `#d9b96e`，
+  大圆 128 段 + 十二宫刻度单 LineSegments + 宫名 canvas Sprite ×12）；天赤道+RA/Dec 网格
+  （青 `#6fd6d6` 赤道大圆；RA 12 条 + Dec ±30°/±60° 合并为**单 LineSegments ≈1800 顶点**，
+  opacity 0.06 极淡）。默认全关零成本，首次开启才构建并缓存（ref 持有，重开零重建）。
+- **晨昏与地平线（G，与 F 组3 共用 `showHorizon` 开关）**：`HorizonLayer` 三件套——
+  ① 地平线大圆：`astro-core` 新增 `horizontalToEquatorial` 逆变换（Meeus 约定，往返自洽
+  <1e-9°，含南半球/近天顶奇点单测）把 alt=0 大圆反投影回赤道系天球（120 点预分配缓冲，
+  `useEffect([city, observeTime])` 原地重写 <0.2ms）；② 东南西北方位标 canvas Sprite（北=红橙）；
+  ③ 全天球 ShaderMaterial 暗罩（1 draw，BackSide，renderOrder 8.5 压在行星之上）：片元用
+  「顶点方向·天顶向量」≈ sin(高度角) 做地平线下渐变压暗（-6° 满值 0.35）+ 按太阳高度角
+  JS 侧插值的晨昏色调（夜→民用晨昏金橙→白天淡青蓝，预乘 alpha 混合按比例压暗星光）。
+  太阳坐标直接读 ephemRegistry（本层挂在 `EphemDriver` 之后，同 commit 内 effect 有序，
+  读到的即当次 observeTime 新鲜值）；useFrame 内零计算。低端机暗罩球细分降为 32×20。
+- **ControlBar 重组 + 显示设置面板**：ControlBar 只留高频四项（时间 / 情侣双星 / 回到全景 /
+  显示 ⚙）；自动旋转/名称标签/星座/银河与新开关（黄道、赤道网格、地平线与晨昏、观测城市）
+  收进 `DisplaySettings` 玻璃弹出面板，底部保留「影像与数据来源」入口（`creditsOpen` 升入
+  store，`CreditsPanel` 与面板共用）。
+
+帧循环纪律不变：新层一律 effect 驱动（useFrame 内零计算零分配）；hover 是事件驱动 70ms 节流；
+时间机器 rAF 只累加闭包变量、4Hz 才碰 store。60fps 红线不受影响。
 
 ## 6. 关键流程时序
 

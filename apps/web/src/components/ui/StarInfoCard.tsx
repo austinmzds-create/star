@@ -12,6 +12,7 @@ import {
   uidToBodyId,
 } from '@star/astro-ephem';
 import { AnimatePresence, motion } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import { useEffect, useMemo } from 'react';
 import { CITIES } from '@/lib/cities';
 import {
@@ -23,6 +24,15 @@ import {
 import { formatDistanceAu, kindLabelZh, primaryBadgeZh } from '@/lib/objectPresenter';
 import { getObjectByUid } from '@/lib/solarSystem';
 import { useUniverse } from '@/lib/store';
+
+// 行星 3D 预览块：选中星历天体才拉取 three/R3F 代码块（不进主 bundle 增量）
+const PlanetPreviewCard = dynamic(
+  () => import('@/components/planet3d/PlanetPreviewCard').then((m) => m.PlanetPreviewCard),
+  {
+    ssr: false,
+    loading: () => <div className="mt-4 h-[220px] animate-pulse rounded-2xl bg-white/[0.04]" />,
+  },
+);
 
 /**
  * 天体信息卡（按类型泛化）：
@@ -128,6 +138,8 @@ export function StarInfoCard() {
                 {obj.descriptionZh}
               </p>
             )}
+
+            {obj.isEphemeris && <PlanetPreviewCard uid={obj.objectUid} />}
 
             <div className="mt-4 grid grid-cols-2 gap-3">
               {eph ? (

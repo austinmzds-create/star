@@ -43,6 +43,7 @@ export function equatorialToHorizontal(
   observer: ObserverLocation,
   date: Date,
 ): HorizontalCoord {
+  // 逆变换见下方 horizontalToEquatorial，两者共用同一套 Meeus 约定。
   const lst = localSiderealTime(date, observer.longitudeDeg);
   // 时角 H = LST - RA
   const hourAngleDeg = normalizeDegrees(lst - equatorial.raDeg);
@@ -67,5 +68,43 @@ export function equatorialToHorizontal(
   return {
     altitudeDeg: altitude * RAD2DEG,
     azimuthDeg,
+  };
+}
+
+/**
+ * equatorialToHorizontal 的逆变换：由地平坐标反推该观测者、该时刻指向的赤道坐标。
+ *
+ * 用途：把「观测者此刻的地平线（alt=0 的大圆）/ 东南西北方位标」反投影回
+ * 固定的赤道系天球（前端 GridLayer/HorizonLayer 据此摆放几何）。
+ *
+ * 入参方位角采用通用「从正北起、向东为正」（与 equatorialToHorizontal 的
+ * 出参一致）；内部换回 Meeus「从正南起、向西为正」参与三角计算。
+ * 注意：alt=±90°（天顶/天底）处方位角退化，反解的 RA 无唯一意义。
+ */
+export function horizontalToEquatorial(
+  horizontal: HorizontalCoord,
+  observer: ObserverLocation,
+  date: Date,
+): EquatorialCoord {
+  const alt = horizontal.altitudeDeg * DEG2RAD;
+  // 通用方位角（北起东正）→ Meeus 方位角（南起西正）
+  const aS = (horizontal.azimuthDeg - 180) * DEG2RAD;
+  const lat = observer.latitudeDeg * DEG2RAD;
+
+  const sinDec =
+    Math.sin(lat) * Math.sin(alt) -
+    Math.cos(lat) * Math.cos(alt) * Math.cos(aS);
+  const dec = Math.asin(Math.max(-1, Math.min(1, sinDec)));
+
+  // 时角 H：tan H = sin A / (cos A·sin φ + tan alt·cos φ)（A 为南起西正方位角）
+  const h = Math.atan2(
+    Math.sin(aS),
+    Math.cos(aS) * Math.sin(lat) + Math.tan(alt) * Math.cos(lat),
+  );
+  const lst = localSiderealTime(date, observer.longitudeDeg);
+
+  return {
+    raDeg: normalizeDegrees(lst - h * RAD2DEG),
+    decDeg: dec * RAD2DEG,
   };
 }

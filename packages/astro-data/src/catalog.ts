@@ -305,6 +305,38 @@ interface GeneratedDso {
 /** 深空类型合法集合（deep-sky.json 的 t 字段；脚本自检已保证，此处兜底过滤）。 */
 const DSO_TYPES = new Set<CelestialObjectType>(['galaxy', 'nebula', 'cluster', 'star']);
 
+/**
+ * 著名深空天体的真实影像登记（宇宙 V3）：
+ * imageKey → web 端 public/dso-photos/{imageKey}.jpg（由 apps/web/scripts/fetch-assets.mjs 下载落盘）；
+ * imageCredit → UI 就地署名文案（全部素材为 Public Domain 或 CC-BY，署名即合规闭环）。
+ * 纯渲染参数（显示尺寸/旋转角等）不进数据包，归 web 端 lib/dso-photos.ts，保持数据与视觉解耦。
+ * 完整来源登记见 apps/web/public/credits.json 与 docs/credits.md。
+ */
+const DSO_IMAGE_META: Record<string, { imageKey: string; imageCredit: string }> = {
+  M31: { imageKey: 'm31', imageCredit: 'Adam Evans，CC BY 2.0' },
+  M33: { imageKey: 'm33', imageCredit: 'ESO，CC BY 4.0' },
+  M42: { imageKey: 'm42', imageCredit: 'NASA, ESA, M. Robberto (STScI/ESA) 与 HST Orion Treasury Team，公有领域' },
+  M45: { imageKey: 'm45', imageCredit: 'NASA, ESA, AURA/Caltech, Palomar Observatory，公有领域' },
+  M8: { imageKey: 'm8', imageCredit: 'ESO/VPHAS+ team，CC BY 4.0' },
+  M16: { imageKey: 'm16', imageCredit: 'ESO，CC BY 4.0' },
+  M17: { imageKey: 'm17', imageCredit: 'ESO，CC BY 4.0' },
+  M20: { imageKey: 'm20', imageCredit: 'ESO，CC BY 3.0' },
+  M27: { imageKey: 'm27', imageCredit: 'Bill Schoening/NOIRLab/NSF/AURA，CC BY 4.0' },
+  M51: { imageKey: 'm51', imageCredit: 'NASA & ESA（哈勃空间望远镜），公有领域' },
+  M57: { imageKey: 'm57', imageCredit: 'Hubble Heritage Team (AURA/STScI/NASA)，公有领域' },
+  M13: { imageKey: 'm13', imageCredit: 'ESA/Hubble 与 NASA，公有领域' },
+  M81: { imageKey: 'm81', imageCredit: 'NASA, ESA, Hubble Heritage Team，公有领域' },
+  M101: { imageKey: 'm101', imageCredit: 'ESA & NASA（哈勃空间望远镜），CC BY 4.0' },
+  M104: { imageKey: 'm104', imageCredit: 'NASA/ESA 与 Hubble Heritage Team，公有领域' },
+  M1: { imageKey: 'm1', imageCredit: 'NASA, ESA, J. Hester & A. Loll (ASU)，公有领域' },
+};
+
+/** 四舍五入到 n 位小数（angularSizeDeg 换算用）。 */
+function roundTo(x: number, n: number): number {
+  const f = 10 ** n;
+  return Math.round(x * f) / f;
+}
+
 /** 由 generated 深空行构造 CelestialObject。合规红线：DSO 一律 isNamable=false。 */
 function buildDso(r: GeneratedDso): CelestialObject {
   const meta = r.con ? CONSTELLATION_ABBR[r.con] : undefined;
@@ -330,6 +362,9 @@ function buildDso(r: GeneratedDso): CelestialObject {
     ...(r.names ?? []),
   ]).filter((a) => a !== nameEn && a !== nameZh);
 
+  // 真实影像元数据（仅 16 个著名 Messier）与真实角尺寸（majAx 角分 → 度，全量免费收益）。
+  const imageMeta = DSO_IMAGE_META[r.u];
+
   return {
     objectUid: r.u,
     type: (DSO_TYPES.has(r.t as CelestialObjectType) ? r.t : 'nebula') as CelestialObjectType,
@@ -350,6 +385,8 @@ function buildDso(r: GeneratedDso): CelestialObject {
     renderPriority: isMessier ? 0 : mag <= 8 ? 1 : 2,
     searchPriority: decideSearchPriority(mag, isMessier),
     sourceCatalog: 'openngc',
+    angularSizeDeg: r.majAx !== undefined ? roundTo(r.majAx / 60, 4) : undefined,
+    ...(imageMeta ?? {}),
   };
 }
 

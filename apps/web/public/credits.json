@@ -1,0 +1,303 @@
+{
+  "generatedAt": "2026-07-11T19:07:01.255Z",
+  "note": "本页登记站内使用的全部第三方影像与数据来源。星辰纪念为私人纪念服务，与 IAU 及任何官方命名机构无关。部分小角径深空天体的显示尺寸经放大以保证可见性。",
+  "assets": [
+    {
+      "file": "textures/milkyway/starmap-2020-4k.jpg",
+      "group": "银河底图",
+      "title": "Deep Star Maps 2020 银河全景 4k（天球赤道坐标）",
+      "objectUid": null,
+      "author": "NASA/GSFC Scientific Visualization Studio (Ernie Wright)；星表数据 Gaia DR2: ESA/Gaia/DPAC",
+      "license": "Public Domain / NASA（要求署名 Gaia 数据来源）",
+      "sourceUrl": "https://svs.gsfc.nasa.gov/4851",
+      "fileUrl": "https://commons.wikimedia.org/wiki/File:Deep_Star_Maps_2020_%E2%80%93_Starmap_2020_64k.jpg"
+    },
+    {
+      "file": "textures/milkyway/starmap-2020-2k.jpg",
+      "group": "银河底图",
+      "title": "Deep Star Maps 2020 银河全景 2k（低配设备）",
+      "objectUid": null,
+      "author": "NASA/GSFC Scientific Visualization Studio (Ernie Wright)；星表数据 Gaia DR2: ESA/Gaia/DPAC",
+      "license": "Public Domain / NASA（要求署名 Gaia 数据来源）",
+      "sourceUrl": "https://svs.gsfc.nasa.gov/4851",
+      "fileUrl": "https://commons.wikimedia.org/wiki/File:Deep_Star_Maps_2020_%E2%80%93_Starmap_2020_64k.jpg"
+    },
+    {
+      "file": "dso-photos/m31.jpg",
+      "group": "深空影像",
+      "title": "仙女座星系 M31",
+      "objectUid": "M31",
+      "author": "Adam Evans",
+      "license": "CC BY 2.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Andromeda_Galaxy_(with_h-alpha).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Andromeda%20Galaxy%20(with%20h-alpha).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m33.jpg",
+      "group": "深空影像",
+      "title": "三角座星系 M33",
+      "objectUid": "M33",
+      "author": "ESO",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:VST_snaps_a_very_detailed_view_of_the_Triangulum_Galaxy.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/VST%20snaps%20a%20very%20detailed%20view%20of%20the%20Triangulum%20Galaxy.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m42.jpg",
+      "group": "深空影像",
+      "title": "猎户座大星云 M42",
+      "objectUid": "M42",
+      "author": "NASA, ESA, M. Robberto (STScI/ESA) & HST Orion Treasury Team",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Orion_Nebula_-_Hubble_2006_mosaic_18000.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Orion%20Nebula%20-%20Hubble%202006%20mosaic%2018000.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m45.jpg",
+      "group": "深空影像",
+      "title": "昴星团 M45",
+      "objectUid": "M45",
+      "author": "NASA, ESA, AURA/Caltech, Palomar Observatory",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Pleiades_large.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Pleiades%20large.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m8.jpg",
+      "group": "深空影像",
+      "title": "礁湖星云 M8",
+      "objectUid": "M8",
+      "author": "ESO/VPHAS+ team",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:VST_images_the_Lagoon_Nebula.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/VST%20images%20the%20Lagoon%20Nebula.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m16.jpg",
+      "group": "深空影像",
+      "title": "鹰状星云 M16",
+      "objectUid": "M16",
+      "author": "ESO",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Eagle_Nebula_from_ESO.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Eagle%20Nebula%20from%20ESO.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m17.jpg",
+      "group": "深空影像",
+      "title": "欧米伽星云 M17",
+      "objectUid": "M17",
+      "author": "ESO",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:ESO-The_Omega_Nebula-phot-25a-09-fullres.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/ESO-The%20Omega%20Nebula-phot-25a-09-fullres.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m20.jpg",
+      "group": "深空影像",
+      "title": "三叶星云 M20",
+      "objectUid": "M20",
+      "author": "ESO",
+      "license": "CC BY 3.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:ESO-Trifid_Nebula.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/ESO-Trifid%20Nebula.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m27.jpg",
+      "group": "深空影像",
+      "title": "哑铃星云 M27",
+      "objectUid": "M27",
+      "author": "Bill Schoening/NOIRLab/NSF/AURA",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M27%2C_NGC_6853%2C_Dumbbell_Nebula_(noao-02185).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M27%2C%20NGC%206853%2C%20Dumbbell%20Nebula%20(noao-02185).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m51.jpg",
+      "group": "深空影像",
+      "title": "涡状星系 M51",
+      "objectUid": "M51",
+      "author": "NASA & ESA (Hubble)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier51_sRGB.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier51%20sRGB.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m57.jpg",
+      "group": "深空影像",
+      "title": "环状星云 M57",
+      "objectUid": "M57",
+      "author": "Hubble Heritage Team (AURA/STScI/NASA)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M57_The_Ring_Nebula.JPG",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M57%20The%20Ring%20Nebula.JPG?width=800"
+    },
+    {
+      "file": "dso-photos/m13.jpg",
+      "group": "深空影像",
+      "title": "武仙座大星团 M13",
+      "objectUid": "M13",
+      "author": "ESA/Hubble and NASA",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Heart_of_M13_Hercules_Globular_Cluster.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Heart%20of%20M13%20Hercules%20Globular%20Cluster.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m81.jpg",
+      "group": "深空影像",
+      "title": "波德星系 M81",
+      "objectUid": "M81",
+      "author": "NASA, ESA, Hubble Heritage Team",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_81_HST.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2081%20HST.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m101.jpg",
+      "group": "深空影像",
+      "title": "风车星系 M101",
+      "objectUid": "M101",
+      "author": "ESA & NASA (Hubble)",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M101_hires_STScI-PRC2006-10a.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M101%20hires%20STScI-PRC2006-10a.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m104.jpg",
+      "group": "深空影像",
+      "title": "草帽星系 M104",
+      "objectUid": "M104",
+      "author": "NASA/ESA & Hubble Heritage Team",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M104_ngc4594_sombrero_galaxy_hi-res.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M104%20ngc4594%20sombrero%20galaxy%20hi-res.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m1.jpg",
+      "group": "深空影像",
+      "title": "蟹状星云 M1",
+      "objectUid": "M1",
+      "author": "NASA, ESA, J. Hester & A. Loll (ASU)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Crab_Nebula.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Crab%20Nebula.jpg?width=800"
+    },
+    {
+      "file": "textures/planets/sun.jpg",
+      "group": "行星贴图",
+      "title": "太阳表面贴图 2k",
+      "objectUid": "EPH-SUN",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_sun.jpg"
+    },
+    {
+      "file": "textures/planets/moon.jpg",
+      "group": "行星贴图",
+      "title": "月面贴图 2k",
+      "objectUid": "EPH-MOON",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_moon.jpg"
+    },
+    {
+      "file": "textures/planets/mercury.jpg",
+      "group": "行星贴图",
+      "title": "水星表面贴图 2k",
+      "objectUid": "EPH-MERCURY",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_mercury.jpg"
+    },
+    {
+      "file": "textures/planets/venus.jpg",
+      "group": "行星贴图",
+      "title": "金星大气贴图 2k",
+      "objectUid": "EPH-VENUS",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_venus_atmosphere.jpg"
+    },
+    {
+      "file": "textures/planets/mars.jpg",
+      "group": "行星贴图",
+      "title": "火星表面贴图 2k",
+      "objectUid": "EPH-MARS",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_mars.jpg"
+    },
+    {
+      "file": "textures/planets/jupiter.jpg",
+      "group": "行星贴图",
+      "title": "木星表面贴图 2k",
+      "objectUid": "EPH-JUPITER",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_jupiter.jpg"
+    },
+    {
+      "file": "textures/planets/saturn.jpg",
+      "group": "行星贴图",
+      "title": "土星表面贴图 2k",
+      "objectUid": "EPH-SATURN",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_saturn.jpg"
+    },
+    {
+      "file": "textures/planets/saturn_ring.png",
+      "group": "行星贴图",
+      "title": "土星环贴图（带 alpha）",
+      "objectUid": "EPH-SATURN",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_saturn_ring_alpha.png"
+    },
+    {
+      "file": "textures/planets/uranus.jpg",
+      "group": "行星贴图",
+      "title": "天王星贴图 2k",
+      "objectUid": "EPH-URANUS",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_uranus.jpg"
+    },
+    {
+      "file": "textures/planets/neptune.jpg",
+      "group": "行星贴图",
+      "title": "海王星贴图 2k",
+      "objectUid": "EPH-NEPTUNE",
+      "author": "Solar System Scope (INOVE)",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://www.solarsystemscope.com/textures/",
+      "fileUrl": "https://www.solarsystemscope.com/textures/download/2k_neptune.jpg"
+    }
+  ],
+  "dataSources": [
+    {
+      "title": "HYG v4.1 星表",
+      "license": "CC BY-SA 4.0（数据）",
+      "url": "https://github.com/astronexus/HYG-Database"
+    },
+    {
+      "title": "OpenNGC 深空天体目录",
+      "license": "CC BY-SA 4.0（数据）",
+      "url": "https://github.com/mattiaverga/OpenNGC"
+    },
+    {
+      "title": "astronomy-engine 天文历表",
+      "license": "MIT",
+      "url": "https://github.com/cosinekitty/astronomy"
+    }
+  ]
+}

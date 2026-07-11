@@ -65,12 +65,17 @@ interface NebulaBlob {
  * 紫/蓝收敛为冷灰蓝。位置已用 raDecToVector3 校验：4 团与著名 DSO 密集区
  * （仙女 M31 / 猎户 M42 / 人马 M8 一带）角距均 > 30°，不会叠在真实天体上。
  * 不整层删除——非 DSO 区域的天空需要一点氛围，否则过于空洞。
+ *
+ * 【宇宙 V3 再降】真实银河全景（MilkyWayLayer，NASA SVS Starmap 2020 含
+ * Gaia 微星场底噪）+ 16 张真实 DSO 照片上线后，氛围主角让位真实影像：
+ * 透明度再 ×0.5 收敛为「几不可察」的深空底色。仍不删层 —— 银河贴图加载
+ * 失败 / 用户关闭银河开关时，它是唯一的氛围兜底。
  */
 const BLOBS: NebulaBlob[] = [
-  { position: [-620, 240, -560], scale: 720, color: '#3a4a8a', opacity: 0.08 },
-  { position: [540, -180, -600], scale: 640, color: '#3d3a6e', opacity: 0.065 },
-  { position: [140, 420, 640], scale: 560, color: '#2f4a78', opacity: 0.06 },
-  { position: [-460, -340, 520], scale: 600, color: '#2a5a68', opacity: 0.05 },
+  { position: [-620, 240, -560], scale: 720, color: '#3a4a8a', opacity: 0.04 },
+  { position: [540, -180, -600], scale: 640, color: '#3d3a6e', opacity: 0.032 },
+  { position: [140, 420, 640], scale: 560, color: '#2f4a78', opacity: 0.03 },
+  { position: [-460, -340, 520], scale: 600, color: '#2a5a68', opacity: 0.025 },
 ];
 
 /** 渐变天穹 + 数团极淡氛围光斑（低端设备只留前 2 团）。 */
