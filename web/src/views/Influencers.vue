@@ -1,8 +1,8 @@
 <template>
   <div>
     <div class="toolbar">
-      <el-input v-model="q" placeholder="搜昵称/抖音号/UID/手机号" style="width: 260px" clearable @change="load" />
-      <el-select v-model="level" placeholder="等级" style="width: 100px" clearable @change="load">
+      <el-input v-model="q" placeholder="搜昵称/抖音号/UID/手机号" style="width: 260px" clearable @change="() => { page = 1; load() }" />
+      <el-select v-model="level" placeholder="等级" style="width: 100px" clearable @change="() => { page = 1; load() }">
         <el-option label="L1" value="L1" /><el-option label="L2" value="L2" /><el-option label="L3" value="L3" />
       </el-select>
       <el-button type="primary" @click="showPaste = true">+ 粘贴录入达人</el-button>
@@ -11,19 +11,25 @@
     <el-table :data="rows" @row-click="(r) => $router.push(`/influencers/${r.id}`)" style="cursor: pointer">
       <el-table-column prop="nickname" label="昵称" />
       <el-table-column prop="douyin_id" label="抖音号" />
-      <el-table-column prop="fans_count" label="粉丝" />
-      <el-table-column prop="gmv_30d" label="近30天GMV" />
-      <el-table-column label="等级" width="80">
+      <el-table-column prop="fans_count" label="粉丝" width="80" />
+      <el-table-column prop="gmv_30d" label="GMV" width="80" />
+      <el-table-column label="等级" width="70">
         <template #default="{ row }"><el-tag>{{ row.level }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="佣金" width="80">
+      <el-table-column label="佣金" width="70">
         <template #default="{ row }">{{ row.commission_tier }}%</template>
       </el-table-column>
-      <el-table-column label="投流" width="100">
-        <template #default="{ row }">{{ row.promo_mode === 'merchant' ? '商家投流' : '达人自投' }}</template>
+      <el-table-column label="标签" width="150">
+        <template #default="{ row }">
+          <el-tag v-for="t in (row.tags || [])" :key="t" size="small" type="info" style="margin-right: 4px">{{ t }}</el-tag>
+        </template>
       </el-table-column>
-      <el-table-column prop="round_count" label="合作轮次" width="90" />
+      <el-table-column prop="owner_bd_name" label="归属商务" width="100" />
+      <el-table-column prop="round_count" label="轮次" width="70" />
     </el-table>
+    <el-pagination background layout="total, prev, pager, next" :total="total"
+      :page-size="pageSize" :current-page="page" style="margin-top: 16px; justify-content: flex-end"
+      @current-change="(p) => { page = p; load() }" />
 
     <!-- 智能粘贴录入:核心交互(R1) -->
     <el-dialog v-model="showPaste" title="粘贴录入达人" width="620px">
@@ -74,6 +80,9 @@ const FIELDS = [
 ]
 
 const rows = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = 50
 const q = ref('')
 const level = ref('')
 const showPaste = ref(false)
@@ -83,7 +92,11 @@ const parsed = ref(null)
 const form = reactive({ level: 'L1' })
 
 async function load() {
-  rows.value = await api.get('/api/influencers', { params: { q: q.value || undefined, level: level.value || undefined } })
+  const data = await api.get('/api/influencers', {
+    params: { q: q.value || undefined, level: level.value || undefined, page: page.value, page_size: pageSize },
+  })
+  rows.value = data.items
+  total.value = data.total
 }
 
 async function doParse() {

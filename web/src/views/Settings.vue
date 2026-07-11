@@ -33,6 +33,12 @@
     </el-card>
 
     <el-card header="商务账号" style="margin-top: 16px">
+      <div class="bd-add">
+        <el-input v-model="newBd.display_name" placeholder="姓名" style="width: 120px" />
+        <el-input v-model="newBd.username" placeholder="登录账号" style="width: 140px" />
+        <el-input v-model="newBd.password" placeholder="初始密码" style="width: 140px" />
+        <el-button type="primary" @click="createBd">新建商务</el-button>
+      </div>
       <el-table :data="bds">
         <el-table-column prop="display_name" label="姓名" />
         <el-table-column prop="username" label="账号" />
@@ -50,6 +56,7 @@ import api from '../api'
 const configs = ref([])
 const bds = ref([])
 const followUpDays = ref(7)
+const newBd = reactive({ display_name: '', username: '', password: '' })
 
 async function load() {
   configs.value = await api.get('/api/admin/level-configs')
@@ -71,6 +78,17 @@ async function saveLevel(row) {
 async function saveFollowUp() {
   await api.put('/api/admin/system-configs/follow_up_days', { value: { days: followUpDays.value } })
   ElMessage.success('已保存')
+}
+
+async function createBd() {
+  if (!newBd.username || !newBd.password || !newBd.display_name) {
+    ElMessage.warning('请填写完整')
+    return
+  }
+  await api.post('/api/admin/bd-users', { ...newBd })
+  ElMessage.success('已新建商务账号')
+  newBd.display_name = newBd.username = newBd.password = ''
+  load()
 }
 
 onMounted(load)

@@ -4,8 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from .api import (admin_config, auth, dashboard, followups, h5, influencers,
-                  products, samples, uploads)
+from .api import (admin_config, auth, block_records, dashboard, followups, h5,
+                  influencers, products, samples, uploads, videos)
 from .config import settings
 from .db import Base, SessionLocal, engine
 from .models import RejectReason, User
@@ -26,7 +26,9 @@ app.add_middleware(
 
 for r in (auth.router, influencers.router, samples.router, samples.webhook_router,
           products.router, dashboard.router, h5.router, admin_config.router,
-          followups.router, uploads.router):
+          followups.router, uploads.router,
+          block_records.router, block_records.h5_router,
+          videos.router, videos.promotion_router):
     app.include_router(r)
 
 # 拒绝理由库初始数据(采自样例平台,docs/01 §2.1)
@@ -53,6 +55,27 @@ def startup():
             for text in SEED_REASONS:
                 db.add(RejectReason(text=text, scene="sample"))
         db.commit()
+
+
+@app.on_event("startup")
+async def start_followup_scheduler():
+    """催拍待办每日自动扫描(轻量 asyncio 定时,无需额外依赖)。"""
+    import asyncio
+
+    from .services import followup
+
+    async def loop():
+        while True:
+            await asyncio.sleep(24 * 3600)
+            try:
+                with SessionLocal() as db:
+                    n = followup.scan(db)
+                    if n:
+                        logging.info("[followup] 自动扫描生成 %s 条催拍待办", n)
+            except Exception:
+                logging.exception("[followup] 扫描失败")
+
+    asyncio.create_task(loop())
 
 
 @app.get("/api/health")

@@ -82,22 +82,41 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
 @router.get("")
 def list_influencers(q: str | None = None, level: str | None = None,
                      commission_tier: float | None = None,
+                     owner_bd_id: int | None = None, tag: str | None = None,
+                     page: int = 1, page_size: int = 50,
                      user: User = Depends(current_user), db: Session = Depends(get_db)):
-    stmt = scope(select(Influencer), user).order_by(Influencer.updated_at.desc())
+    from sqlalchemy import func
+    base = scope(select(Influencer), user)
     if q:
         like = f"%{q}%"
-        stmt = stmt.where(or_(Influencer.nickname.like(like), Influencer.douyin_id.like(like),
-                              Influencer.douyin_uid.like(like), Influencer.phone.like(like)))
+        base = base.where(or_(Influencer.nickname.like(like), Influencer.douyin_id.like(like),
+                              Influencer.douyin_uid.like(like), Influencer.phone.like(like),
+                              Influencer.cooperation_code.like(like)))
     if level:
-        stmt = stmt.where(Influencer.level == level)
+        base = base.where(Influencer.level == level)
     if commission_tier is not None:
-        stmt = stmt.where(Influencer.commission_tier == Decimal(str(commission_tier)))
-    rows = db.scalars(stmt.limit(200)).all()
-    return [{"id": r.id, "nickname": r.nickname, "douyin_id": r.douyin_id,
-             "fans_count": r.fans_count, "gmv_30d": r.gmv_30d, "level": r.level,
-             "commission_tier": float(r.commission_tier), "promo_mode": r.promo_mode,
-             "tags": r.tags, "round_count": len(r.cooperations),
-             "owner_bd_id": r.owner_bd_id} for r in rows]
+        base = base.where(Influencer.commission_tier == Decimal(str(commission_tier)))
+    if owner_bd_id is not None:
+        base = base.where(Influencer.owner_bd_id == owner_bd_id)
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    rows = db.scalars(base.order_by(Influencer.updated_at.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    # 归属商务名字(一次性查出映射)
+    bd_ids = {r.owner_bd_id for r in rows if r.owner_bd_id}
+    names = {u.id: u.display_name for u in
+             db.scalars(select(User).where(User.id.in_(bd_ids or [0]))).all()}
+    items = [{"id": r.id, "nickname": r.nickname, "douyin_id": r.douyin_id,
+              "fans_count": r.fans_count, "gmv_30d": r.gmv_30d, "level": r.level,
+              "commission_tier": float(r.commission_tier), "promo_mode": r.promo_mode,
+              "tags": r.tags, "round_count": len(r.cooperations),
+              "owner_bd_id": r.owner_bd_id, "owner_bd_name": names.get(r.owner_bd_id)}
+             for r in rows]
+    # tag 过滤(tags 存 JSON,DB 层不易过滤,内存过滤本页)
+    if tag:
+        items = [i for i in items if i["tags"] and tag in i["tags"]]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 class UpdateIn(BaseModel):

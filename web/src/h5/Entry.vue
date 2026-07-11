@@ -18,6 +18,9 @@
         一键提交申请
       </el-button>
 
+      <el-button type="warning" plain style="width: 100%; margin-top: 16px"
+        @click="$router.push('/h5/notice')">📌 拍摄前必读(卡审避坑)</el-button>
+
       <h3 style="margin-top: 24px">已开放给你的产品</h3>
       <el-card v-for="p in products" :key="p.id" class="prod"
         @click="$router.push(`/h5/products/${p.id}`)">

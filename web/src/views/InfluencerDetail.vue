@@ -37,11 +37,21 @@
                 <el-option label="达人自投" value="self" />
               </el-select>
             </el-form-item>
+            <el-form-item v-if="isAdmin" label="归属商务">
+              <el-select v-model="edit.owner_bd_id" style="width: 120px" placeholder="转移给">
+                <el-option v-for="b in bds" :key="b.id" :label="b.display_name" :value="b.id" />
+              </el-select>
+            </el-form-item>
             <el-form-item label="原因">
-              <el-input v-model="edit.reason" placeholder="为什么调整" style="width: 180px" />
+              <el-input v-model="edit.reason" placeholder="为什么调整" style="width: 160px" />
             </el-form-item>
             <el-button type="primary" @click="save">保存</el-button>
           </el-form>
+          <el-divider>标签</el-divider>
+          <el-tag v-for="t in (tags || [])" :key="t" closable style="margin-right: 6px" @close="removeTag(t)">{{ t }}</el-tag>
+          <el-input v-if="tagInput !== null" v-model="tagInput" size="small" style="width: 120px"
+            @keyup.enter="addTag" @blur="addTag" />
+          <el-button v-else size="small" @click="tagInput = ''">+ 标签</el-button>
         </el-card>
         <el-card header="原始自我介绍(留档)" style="margin-top: 16px" v-if="d.raw_intro">
           <pre style="white-space: pre-wrap; margin: 0">{{ d.raw_intro }}</pre>
@@ -74,15 +84,22 @@ import { useRoute } from 'vue-router'
 import api from '../api'
 
 const route = useRoute()
+const user = JSON.parse(localStorage.getItem('user') || '{}')
+const isAdmin = user.role === 'admin'
 const d = ref(null)
 const edit = reactive({})
+const tags = ref([])
+const tagInput = ref(null)
+const bds = ref([])
 
 async function load() {
   d.value = await api.get(`/api/influencers/${route.params.id}`)
+  tags.value = d.value.tags || []
   Object.assign(edit, {
     level: d.value.level,
     commission_tier: d.value.commission_tier,
     promo_mode: d.value.promo_mode,
+    owner_bd_id: d.value.owner_bd_id,
     reason: '',
   })
 }
@@ -93,5 +110,26 @@ async function save() {
   load()
 }
 
-onMounted(load)
+async function saveTags() {
+  await api.patch(`/api/influencers/${route.params.id}`, { tags: tags.value })
+}
+function addTag() {
+  const v = (tagInput.value || '').trim()
+  if (v && !tags.value.includes(v)) {
+    tags.value.push(v)
+    saveTags()
+  }
+  tagInput.value = null
+}
+function removeTag(t) {
+  tags.value = tags.value.filter((x) => x !== t)
+  saveTags()
+}
+
+onMounted(async () => {
+  await load()
+  if (isAdmin) {
+    try { bds.value = await api.get('/api/admin/bd-users') } catch (e) { /* ignore */ }
+  }
+})
 </script>
