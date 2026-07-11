@@ -276,7 +276,10 @@ class BlockRecord(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"))
     video_task_id: Mapped[int | None] = mapped_column(ForeignKey("video_tasks.id"))
-    screenshot_oss_key: Mapped[str | None] = mapped_column(String(512))
+    influencer_id: Mapped[int | None] = mapped_column(ForeignKey("influencers.id"))  # 关联达人(选填)
+    screenshot_oss_key: Mapped[str | None] = mapped_column(String(512))  # 兼容旧单图
+    screenshots: Mapped[list | None] = mapped_column(JSON)           # 多张截图 oss_key 数组
+    video_url: Mapped[str | None] = mapped_column(String(512))       # 违规视频链接/转存
     text: Mapped[str | None] = mapped_column(Text)
     tag: Mapped[str | None] = mapped_column(String(64))              # 违规类型
     starred: Mapped[bool] = mapped_column(Boolean, default=False)

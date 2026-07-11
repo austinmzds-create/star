@@ -16,23 +16,35 @@ from ..services import storage
 router = APIRouter(prefix="/api/block-records", tags=["block-records"])
 
 
-def _serialize(r: BlockRecord) -> dict:
+def _serialize(r: BlockRecord, db: Session | None = None) -> dict:
+    shots = list(r.screenshots or [])
+    if r.screenshot_oss_key and r.screenshot_oss_key not in shots:
+        shots.insert(0, r.screenshot_oss_key)
+    nickname = None
+    if db is not None and r.influencer_id:
+        inf = db.get(Influencer, r.influencer_id)
+        nickname = inf.nickname if inf else None
     return {
         "id": r.id,
         "product_id": r.product_id,
+        "influencer_id": r.influencer_id,
+        "influencer_nickname": nickname,
+        "video_url": r.video_url,
         "text": r.text,
         "tag": r.tag,
         "starred": r.starred,
         "happened_at": r.happened_at,
-        "screenshot_url": storage.signed_url(r.screenshot_oss_key) if r.screenshot_oss_key else None,
+        "screenshots": [storage.signed_url(k) for k in shots],
     }
 
 
 class BlockRecordIn(BaseModel):
     product_id: int | None = None
+    influencer_id: int | None = None
     text: str | None = None
     tag: str | None = None
-    screenshot_oss_key: str | None = None
+    video_url: str | None = None
+    screenshots: list[str] | None = None
     happened_at: datetime | None = None
 
 
@@ -63,7 +75,7 @@ def list_records(days: int | None = None, product_id: int | None = None,
     if starred is not None:
         stmt = stmt.where(BlockRecord.starred == starred)
     stmt = stmt.order_by(BlockRecord.starred.desc(), BlockRecord.happened_at.desc())
-    return [_serialize(r) for r in db.scalars(stmt).all()]
+    return [_serialize(r, db) for r in db.scalars(stmt).all()]
 
 
 @router.get("/tags")
