@@ -33,9 +33,10 @@ class Settings(BaseSettings):
     kd100_customer: str = ""
     kd100_callback_url: str = ""  # 例如 https://task.jisheng.yun/api/webhooks/kd100
 
-    # 客户现有智能体平台(已拍板:达人信息 LLM 解析走这里)
+    # 客户现有智能体平台(已拍板:达人信息 LLM 解析走这里,OpenAI 兼容 /v1)
     agent_api_base: str = ""
     agent_api_key: str = ""
+    agent_api_model: str = "gpt-5.5"
 
     # 巨量引擎开放平台(服务商资质,P0 spike)
     oceanengine_app_id: str = ""

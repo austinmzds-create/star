@@ -86,12 +86,19 @@ async def parse_llm(text: str) -> dict:
     if not settings.agent_api_base:
         return {}
     try:
+        # base 形如 https://host/codex/v1,OpenAI 兼容:直接追加 /chat/completions
+        base = settings.agent_api_base.rstrip("/")
+        payload = {
+            "messages": [{"role": "user", "content": LLM_PROMPT.format(text=text)}],
+            "response_format": {"type": "json_object"},
+        }
+        if settings.agent_api_model:
+            payload["model"] = settings.agent_api_model
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                f"{settings.agent_api_base.rstrip('/')}/v1/chat/completions",
+                f"{base}/chat/completions",
                 headers={"Authorization": f"Bearer {settings.agent_api_key}"},
-                json={"messages": [{"role": "user", "content": LLM_PROMPT.format(text=text)}],
-                      "response_format": {"type": "json_object"}},
+                json=payload,
             )
             resp.raise_for_status()
             import json
