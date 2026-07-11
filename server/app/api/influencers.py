@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_admin, current_user
-from ..models import Influencer, LevelChangeLog, User
+from ..models import (Cooperation, Influencer, LevelChangeLog, Product,
+                      Promotion, SampleOrder, User, VideoTask)
 from ..services import levels
 from ..services.parser import parse_influencer_text
 
@@ -186,3 +187,48 @@ def detail(influencer_id: int, user: User = Depends(current_user), db: Session =
         "change_logs": [{"field": l.field, "old": l.old_value, "new": l.new_value,
                          "reason": l.reason, "at": l.changed_at.isoformat()} for l in logs],
     }
+
+
+@router.get("/{influencer_id}/activity")
+def activity(influencer_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """达人一站式动态:该达人的寄样 / 视频 / 投流(达人视角聚合)"""
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    coop_ids = db.scalars(select(Cooperation.id)
+                          .where(Cooperation.influencer_id == inf.id)).all() or [0]
+
+    samples = []
+    for o, prod in db.execute(
+        select(SampleOrder, Product).join(Product, SampleOrder.product_id == Product.id)
+        .where(SampleOrder.cooperation_id.in_(coop_ids))
+        .order_by(SampleOrder.created_at.desc())
+    ).all():
+        samples.append({
+            "id": o.id, "product_name": prod.name, "status": o.status,
+            "tracking_no": o.tracking_no, "courier_company": o.courier_company,
+            "logistics_status": o.logistics_status,
+            "signed_at": o.signed_at.isoformat() if o.signed_at else None,
+            "reject_reason": o.reject_reason,
+            "created_at": o.created_at.isoformat(),
+        })
+
+    videos = []
+    for v, prod in db.execute(
+        select(VideoTask, Product).join(Product, VideoTask.product_id == Product.id)
+        .where(VideoTask.cooperation_id.in_(coop_ids))
+        .order_by(VideoTask.created_at.desc())
+    ).all():
+        videos.append({"id": v.id, "product_name": prod.name, "status": v.status,
+                       "blocked": v.blocked, "dy_url": v.dy_url,
+                       "created_at": v.created_at.isoformat()})
+
+    video_ids = [v["id"] for v in videos] or [0]
+    promotions = []
+    for p in db.scalars(select(Promotion).where(Promotion.video_task_id.in_(video_ids))
+                        .order_by(Promotion.created_at.desc())).all():
+        promotions.append({"id": p.id, "auth_status": p.auth_status,
+                           "mode_snapshot": p.mode_snapshot, "fail_reason": p.fail_reason,
+                           "created_at": p.created_at.isoformat()})
+
+    return {"samples": samples, "videos": videos, "promotions": promotions}

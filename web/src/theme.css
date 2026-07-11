@@ -1,0 +1,31 @@
+/* 全局基调:柔和紫主色、圆角、留白,清爽不像 OA */
+:root {
+  --el-color-primary: #6b5cf6;
+  --el-color-primary-light-3: #9a8ef9;
+  --el-color-primary-light-5: #b9b0fb;
+  --el-color-primary-light-7: #d8d3fd;
+  --el-color-primary-light-8: #e7e3fe;
+  --el-color-primary-light-9: #f3f1ff;
+  --el-color-primary-dark-2: #5646e0;
+  --el-border-radius-base: 10px;
+  --brand-ink: #1f2637;
+  --brand-sub: #8a93a6;
+  --brand-bg: #f6f7fb;
+}
+
+body { background: var(--brand-bg); color: var(--brand-ink); }
+
+/* 卡片/表格更柔和 */
+.el-card { border: none; border-radius: 14px; box-shadow: 0 2px 16px rgba(20, 30, 60, 0.05); }
+.el-card__header { font-weight: 600; border-bottom: 1px solid #f0f1f5; }
+.el-table { --el-table-border-color: #f0f1f5; --el-table-header-bg-color: #fafbfd; }
+.el-table th.el-table__cell { color: var(--brand-sub); font-weight: 500; }
+.el-drawer__header { margin-bottom: 0; padding: 18px 20px; border-bottom: 1px solid #f0f1f5; font-weight: 600; color: var(--brand-ink); }
+.el-drawer__body { padding: 20px; }
+.el-button { border-radius: 9px; }
+.el-tabs__item { font-size: 15px; }
+
+/* 通用小工具类 */
+.muted { color: var(--brand-sub); }
+.page-toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.section-title { font-weight: 600; color: var(--brand-ink); margin: 4px 0 12px; font-size: 15px; }
