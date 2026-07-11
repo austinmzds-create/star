@@ -19,7 +19,14 @@ import * as THREE from 'three';
 import { ephem } from './ephemRegistry';
 import { SPHERE_RADIUS } from './universe';
 
-export type PickKind = 'planet' | 'dso-featured' | 'dso' | 'star-bright' | 'star';
+export type PickKind =
+  | 'planet'
+  | 'satellite'
+  | 'minor'
+  | 'dso-featured'
+  | 'dso'
+  | 'star-bright'
+  | 'star';
 
 export interface PickEntry {
   uid: string;
@@ -35,6 +42,8 @@ export interface PickEntry {
 /** 各类目标的命中半径与优先级（渲染设计 §2.3）。 */
 const PICK_SPEC: Record<PickKind, { radiusPx: number; bias: number }> = {
   planet: { radiusPx: 26, bias: 14 },
+  satellite: { radiusPx: 22, bias: 12 },
+  minor: { radiusPx: 18, bias: 8 },
   'dso-featured': { radiusPx: 22, bias: 10 },
   dso: { radiusPx: 16, bias: 6 },
   'star-bright': { radiusPx: 14, bias: 3 },
@@ -79,6 +88,33 @@ export function ensureStaticEntries(): void {
   for (const body of ephem.bodies.values()) {
     push(body.uid, 'planet', body.vec);
   }
+}
+
+/**
+ * 动态条目注册（卫星/小天体层 mount 时调用）：与行星同款「共享 Vector3 引用、
+ * 原地 mutate」纪律——层内每帧更新 vec，拾取/高亮/飞行自动跟随快速移动目标。
+ * 幂等：uid 已存在则只更新 vec 引用（层重挂载时替换为新 buffer 的引用）。
+ */
+export function registerDynamicEntry(uid: string, kind: PickKind, vec: THREE.Vector3): void {
+  const existing = entryByUid.get(uid);
+  if (existing) {
+    existing.vec = vec;
+    existing.kind = kind;
+    return;
+  }
+  const spec = PICK_SPEC[kind];
+  const entry: PickEntry = { uid, kind, vec, radiusPx: spec.radiusPx, bias: spec.bias };
+  pickEntries.push(entry);
+  entryByUid.set(uid, entry);
+}
+
+/** 注销动态条目（层 unmount 时调用）；静态条目请勿注销。 */
+export function unregisterEntry(uid: string): void {
+  const entry = entryByUid.get(uid);
+  if (!entry) return;
+  entryByUid.delete(uid);
+  const idx = pickEntries.indexOf(entry);
+  if (idx >= 0) pickEntries.splice(idx, 1);
 }
 
 /** 按 uid 取拾取条目（含 kind，可用于高亮环尺寸分档）。 */

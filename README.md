@@ -27,11 +27,12 @@
 ```
 star/
 ├── apps/
-│   ├── web/                # PC 沉浸式星空前端（Next.js + R3F）+ 公开纪念页 /m/[slug] + 情侣页 /couple/[slug]
+│   ├── web/                # PC 沉浸式星空前端（Next.js + R3F）+ 公开纪念页 /m/[slug] + 情侣页 /couple/[slug] + 天象日历 /almanac
 │   └── miniapp/            # 微信小程序「扫码找星」：扫证书二维码 → 纪念星/祝福/宇宙来信 → 手机罗盘方向引导找星 → 海报分享（源码引用 @star/astro-core）
 ├── packages/
-│   ├── astro-core/         # 共享天文计算：RA/Dec→天球投影 / →地平坐标 / 可见性 / 最佳观测时间（web + 小程序 + api 三端复用）
-│   └── astro-data/         # 共享星体类型 + 星表（手写 60 精选 + HYG v41 生成 5058 亮星）+ 中英文搜索索引
+│   ├── astro-core/         # 共享天文计算：RA/Dec→天球投影 / →地平坐标（含逆变换）/ 可见性 / 最佳观测时间（web + 小程序 + api 三端复用）
+│   ├── astro-data/         # 共享星体类型 + 星表（手写 60 精选 + HYG v41 生成 5058 亮星）+ 中英文搜索索引
+│   └── astro-ephem/        # astronomy-engine 包装：行星日月星历 / 月相 / 天象事件搜索（events）/ 小天体开普勒（minorBodies）
 ├── services/
 │   └── api/                # NestJS 11 + Prisma 后端：天体搜索/详情、纪念登记（含情侣双星）、证书/星图/纪念册生成、订单支付、Agent 技能、审核后台、健康检查
 ├── infra/                  # docker-compose.yml（Postgres + Redis，真实环境用）
@@ -159,10 +160,47 @@ star/
 - 性能红线不变：新层全部 effect 驱动（useFrame 零计算）、默认关闭零 draw 增量；
   详见 [docs/architecture.md §5.4](./docs/architecture.md)。
 
+## 已完成（Phase 6B · 天象日历与体验层）
+
+- **天象日历 `/almanac`**：`@star/astro-ephem` 新增 `events` 模块（包装 astronomy-engine 事件搜索），
+  计算未来 12 个月：月相四相、日月食（全球日食标注「全球事件，本地可见性另查」）、
+  行星合月/行星合（角距 <2°）、水金大距、外行星冲、二分二至、超级月亮（满月±邻近近地点判定）；
+  流星雨为内置公域常识表（约 10 大流星雨极大期/ZHR/辐射点）。事件卡「提醒」= **零依赖手写 VEVENT**
+  生成 `.ics` 下载 + 可选浏览器 Notification（页面开着时的本地提醒，权限请求克制）；
+  「在星图中查看」深链回主页 `travelTo` 事件时刻并聚焦相关天体（store 零修改）。
+  **独立路由独立 chunk，不进主页 First Load**；事件搜索单测用已知天文事实宽容差锚点
+  （如 2026 年满月日期 ±1 天、2026-08-12 英仙座极大 ±1 天）。
+- **月相日历**：月历视图每日 SVG 月相小图标（按 illumination+盈亏程序绘制）+
+  当日月出月落时刻（SearchRiseSet 按所选城市）+ 今日月相详情。
+- **深空科普长文**：16 个有真实照片的 Messier 天体各 150–300 字原创中文科普；
+  StarInfoCard「了解更多」展开长文 + 照片放大 lightbox（常驻署名）。
+- **夜间红光模式**：顶层 `mix-blend-mode: multiply` 红色覆盖层——天然覆盖 WebGL canvas，
+  3D 场景同步变红、零后处理成本；DisplaySettings 开关，localStorage 持久化（SSR 安全封装 + 客户端回灌防水合不一致）。
+- **分享海报**：信息卡「分享」→ 独立 2D canvas 离屏程序化绘制 1080×1440 海报
+  （暗黑星空底 + 天体照片/程序视觉 + 名称/坐标/日期/品牌 + 合规脚注）下载 PNG，
+  不截 3D、不开 `preserveDrawingBuffer`。
+- **行星轨迹 + 黄道带**：仅对被选中行星采样 `getEquatorial` 画视轨迹折线（内行星 ±60 天/外行星 ±365 天，
+  未选中零常驻成本）；黄道两侧 ±8° 半透明带并入现有黄道开关增强。
+- **人造卫星**：`satellite.js`（MIT，**本阶段唯一新增 npm 依赖**）SGP4——内置 ISS/天宫/哈勃
+  TLE 快照常量（注明 epoch，「TLE 会过期，位置为近似演示」）+ 运行时可选 Celestrak 刷新（失败回退快照）；
+  小亮点 + 短尾迹（≤2 draw）、可中文搜索，信息卡标注「人造卫星 · 演示精度」。
+  懒加载 chunk、开关默认关。`isNamable=false`。
+- **彗星/小行星**：谷神星/灶神星/智神星 + 哈雷彗星（远日点附近，卡内标注）——
+  JPL 轨道根数内置常量（注明历元）+ 手写开普勒方程牛顿迭代 → 日心 → 地心 RA/Dec
+  （`@star/astro-ephem` 新增 `minorBodies` 模块，含对照 JPL Horizons 的宽容差单测）；
+  信息卡展示轨道要素/当前距离与精度声明「演示级，±0.5°」。`isNamable=false`。
+- **陀螺仪指星**（仅移动端）：`DeviceOrientationEvent`（iOS 需 `requestPermission`）驱动相机指向，
+  复用 astro-core `horizontalToEquatorial` 把地平方向转天球方向，举起手机对准天空即见该方向星空；
+  权限拒绝/无传感器优雅退出，桌面隐藏。
+- **环境音效**：WebAudio 程序化生成（柔和棕噪声 + 缓慢正弦泛音垫，零音频资产零版权），
+  默认关、用户手势后才创建 AudioContext，音量可调、状态持久化。
+- **PWA**：Next 15 原生 `app/manifest.ts` + 基础 service worker（仅缓存静态壳、网络优先、
+  不缓存 API）+ `beforeinstallprompt` 安装提示按钮。
+- 详见 [docs/architecture.md §5.5](./docs/architecture.md)；TLE/轨道根数/流星雨表等数据来源登记见
+  [docs/credits.md](./docs/credits.md)。
+
 ## 路线图
 
-- **Phase 6B**：观星日历/月相日历、科普模式、红光护眼、星图海报导出、行星轨道线、
-  卫星/彗星、陀螺仪、音效、PWA。
 - **Phase 7+**：真实微信/支付宝支付网关联调、搜索 DB 化（pg_trgm）、内容安全云审核、实体礼盒供应链与物流；
   证书/纪念册渲染独立 worker 伸缩。
 

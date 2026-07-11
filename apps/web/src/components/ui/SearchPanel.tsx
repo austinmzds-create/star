@@ -55,6 +55,10 @@ export function SearchPanel() {
 
   const choose = (r: StarSearchResult) => {
     const uid = r.object.objectUid;
+    // 搜到卫星/小天体 → 自动开启对应层；层 mount 后发现自己是 selectedUid
+    // 会补飞一次（focusNonce 幂等），首搜零坐标问题闭环。
+    if (uid.startsWith('SAT-')) useUniverse.setState({ showSatellites: true });
+    else if (uid.startsWith('MB-')) useUniverse.setState({ showMinorBodies: true });
     // 星历天体（EPH-）不在 astro-data 目录内，仍可正常飞行：
     // CameraRig 经 resolveObjectPosition 取星历实时坐标。
     focusStar(uid);

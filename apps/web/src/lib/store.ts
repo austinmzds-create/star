@@ -4,6 +4,7 @@ import { CONSTELLATION_ABBR, getCelestialByUid } from '@star/astro-data';
 import { isEphemerisUid } from '@star/astro-ephem/bodies';
 import { create } from 'zustand';
 import { DEFAULT_CITY, type City } from './cities';
+import { writePref } from './prefs';
 
 /** 星座全英文名 → IAU 3 字母缩写（目录里恒星的 constellation 存全英文名）。 */
 const CONSTELLATION_EN_TO_ABBR: Record<string, string> = Object.fromEntries(
@@ -48,6 +49,14 @@ interface UniverseState {
    * 东南西北方位标、地平线下半球压暗与晨昏色调（G 组）。
    */
   showHorizon: boolean;
+
+  // ── 轨迹与动态天体（Phase 6B 目标 6/7/8） ──
+  /** 行星轨迹：选中行星/月亮时画 ±N 天视轨迹折线（无选中时零几何零成本）。 */
+  showPlanetTrails: boolean;
+  /** 人造卫星层（ISS/天宫/哈勃，TLE+SGP4 演示精度）；默认关，satellite.js 懒加载。 */
+  showSatellites: boolean;
+  /** 小行星与彗星层（谷神/灶神/智神/哈雷，演示级 ±0.5°）；默认关。 */
+  showMinorBodies: boolean;
   /** 「显示 ⚙」设置面板开合。 */
   settingsOpen: boolean;
   /** 「影像与数据来源」致谢面板开合（CreditsPanel；DisplaySettings 亦可打开）。 */
@@ -96,6 +105,16 @@ interface UniverseState {
   /** 双星命名表单弹窗是否打开。 */
   coupleFormOpen: boolean;
 
+  // ── 体验层（Phase 6B-UX：红光/环境音/陀螺仪，均低频布尔） ──
+  /** 红光护眼模式（顶层 multiply 覆盖层；持久化 star.redLight）。 */
+  redLightOn: boolean;
+  /** 环境音开关（audioEngine；持久化 star.ambientOn；实际发声需用户手势后）。 */
+  ambientOn: boolean;
+  /** 环境音音量 0–1（持久化 star.ambientVolume；实际增益另有 0.06 硬上限）。 */
+  ambientVolume: number;
+  /** 陀螺仪指星模式是否激活（仅移动端；高频姿态走 cameraBus，不进 store）。 */
+  gyroActive: boolean;
+
   selectStar: (uid: string | null) => void;
   focusStar: (uid: string) => void;
   setCity: (city: City) => void;
@@ -106,6 +125,9 @@ interface UniverseState {
   toggleEcliptic: () => void;
   toggleEquatorGrid: () => void;
   toggleHorizon: () => void;
+  togglePlanetTrails: () => void;
+  toggleSatellites: () => void;
+  toggleMinorBodies: () => void;
   /** 打开显示设置面板（同时收起时间条，避免两个浮层叠在 ControlBar 上方）。 */
   openSettings: () => void;
   closeSettings: () => void;
@@ -149,6 +171,13 @@ interface UniverseState {
   openCoupleForm: () => void;
   /** 关闭双星命名表单弹窗。 */
   closeCoupleForm: () => void;
+
+  // ── 体验层 action（Phase 6B-UX） ──
+  toggleRedLight: () => void;
+  setAmbientOn: (on: boolean) => void;
+  setAmbientVolume: (v: number) => void;
+  /** 置 true 时顺带关闭自动旋转（指星模式下两者互斥）。 */
+  setGyroActive: (active: boolean) => void;
 }
 
 export const useUniverse = create<UniverseState>((set) => ({
@@ -162,6 +191,9 @@ export const useUniverse = create<UniverseState>((set) => ({
   showEcliptic: false,
   showEquatorGrid: false,
   showHorizon: false,
+  showPlanetTrails: true, // 仅选中行星时才有几何，常驻零成本
+  showSatellites: false, // 硬约束：默认关（satellite.js 只在开启时懒加载）
+  showMinorBodies: false, // 硬约束：默认关
   settingsOpen: false,
   creditsOpen: false,
   timePanelOpen: false,
@@ -181,6 +213,13 @@ export const useUniverse = create<UniverseState>((set) => ({
   coupleSlotA: null,
   coupleSlotB: null,
   coupleFormOpen: false,
+
+  // 体验层：SSR 首帧一律取默认值，由 ExperienceHydrator 在客户端读 prefs
+  // 后一次性 set（避免 create 阶段读 localStorage 造成 SSR/CSR 水合不一致）。
+  redLightOn: false,
+  ambientOn: false,
+  ambientVolume: 0.5,
+  gyroActive: false,
 
   selectStar: (uid) =>
     set((s) => {
@@ -223,6 +262,9 @@ export const useUniverse = create<UniverseState>((set) => ({
   toggleEcliptic: () => set((s) => ({ showEcliptic: !s.showEcliptic })),
   toggleEquatorGrid: () => set((s) => ({ showEquatorGrid: !s.showEquatorGrid })),
   toggleHorizon: () => set((s) => ({ showHorizon: !s.showHorizon })),
+  togglePlanetTrails: () => set((s) => ({ showPlanetTrails: !s.showPlanetTrails })),
+  toggleSatellites: () => set((s) => ({ showSatellites: !s.showSatellites })),
+  toggleMinorBodies: () => set((s) => ({ showMinorBodies: !s.showMinorBodies })),
   openSettings: () => set({ settingsOpen: true, timePanelOpen: false }),
   closeSettings: () => set({ settingsOpen: false }),
   openCredits: () => set({ creditsOpen: true }),
@@ -301,6 +343,24 @@ export const useUniverse = create<UniverseState>((set) => ({
     set(slot === 'A' ? { coupleSlotA: null } : { coupleSlotB: null }),
   openCoupleForm: () => set({ coupleFormOpen: true }),
   closeCoupleForm: () => set({ coupleFormOpen: false }),
+
+  toggleRedLight: () =>
+    set((s) => {
+      const on = !s.redLightOn;
+      writePref('redLight', on);
+      return { redLightOn: on };
+    }),
+  setAmbientOn: (on) => {
+    writePref('ambientOn', on);
+    set({ ambientOn: on });
+  },
+  setAmbientVolume: (v) => {
+    const c = Math.min(1, Math.max(0, v));
+    writePref('ambientVolume', c);
+    set({ ambientVolume: c });
+  },
+  setGyroActive: (active) =>
+    set(active ? { gyroActive: true, autoRotate: false } : { gyroActive: false }),
 }));
 
 /**

@@ -7,7 +7,12 @@ export type CelestialObjectType =
   | 'cluster'
   | 'planet'
   | 'moon'
-  | 'sun';
+  | 'sun'
+  // Phase 6B 纯类型加宽（向后兼容）：仅存在于 web 端常量目录行，绝不落库/seed。
+  // api 按 string 存储、无对 type 的穷举依赖（已核）。三类一律 isNamable=false。
+  | 'satellite'
+  | 'asteroid'
+  | 'comet';
 
 /**
  * 一个天体的主数据。

@@ -7,7 +7,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./bodies": "./src/bodies.ts"
+    "./bodies": "./src/bodies.ts",
+    "./events": "./src/events.ts",
+    "./minor-meta": "./src/minorBodiesMeta.ts"
   },
   "scripts": {
     "test": "vitest run",

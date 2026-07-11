@@ -58,9 +58,17 @@
 | HYG v4.1 星表 | CC BY-SA 4.0（数据） | https://github.com/astronexus/HYG-Database |
 | OpenNGC 深空天体目录 | CC BY-SA 4.0（数据） | https://github.com/mattiaverga/OpenNGC |
 | astronomy-engine 天文历表 | MIT | https://github.com/cosinekitty/astronomy |
+| TLE 轨道数据（ISS/天宫/哈勃：内置快照注明 epoch + 运行时可选刷新；TLE 会过期，站内标注「人造卫星 · 演示精度」） | 公开数据（Celestrak） | https://celestrak.org |
+| 小天体轨道根数（谷神星/灶神星/智神星/哈雷彗星，内置常量注明历元；位置经开普勒方程计算，参考值对照 JPL Horizons，站内标注「演示级，±0.5°」） | 公开数据（JPL SBDB / Horizons，US Gov） | https://ssd.jpl.nasa.gov |
+| 流星雨常识表（约 10 大流星雨极大期/ZHR/辐射点，内置静态常量） | 公域天文常识（历表可参考 IMO） | https://www.imo.net |
+| satellite.js（SGP4 传播库，Phase 6B 唯一新增 npm 依赖） | MIT | https://github.com/shashwatak/satellite-js |
 
 ## 展示口径注记
 
 - 小角径深空天体（如 M57 环状星云，真实角径仅约 1.3′）按真实尺寸渲染将不可见，站内显示尺寸经放大（0.6–1.0°），大角径天体（M31/M45 等）按真实角尺寸摆放。
 - 银河全景为 NASA SVS Deep Star Maps 2020 的天球赤道坐标版本，内含 Gaia DR2 星表渲染的微星场。
 - 行星贴图来自 Solar System Scope（CC-BY-4.0），部分为艺术加工的可视化贴图（如金星取大气层版本）。
+- **Phase 6B 数据来源补记**：上表 TLE / 小天体轨道根数 / 流星雨表 / satellite.js 四行为**非图像数据来源**，
+  由文档手工登记并与站内 CreditsPanel 的静态「数据来源」段落保持一致；`fetch-assets.mjs` 只管理**图像资产**清单，
+  重跑该脚本重新生成本文件时需保留（或由脚本清单收编）这四行与本条注记。
+- 卫星与小天体的观测坐标全部经公式计算（SGP4 / 开普勒方程），不采用任何编造坐标；二者均不可命名（`isNamable=false`）。

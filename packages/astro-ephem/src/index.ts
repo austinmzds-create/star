@@ -10,3 +10,5 @@
 
 export * from './bodies';
 export * from './ephemeris';
+export * from './events';
+export * from './minorBodies';

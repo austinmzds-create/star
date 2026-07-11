@@ -1,9 +1,10 @@
 'use client';
 
 import { Canvas } from '@react-three/fiber';
-import { Suspense, useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { getDeviceTier } from '@/lib/deviceTier';
 import { ensureStaticEntries } from '@/lib/pickRegistry';
+import { useUniverse } from '@/lib/store';
 import { buildCatalogRenderData, generateAmbientField } from '@/lib/universe';
 import { CameraRig } from './CameraRig';
 import { ConstellationLayer } from './ConstellationLayer';
@@ -15,9 +16,19 @@ import { GridLayer } from './GridLayer';
 import { HorizonLayer } from './HorizonLayer';
 import { MilkyWayLayer } from './MilkyWayLayer';
 import { PlanetsLayer } from './PlanetsLayer';
+import { PlanetTrailLayer } from './PlanetTrailLayer';
 import { SpaceBackdrop } from './SpaceBackdrop';
 import { TargetHighlight } from './TargetHighlight';
 import { TwinkleStars } from './TwinkleStars';
+
+// 动态天体层（Phase 6B 目标 7/8）：默认关，首次开启开关才下载对应异步 chunk。
+// satellite.js 只被 SatellitesLayer 的 chunk 引用——首屏 bundle 零增量。
+const SatellitesLayer = lazy(() =>
+  import('./SatellitesLayer').then((m) => ({ default: m.SatellitesLayer })),
+);
+const MinorBodiesLayer = lazy(() =>
+  import('./MinorBodiesLayer').then((m) => ({ default: m.MinorBodiesLayer })),
+);
 
 /**
  * 全屏沉浸式宇宙场景（宇宙 V2 分层渲染）。
@@ -41,6 +52,9 @@ import { TwinkleStars } from './TwinkleStars';
  */
 export function UniverseScene() {
   const tier = useMemo(() => getDeviceTier(), []);
+  // 动态天体层开关（低频布尔；层组件本身再做各自的懒加载/注册）
+  const showSatellites = useUniverse((s) => s.showSatellites);
+  const showMinorBodies = useUniverse((s) => s.showMinorBodies);
   const catalog = useMemo(() => buildCatalogRenderData(), []);
   const ambient = useMemo(
     // 低端设备环境星场减半（1500 + 2500）
@@ -77,6 +91,12 @@ export function UniverseScene() {
         <ConstellationLayer />
         {/* 行星日月：observeTime 驱动的星历实时位置 */}
         <PlanetsLayer tier={tier} />
+        {/* 行星轨迹（6B-6）：选中行星/月亮时的 ±N 天视轨迹（≤2 draw，无选中零几何） */}
+        <PlanetTrailLayer />
+        {/* 人造卫星（6B-7）：ISS/天宫/哈勃，SGP4 站心实时位置 + 尾迹（懒 chunk，2 draw） */}
+        {showSatellites && <SatellitesLayer />}
+        {/* 小行星与彗星（6B-8）：谷神/灶神/智神/哈雷，JPL 根数开普勒轨道（懒 chunk，1 draw） */}
+        {showMinorBodies && <MinorBodiesLayer />}
         <TargetHighlight />
       </Suspense>
       <EphemDriver />

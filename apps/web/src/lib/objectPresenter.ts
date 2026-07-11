@@ -22,6 +22,12 @@ export function kindLabelZh(obj: Pick<CelestialObject, 'type'>): string {
       return '卫星';
     case 'sun':
       return '恒星（太阳）';
+    case 'satellite':
+      return '人造卫星';
+    case 'asteroid':
+      return '小行星';
+    case 'comet':
+      return '彗星';
     default:
       return '天体';
   }
@@ -36,6 +42,12 @@ export function primaryBadgeZh(obj: Pick<CelestialObject, 'type'>): string | nul
       return '太阳系 · 卫星';
     case 'sun':
       return '太阳系 · 恒星';
+    case 'satellite':
+      return '人造卫星 · 演示精度';
+    case 'asteroid':
+      return '太阳系 · 小行星';
+    case 'comet':
+      return '太阳系 · 彗星';
     case 'galaxy':
     case 'nebula':
     case 'cluster':
@@ -54,6 +66,8 @@ export function searchTypeBadgeZh(obj: Pick<CelestialObject, 'type'>): string | 
       return '太阳';
     case 'moon':
       return '月亮';
+    case 'satellite':
+      return '卫星';
     default:
       return kindLabelZh(obj);
   }

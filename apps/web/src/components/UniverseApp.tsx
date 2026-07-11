@@ -9,6 +9,7 @@ import { CoupleModal } from './ui/CoupleModal';
 import { CreditsPanel } from './ui/CreditsPanel';
 import { CoupleTray } from './ui/CoupleTray';
 import { DisplaySettings } from './ui/DisplaySettings';
+import { GyroModeButton } from './ui/GyroModeButton';
 import { HintOverlay } from './ui/HintOverlay';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { MemorialModal } from './ui/MemorialModal';
@@ -42,6 +43,8 @@ export function UniverseApp() {
       {/* 悬停识别名牌：hoverBus 驱动，跟随光标（触屏自然静默） */}
       <HoverTooltip />
       <CoupleTray />
+      {/* 指向天空（陀螺仪指星）：仅触屏 + 方向传感器设备显示 */}
+      <GyroModeButton />
       <HintOverlay />
       <ComplianceNote />
       <CreditsPanel />

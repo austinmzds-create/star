@@ -1,7 +1,14 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
+import {
+  setAmbientVolume as setAmbientVolumeEngine,
+  startAmbient,
+  stopAmbient,
+} from '@/lib/audioEngine';
 import { CITIES } from '@/lib/cities';
+import { promptInstall, subscribeInstallable } from '@/lib/pwaInstall';
 import { useUniverse } from '@/lib/store';
 
 /**
@@ -23,6 +30,9 @@ export function DisplaySettings() {
   const showEcliptic = useUniverse((s) => s.showEcliptic);
   const showEquatorGrid = useUniverse((s) => s.showEquatorGrid);
   const showHorizon = useUniverse((s) => s.showHorizon);
+  const showPlanetTrails = useUniverse((s) => s.showPlanetTrails);
+  const showSatellites = useUniverse((s) => s.showSatellites);
+  const showMinorBodies = useUniverse((s) => s.showMinorBodies);
   const city = useUniverse((s) => s.city);
 
   const toggleMilkyWay = useUniverse((s) => s.toggleMilkyWay);
@@ -32,7 +42,30 @@ export function DisplaySettings() {
   const toggleEcliptic = useUniverse((s) => s.toggleEcliptic);
   const toggleEquatorGrid = useUniverse((s) => s.toggleEquatorGrid);
   const toggleHorizon = useUniverse((s) => s.toggleHorizon);
+  const togglePlanetTrails = useUniverse((s) => s.togglePlanetTrails);
+  const toggleSatellites = useUniverse((s) => s.toggleSatellites);
+  const toggleMinorBodies = useUniverse((s) => s.toggleMinorBodies);
   const setCity = useUniverse((s) => s.setCity);
+
+  // ── 体验层（Phase 6B：红光/环境音/PWA 安装） ──
+  const redLightOn = useUniverse((s) => s.redLightOn);
+  const ambientOn = useUniverse((s) => s.ambientOn);
+  const ambientVolume = useUniverse((s) => s.ambientVolume);
+  const toggleRedLight = useUniverse((s) => s.toggleRedLight);
+  const setAmbientOn = useUniverse((s) => s.setAmbientOn);
+  const setAmbientVolume = useUniverse((s) => s.setAmbientVolume);
+
+  /** 点击开关本身就是用户手势，AudioContext 在此合法启动。 */
+  const handleAmbientToggle = () => {
+    const next = !ambientOn;
+    setAmbientOn(next);
+    if (next) startAmbient(ambientVolume);
+    else stopAmbient();
+  };
+
+  // PWA 可安装状态（beforeinstallprompt 截留后为 true；iOS 无此事件自然隐藏）
+  const [installable, setInstallable] = useState(false);
+  useEffect(() => subscribeInstallable(setInstallable), []);
 
   return (
     <AnimatePresence>
@@ -83,6 +116,27 @@ export function DisplaySettings() {
                   checked={showEquatorGrid}
                   onToggle={toggleEquatorGrid}
                 />
+                <SwitchRow
+                  label="行星轨迹"
+                  hint="选中行星时 · 过去与未来的天空路径"
+                  checked={showPlanetTrails}
+                  onToggle={togglePlanetTrails}
+                />
+              </Section>
+
+              <Section title="动态天体">
+                <SwitchRow
+                  label="人造卫星"
+                  hint="ISS/天宫/哈勃 · 演示精度"
+                  checked={showSatellites}
+                  onToggle={toggleSatellites}
+                />
+                <SwitchRow
+                  label="小行星与彗星"
+                  hint="谷神星等 · 演示级 ±0.5°"
+                  checked={showMinorBodies}
+                  onToggle={toggleMinorBodies}
+                />
               </Section>
 
               <Section title="观测">
@@ -111,15 +165,59 @@ export function DisplaySettings() {
                 </div>
               </Section>
 
-              <button
-                onClick={() => {
-                  closeSettings();
-                  openCredits();
-                }}
-                className="mt-2 text-[11px] text-nebula-200/45 underline-offset-2 transition hover:text-nebula-200/80 hover:underline"
-              >
-                影像与数据来源
-              </button>
+              <Section title="体验">
+                <SwitchRow
+                  label="红光护眼"
+                  hint="保护夜间暗适应"
+                  checked={redLightOn}
+                  onToggle={toggleRedLight}
+                />
+                <SwitchRow
+                  label="环境音"
+                  hint="程序生成 · 极低音量"
+                  checked={ambientOn}
+                  onToggle={handleAmbientToggle}
+                />
+                {ambientOn && (
+                  <div className="flex items-center gap-3 py-1.5">
+                    <span className="text-[11px] text-nebula-200/50">音量</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={ambientVolume}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setAmbientVolume(v);
+                        setAmbientVolumeEngine(v);
+                      }}
+                      className="h-1 flex-1 accent-nebula-400"
+                      aria-label="环境音音量"
+                    />
+                  </div>
+                )}
+              </Section>
+
+              <div className="mt-2 flex items-center justify-between">
+                <button
+                  onClick={() => {
+                    closeSettings();
+                    openCredits();
+                  }}
+                  className="text-[11px] text-nebula-200/45 underline-offset-2 transition hover:text-nebula-200/80 hover:underline"
+                >
+                  影像与数据来源
+                </button>
+                {installable && (
+                  <button
+                    onClick={() => void promptInstall()}
+                    className="rounded-lg border border-nebula-400/25 bg-white/[0.04] px-2.5 py-1 text-[11px] text-nebula-100/85 transition hover:bg-white/[0.08]"
+                  >
+                    ⤓ 安装到桌面
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </>

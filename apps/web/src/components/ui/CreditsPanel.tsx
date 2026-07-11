@@ -63,6 +63,15 @@ const FALLBACK_LINES: string[] = [
   '星表与深空目录：HYG Database、OpenNGC；星历计算：astronomy-engine',
 ];
 
+/**
+ * 数据来源（非图像资产，常显）：credits.json 由 fetch-assets.mjs 生成、只管
+ * 图像资产，轨道/星历数据来源在此静态列出（Phase 6B：卫星与小天体）。
+ */
+const DATA_SOURCE_LINES: string[] = [
+  'TLE 轨道数据：Celestrak（内置快照 + 运行时刷新；SGP4 推算，演示精度）',
+  '小天体轨道根数：JPL Small-Body Database；参考校验：JPL Horizons（二体模型，演示级 ±0.5°）',
+];
+
 export function CreditsPanel() {
   const open = useUniverse((s) => s.creditsOpen);
   const openCredits = useUniverse((s) => s.openCredits);
@@ -160,6 +169,19 @@ export function CreditsPanel() {
             ) : (
               <div className="text-[12px] text-nebula-200/50">加载中…</div>
             )}
+
+            <div className="mt-5 border-t border-white/10 pt-3">
+              <div className="mb-1.5 text-[11px] uppercase tracking-[0.22em] text-nebula-200/50">
+                数据来源
+              </div>
+              <ul className="list-disc space-y-1.5 pl-4">
+                {DATA_SOURCE_LINES.map((line, i) => (
+                  <li key={i} className="text-[12px] leading-relaxed text-nebula-200/60">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            </div>
           </div>
         </div>
       )}

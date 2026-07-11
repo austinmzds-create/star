@@ -118,10 +118,82 @@ interface BuiltGroup {
   disposables: Array<{ dispose(): void }>;
 }
 
-/** 黄道组：大圆（128 段）+ 十二宫刻度（24 顶点）+ 宫名 Sprite ×12。 */
+/**
+ * 黄道带 ±8°：黄经 128 列 × 黄纬 5 行（β=−8,−4,0,+4,+8）的球带网格，
+ * ShaderMaterial 按 |β| 从中心 0.085 到边缘 0 渐隐（金色，Additive）。
+ * 半径 0.985（银河层同深度、黄道线之下），+1 draw。视觉验收：行星与
+ * 月亮全部落在带内——「黄道带 = 行星的跑道」。
+ */
+function buildEclipticBand(): { mesh: THREE.Mesh; disposables: Array<{ dispose(): void }> } {
+  const COLS = 128;
+  const BETAS = [-8, -4, 0, 4, 8];
+  const rows = BETAS.length;
+  const radius = SPHERE_RADIUS * 0.985;
+
+  const positions = new Float32Array((COLS + 1) * rows * 3);
+  const aBeta = new Float32Array((COLS + 1) * rows);
+  for (let c = 0; c <= COLS; c++) {
+    const lambda = (c * 360) / COLS;
+    for (let r = 0; r < rows; r++) {
+      const beta = BETAS[r]!;
+      const v = eclipticToVector3(lambda, beta, radius);
+      const i = c * rows + r;
+      positions[i * 3] = v.x;
+      positions[i * 3 + 1] = v.y;
+      positions[i * 3 + 2] = v.z;
+      aBeta[i] = beta / 8; // ∈ [-1, 1]
+    }
+  }
+  const indices: number[] = [];
+  for (let c = 0; c < COLS; c++) {
+    for (let r = 0; r < rows - 1; r++) {
+      const a = c * rows + r;
+      const b = (c + 1) * rows + r;
+      indices.push(a, b, a + 1, b, b + 1, a + 1);
+    }
+  }
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('aBeta', new THREE.BufferAttribute(aBeta, 1));
+  geom.setIndex(indices);
+
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: /* glsl */ `
+      attribute float aBeta;
+      varying float vBeta;
+      void main() {
+        vBeta = aBeta;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying float vBeta;
+      void main() {
+        float alpha = (1.0 - abs(vBeta)) * 0.085; // 中心 0.085 → 边缘 0，柔和羽化
+        gl_FragColor = vec4(vec3(0.851, 0.725, 0.431), alpha); // #d9b96e 金
+      }
+    `,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+  const mesh = new THREE.Mesh(geom, mat);
+  mesh.renderOrder = 0.45; // 黄道线（0.5）之下
+  mesh.frustumCulled = false;
+  return { mesh, disposables: [geom, mat] };
+}
+
+/** 黄道组：±8° 半透明黄道带 + 大圆（128 段）+ 十二宫刻度（24 顶点）+ 宫名 Sprite ×12。 */
 function buildEclipticGroup(): BuiltGroup {
   const group = new THREE.Group();
   const disposables: Array<{ dispose(): void }> = [];
+
+  // 黄道带 ±8°（行星的跑道，1 draw）
+  const band = buildEclipticBand();
+  group.add(band.mesh);
+  disposables.push(...band.disposables);
 
   // 大圆：β=0，λ 每 2.8125°（128 段）
   const circle: THREE.Vector3[] = [];

@@ -55,6 +55,8 @@ function kindScale(kind: PickKind | undefined): number {
     case 'dso-featured':
       return 1.6;
     case 'dso':
+    case 'satellite':
+    case 'minor':
       return 1.3;
     default:
       return 1;

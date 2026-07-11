@@ -9,5 +9,6 @@ export * from './constants';
 export * from './types';
 export * from './time';
 export * from './coordinates';
+export * from './device-orientation';
 export * from './direction';
 export * from './visibility';

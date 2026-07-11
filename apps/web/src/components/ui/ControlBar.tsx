@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { formatBeijingTime } from '@/lib/format';
 import { selectTimeTravel, useUniverse } from '@/lib/store';
 
@@ -59,6 +60,15 @@ export function ControlBar() {
         <Toggle active={settingsOpen} onClick={settingsOpen ? closeSettings : openSettings}>
           显示 ⚙
         </Toggle>
+        {/* 天象日历入口（独立路由 /almanac，不动 store） */}
+        <Link
+          href="/almanac"
+          prefetch={false}
+          aria-label="天象日历"
+          className="rounded-full px-4 py-1.5 text-[13px] text-nebula-200/60 transition hover:bg-white/5 hover:text-nebula-100"
+        >
+          📅 天象
+        </Link>
       </div>
     </div>
   );

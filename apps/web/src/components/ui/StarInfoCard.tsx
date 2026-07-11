@@ -6,15 +6,20 @@ import {
 } from '@star/astro-core';
 import {
   getEquatorial,
+  getMinorBodyElements,
+  getMinorBodyEquatorialByUid,
   getMoonPhase,
   isEphemerisUid,
+  isMinorBodyUid,
+  minorUidToId,
   moonPhaseName,
   uidToBodyId,
 } from '@star/astro-ephem';
 import { AnimatePresence, motion } from 'framer-motion';
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo } from 'react';
-import { CITIES } from '@/lib/cities';
+import { useEffect, useMemo, useState } from 'react';
+import { CITIES, type City } from '@/lib/cities';
+import { isSatelliteUid } from '@/lib/satellites/tles';
 import {
   formatBeijingTime,
   formatDec,
@@ -25,6 +30,12 @@ import { formatDistanceAu, kindLabelZh, primaryBadgeZh } from '@/lib/objectPrese
 import { getObjectByUid } from '@/lib/solarSystem';
 import { useUniverse } from '@/lib/store';
 
+// 深空科普长文 + lightbox：仅选中带照片的 DSO 才拉取（16 篇长文不进主页首包）
+const DsoLoreSection = dynamic(
+  () => import('./DsoLoreSection').then((m) => m.DsoLoreSection),
+  { ssr: false, loading: () => null },
+);
+
 // 行星 3D 预览块：选中星历天体才拉取 three/R3F 代码块（不进主 bundle 增量）
 const PlanetPreviewCard = dynamic(
   () => import('@/components/planet3d/PlanetPreviewCard').then((m) => m.PlanetPreviewCard),
@@ -34,13 +45,79 @@ const PlanetPreviewCard = dynamic(
   },
 );
 
+/** 卫星实时快照（satRegistry 在懒 chunk 里，动态 import 取值）。 */
+interface SatSnapshot {
+  raDeg: number;
+  decDeg: number;
+  rangeKm: number;
+  heightKm: number;
+  speedKmS: number;
+  tleEpoch: Date | null;
+}
+
+/**
+ * 卫星实时坐标 hook：satRegistry 只在卫星层的异步 chunk 内——层已开时模块
+ * 必已加载（Promise 微任务即回）；层未开时顺带把 chunk 拉起来。
+ * 实时模式下 1s 心跳刷新（LEO 卫星 ~1°/s，静态值会迅速失真）；
+ * 未就绪时返回 null，坐标区显示占位。
+ */
+function useSatSnapshot(
+  uid: string | null,
+  observeTime: number | null,
+  city: City,
+): SatSnapshot | null {
+  const [snap, setSnap] = useState<SatSnapshot | null>(null);
+  useEffect(() => {
+    if (!uid) {
+      setSnap(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    void import('@/lib/satellites/satRegistry')
+      .then((m) => {
+        if (cancelled) return;
+        const update = () => {
+          const s = useUniverse.getState();
+          const simMs = s.timeFollowsNow ? Date.now() : (s.observeTime ?? Date.now());
+          m.recomputeSatellites(simMs, s.city);
+          const st = m.sats.states.get(uid);
+          setSnap(
+            st && st.valid
+              ? {
+                  raDeg: st.raDeg,
+                  decDeg: st.decDeg,
+                  rangeKm: st.rangeKm,
+                  heightKm: st.heightKm,
+                  speedKmS: st.speedKmS,
+                  tleEpoch: st.tleEpoch,
+                }
+              : null,
+          );
+        };
+        update();
+        timer = window.setInterval(update, 1000);
+      })
+      .catch(() => {
+        if (!cancelled) setSnap(null);
+      });
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearInterval(timer);
+    };
+  }, [uid, observeTime, city]);
+  return snap;
+}
+
 /**
  * 天体信息卡（按类型泛化）：
  *  - 恒星：光谱/距离/坐标/今晚可见性/命名 CTA（isNamable 才显示）；
  *  - 深空天体（星系/星云/星团）：类型徽章 + 简介 + 固定坐标可见性；
- *  - 行星/日月：坐标与距离（AU）按 observeTime 实时计算，月亮加月相行。
+ *  - 行星/日月：坐标与距离（AU）按 observeTime 实时计算，月亮加月相行；
+ *  - 人造卫星（SAT-）：站心实时坐标 + 轨道高度/速度/TLE 历元，「演示精度」；
+ *  - 小天体（MB-）：开普勒轨道实时坐标 + 轨道要素/距离，「演示级 ±0.5°」。
  *
- * 合规：不可命名天体（DSO/行星/日月/著名星）不显示命名 CTA，
+ * 合规：不可命名天体（DSO/行星/日月/卫星/小天体/著名星）不显示命名 CTA，
  * 改为「探索可命名的星空」引导回命名池，脚注追加说明。
  */
 export function StarInfoCard() {
@@ -74,12 +151,30 @@ export function StarInfoCard() {
     return { bodyId, eq, moon };
   }, [obj, observeTime]);
 
-  // 展示与可见性统一用「当前坐标」：星历天体取实时值，其余取目录静态值
+  const isSatellite = obj ? isSatelliteUid(obj.objectUid) : false;
+  // 卫星实时坐标（懒 chunk 动态取，未就绪时 null → 坐标区占位）
+  const sat = useSatSnapshot(isSatellite && obj ? obj.objectUid : null, observeTime, city);
+
+  // 小天体（MB-）：开普勒轨道同步计算（engine 已在依赖里，成本为零）
+  const minorInfo = useMemo(() => {
+    if (!obj || !isMinorBodyUid(obj.objectUid)) return null;
+    const date = new Date(observeTime ?? Date.now());
+    const eq = getMinorBodyEquatorialByUid(obj.objectUid, date);
+    const el = getMinorBodyElements(minorUidToId(obj.objectUid));
+    return { eq, el };
+  }, [obj, observeTime]);
+
+  // 展示与可见性统一用「当前坐标」级联：星历 → 卫星 → 小天体 → 目录静态值。
+  // 卫星未就绪时为 null（占位），绝不回落到占位 0 的目录行坐标。
   const coords = eph
     ? { raDeg: eph.eq.raDeg, decDeg: eph.eq.decDeg }
-    : obj
-      ? { raDeg: obj.raDeg, decDeg: obj.decDeg }
-      : null;
+    : isSatellite
+      ? sat && { raDeg: sat.raDeg, decDeg: sat.decDeg }
+      : minorInfo
+        ? { raDeg: minorInfo.eq.raDeg, decDeg: minorInfo.eq.decDeg }
+        : obj
+          ? { raDeg: obj.raDeg, decDeg: obj.decDeg }
+          : null;
 
   const visibility = useMemo(() => {
     if (!obj || !coords) return null;
@@ -89,12 +184,33 @@ export function StarInfoCard() {
       snapshot: computeVisibility(coords, observer, now),
       summary: computeObservationSummary(coords, observer, now),
     };
-    // coords 由 obj/eph 派生，依赖已覆盖
+    // coords 由 obj/eph/sat/minorInfo 派生，依赖已覆盖
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [obj, eph, city, observeTime]);
+  }, [obj, eph, sat, minorInfo, city, observeTime]);
 
   const isStar = obj?.type === 'star';
   const badge = obj ? primaryBadgeZh(obj) : null;
+
+  // ── 分享海报（Phase 6B 目标 5）：posterGenerator 动态 chunk，点击才加载 ──
+  const [posterBusy, setPosterBusy] = useState(false);
+  const [posterError, setPosterError] = useState(false);
+  async function onSharePoster() {
+    if (!obj || !coords || posterBusy) return;
+    setPosterBusy(true);
+    setPosterError(false);
+    try {
+      const { generatePoster, downloadBlob } = await import('@/lib/posterGenerator');
+      const dateMs = observeTime ?? Date.now();
+      const blob = await generatePoster({ obj, coords, cityName: city.name, dateMs });
+      const d = new Date(dateMs);
+      const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+      downloadBlob(blob, `星辰纪念-${obj.objectUid}-${ymd}.png`);
+    } catch {
+      setPosterError(true);
+    } finally {
+      setPosterBusy(false);
+    }
+  }
 
   return (
     <AnimatePresence>
@@ -128,9 +244,12 @@ export function StarInfoCard() {
 
             <div className="mt-3 flex flex-wrap gap-2">
               {badge && <Badge>{badge}</Badge>}
+              {obj.objectUid === 'MB-HALLEY' && <Badge>远日点附近 · 示意</Badge>}
+              {minorInfo && <Badge>演示级 ±0.5°</Badge>}
               {!eph && <Badge>{obj.constellationZh}</Badge>}
               {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
-              <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>
+              {/* 卫星星等随过境几何剧烈变化，目录值仅为占位，不展示 */}
+              {!isSatellite && <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>}
             </div>
 
             {obj.descriptionZh && (
@@ -139,26 +258,72 @@ export function StarInfoCard() {
               </p>
             )}
 
+            {/* 著名 Messier：科普长文「了解更多」+ 照片 lightbox（仅 16 个带 imageKey+长文的天体） */}
+            {obj.imageKey && (
+              <DsoLoreSection
+                uid={obj.objectUid}
+                nameZh={obj.nameZh}
+                imageKey={obj.imageKey}
+                imageCredit={obj.imageCredit}
+              />
+            )}
+
             {obj.isEphemeris && <PlanetPreviewCard uid={obj.objectUid} />}
 
             <div className="mt-4 grid grid-cols-2 gap-3">
               {eph ? (
                 <Fact label="地心距离" value={formatDistanceAu(eph.eq.distanceAu)} />
+              ) : isSatellite ? (
+                <Fact
+                  label="站心距离"
+                  value={sat ? `${Math.round(sat.rangeKm).toLocaleString()} km` : '—'}
+                />
+              ) : minorInfo ? (
+                <Fact label="地心距离" value={formatDistanceAu(minorInfo.eq.distanceAu)} />
               ) : (
                 <Fact label="距离" value={formatDistance(obj.distanceLy)} />
               )}
-              {eph ? (
+              {eph || isSatellite || minorInfo ? (
                 <Fact label="类型" value={kindLabelZh(obj)} />
               ) : (
                 <Fact label="星座" value={obj.constellationZh} />
               )}
-              {coords && <Fact label="赤经 RA" value={formatRA(coords.raDeg)} />}
-              {coords && <Fact label="赤纬 Dec" value={formatDec(coords.decDeg)} />}
+              <Fact label="赤经 RA" value={coords ? formatRA(coords.raDeg) : '—'} />
+              <Fact label="赤纬 Dec" value={coords ? formatDec(coords.decDeg) : '—'} />
               {eph?.moon && (
                 <Fact
                   label="月相"
                   value={`${moonPhaseName(eph.moon.phaseAngleDeg)} · 照亮 ${Math.round(eph.moon.illumination * 100)}%`}
                 />
+              )}
+              {isSatellite && (
+                <>
+                  <Fact
+                    label="轨道高度"
+                    value={sat ? `~${Math.round(sat.heightKm)} km` : '—'}
+                  />
+                  <Fact label="速度" value={sat ? `${sat.speedKmS.toFixed(1)} km/s` : '—'} />
+                  <Fact
+                    label="TLE 历元"
+                    value={sat?.tleEpoch ? sat.tleEpoch.toISOString().slice(0, 10) : '—'}
+                  />
+                </>
+              )}
+              {minorInfo && (
+                <>
+                  <Fact
+                    label="日心距离"
+                    value={formatDistanceAu(minorInfo.eq.helioDistanceAu)}
+                  />
+                  <Fact
+                    label="轨道要素"
+                    value={`a ${minorInfo.el.aAu.toFixed(2)} AU · e ${minorInfo.el.e.toFixed(3)} · i ${minorInfo.el.iDeg.toFixed(1)}°`}
+                  />
+                  <Fact
+                    label="根数历元"
+                    value={`JD ${minorInfo.el.epochJd.toFixed(1)}`}
+                  />
+                </>
               )}
             </div>
 
@@ -184,7 +349,19 @@ export function StarInfoCard() {
                   </select>
                 </div>
 
-                {visibility.summary.neverRises ? (
+                {isSatellite ? (
+                  // 卫星 90 分钟绕地一周，「过中天/永不升起」语义失效：只显此刻方位
+                  <div className="space-y-2 text-[13px] text-nebula-100/85">
+                    <VisRow
+                      label="此刻"
+                      value={
+                        visibility.snapshot.isAboveHorizon
+                          ? `地平线上 · ${visibility.snapshot.direction.zh} · 高度 ${visibility.snapshot.horizontal.altitudeDeg.toFixed(0)}°`
+                          : '在地平线以下'
+                      }
+                    />
+                  </div>
+                ) : visibility.summary.neverRises ? (
                   <p className="text-[13px] text-nebula-100/80">
                     在{city.name}，这个天体赤纬过低，几乎无法升起。
                   </p>
@@ -239,7 +416,22 @@ export function StarInfoCard() {
                 ✦ 探索可命名的星空
               </button>
             )}
+            {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
+            <button
+              onClick={() => void onSharePoster()}
+              disabled={posterBusy || !coords}
+              className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+            >
+              {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
+            </button>
+            {posterError && (
+              <p className="mt-1.5 text-center text-[11px] text-red-300/80">
+                海报生成失败，请重试
+              </p>
+            )}
             <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
+              {isSatellite && '人造卫星位置由 TLE 推算，为近似演示；'}
+              {minorInfo && '小天体位置按 JPL 轨道根数以二体模型推算，演示精度约 ±0.5°；'}
               {!obj.isNamable && '著名天体与太阳系天体不开放纪念命名，仅供探索欣赏。'}
               私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
             </p>

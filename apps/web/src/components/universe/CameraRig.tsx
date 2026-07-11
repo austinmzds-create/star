@@ -3,6 +3,7 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { getExternalPose, releaseCamera } from '@/lib/cameraBus';
 import { getConstellationRenderData } from '@/lib/constellation-render';
 import { isCoarsePointer } from '@/lib/device';
 import { getHover, setHover } from '@/lib/hoverBus';
@@ -87,6 +88,7 @@ export function CameraRig() {
     if (!selectedUid) return;
     const vec = resolveObjectPosition(selectedUid);
     if (!vec) return;
+    releaseCamera(); // 镜头飞行优先：抢占陀螺仪等外部驱动
     const target = directionToYawPitch(vec);
     let toYaw = target.yaw;
     while (toYaw - yaw.current > Math.PI) toYaw -= Math.PI * 2;
@@ -111,6 +113,7 @@ export function CameraRig() {
     if (!abbr) return;
     const info = getConstellationRenderData().byAbbr.get(abbr);
     if (!info) return;
+    releaseCamera(); // 搜索星座飞行同样抢占外部驱动
     const cam = camera as THREE.PerspectiveCamera;
     const target = directionToYawPitch(info.centroid);
     let toYaw = target.yaw;
@@ -130,9 +133,10 @@ export function CameraRig() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [constellationFocusNonce]);
 
-  // 回到全景：复位 FOV，停止飞行
+  // 回到全景：复位 FOV，停止飞行（顺带退出陀螺仪等外部驱动）
   useEffect(() => {
     if (resetNonce === 0) return;
+    releaseCamera();
     const cam = camera as THREE.PerspectiveCamera;
     cam.fov = 60;
     cam.updateProjectionMatrix();
@@ -185,6 +189,7 @@ export function CameraRig() {
     };
 
     const onDown = (e: PointerEvent) => {
+      releaseCamera(); // 手势互斥：用户一摸屏幕即退出陀螺仪指星，相机停留当前朝向
       dragging.current = true;
       moved.current = false;
       clearHover(); // 开始拖拽/点击即收起名牌
@@ -264,6 +269,11 @@ export function CameraRig() {
         cam.updateProjectionMatrix();
       }
       if (fly.current.t >= 1) fly.current.active = false;
+    } else if (getExternalPose().active) {
+      // 陀螺仪等外部驱动（gyro 模块已做低通平滑，直写）
+      const ext = getExternalPose();
+      yaw.current = ext.yaw;
+      pitch.current = ext.pitch;
     } else if (autoRotateRef.current && !dragging.current) {
       yaw.current += delta * 0.018;
     }
