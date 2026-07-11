@@ -2,7 +2,7 @@
 
 > **定位**：给新加入的工程师 30 分钟看懂整个系统怎么组装、请求怎么流动、为什么这么选型。
 > **读者**：全体工程师（前端 / 后端 / 数据）。
-> **最后更新**：2026-07-11（Phase 3 · 商业闭环：证书生成 / Agent Skills / 存储抽象 / 审核后台）。
+> **最后更新**：2026-07-11（Phase 4 · 多端与升级：微信小程序扫码找星 / 情侣双星 / 纪念册 / 订单支付骨架）。
 > **关联文档**：[数据模型](./data-model.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
 
 ---
@@ -32,13 +32,15 @@
 
 ```mermaid
 flowchart LR
-  B[浏览器 / 未来小程序] -->|HTTPS| W["apps/web<br/>Next.js 15 + R3F"]
-  B -->|"/api/* (直连或经 web 代理)"| A["services/api<br/>NestJS 11"]
+  B[浏览器] -->|HTTPS| W["apps/web<br/>Next.js 15 + R3F"]
+  MP["apps/miniapp<br/>微信小程序"] -->|"扫证书二维码进入 → /api/*"| A["services/api<br/>NestJS 11"]
+  B -->|"/api/* (直连或经 web 代理)"| A
   W -->|SSR fetch 公开纪念页| A
   A -->|Prisma| PG[(PostgreSQL)]
   A -->|"ioredis / BullMQ（有 REDIS_URL 时）"| RD[(Redis)]
   A -->|"OSS SDK（STORAGE_DRIVER=oss/auto+配齐）"| OSS[(阿里云 OSS)]
   A -->|"@anthropic-ai/sdk（有 API Key）"| AN[Anthropic Claude]
+  A -->|"支付 provider（wechat/alipay/mock）"| PAY[支付网关]
   A -->|"本地磁盘（无 OSS 降级）→ /api/assets"| LOCAL[(本地磁盘)]
   subgraph 共享包（TS 源码消费）
     C[packages/astro-core]
@@ -46,10 +48,12 @@ flowchart LR
   end
   W -.import.-> C & D
   A -.import.-> C & D
+  MP -.import（源码引用）.-> C
 ```
 
-（Redis / OSS / Anthropic 三项均**可选**，缺省各自优雅降级：无 Redis → 证书同步生成；
-无 OSS → 本地磁盘 + `/api/assets`；无 API Key → 宇宙来信模板兜底。见 §4.3 / §4.5 / §4.6。）
+（Redis / OSS / Anthropic / 支付网关均**可选**，缺省各自优雅降级：无 Redis → 证书/纪念册同步生成；
+无 OSS → 本地磁盘 + `/api/assets`；无 API Key → 宇宙来信模板兜底；无支付凭证 → mock provider。见 §4.3 / §4.5 / §4.6 / §4.9。
+小程序**不直连**共享包运行时，而是源码引用 `@star/astro-core`（本期只做 typecheck，见 §3.2 / §6.3）。）
 
 ### 2.2 Monorepo 布局
 
@@ -58,7 +62,8 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 
 | 目录 | 包名 | 职责 |
 | --- | --- | --- |
-| `apps/web` | `@star/web` | PC 沉浸式星空前端（Next.js App Router + React Three Fiber）；公开纪念页 `/m/[slug]` |
+| `apps/web` | `@star/web` | PC 沉浸式星空前端（Next.js App Router + React Three Fiber）；公开纪念页 `/m/[slug]`、情侣页 `/couple/[slug]` |
+| `apps/miniapp` | `@star/miniapp` | 微信小程序「扫码找星」：扫证书二维码 → 展示纪念星/祝福/宇宙来信 → 手机罗盘方向引导在真实天空找到那颗星 → 生成海报分享；源码引用 `@star/astro-core` 一套算法多端一致 |
 | `packages/astro-core` | `@star/astro-core` | 共享天文计算：儒略日、GMST/LST、赤道→地平、可见性、最佳观测摘要 |
 | `packages/astro-data` | `@star/astro-data` | 共享星体类型 `CelestialObject`、精选真实星表 `CELESTIAL_CATALOG`（60 颗）、中英文搜索 `searchCelestial` |
 | `services/api` | `@star/api` | NestJS 11 后端：天体查询、纪念登记、证书/星图生成、Agent 技能、审核后台、健康检查；Prisma（PostgreSQL）+ Redis + OSS/本地存储 |
@@ -87,6 +92,20 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 
 - **apps/web（Next.js）**：`next.config.ts` 的 `transpilePackages: ['@star/astro-core', '@star/astro-data']`，由 Next 自带编译链处理。
 - **services/api（NestJS）**：见下方决策记录。
+- **apps/miniapp（微信小程序）**：**源码引用 + tsconfig paths**，不走微信「构建 npm」，见本节决策记录。
+
+#### 决策记录：微信小程序如何消费 astro-core（源码引用，不用「构建 npm」）
+
+- **现状**：`astro-core` 是 `type:module` 纯 TS、`main` 直指 `src/index.ts`，**没有可分发的 JS dist**。
+  微信「构建 npm」从 `node_modules` 读包并要求可用的 JS 入口，遇到 TS 源码入口会失败。
+- **结论（选定）**：`apps/miniapp/tsconfig.json` 用 `paths` 把 `@star/astro-core` 解析到
+  `../../packages/astro-core/src/index.ts` 并 `include` 该源码进 typecheck 范围——业务代码统一
+  `import { computeVisibility, computeObservationSummary, azimuthToDirection } from '@star/astro-core'`，
+  「一套算法多端一致」（单一真源）成立。astro-core 零依赖、纯函数、无 `wx.*`/DOM/Node API，微信 TS 编译器可就地编译。
+- **接真机的 vendor 步骤**（本期不落地产物）：`node scripts/vendor-astro.mjs` 把 astro-core 6 个纯 TS 源码复制进
+  `miniprogram/lib/astro-core/`（可就地被微信 TS 插件编译），再把 `paths` 改指本地副本。避免重复源码入库，已 `.gitignore` 忽略。
+- **验证方式**（无微信运行时）：`pnpm --filter @star/miniapp typecheck`（覆盖 miniprogram 全部 `.ts` + 共享 astro-core 源码）
+  + `project.config.json`（`miniprogramRoot=miniprogram/`、`useCompilerPlugins:['typescript']`、占位 `appid`）可在微信开发者工具「导入项目」打开。
 
 #### 决策记录：NestJS 如何消费 TS 源码共享包
 
@@ -105,15 +124,16 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 | 模块 | 路径 | 职责 |
 | --- | --- | --- |
 | `CelestialModule` | `services/api/src/celestial/` | 天体搜索 + 详情。本期注入 `@star/astro-data` 内存目录，零 DB 依赖 |
-| `MemorialModule` | `services/api/src/memorial/` | 纪念登记创建/查询、公开纪念页数据（附带已就绪证书）、内容审核（关键词占位实现） |
+| `MemorialModule` | `services/api/src/memorial/` | 纪念登记创建/查询、公开纪念页数据（附带已就绪证书）、内容审核（关键词占位实现）；**情侣双星** `createCouple`/`findCouplePublicBySlug`（§4.8） |
 | `CertificateModule` | `services/api/src/certificate/` | 证书 + 星图（纯 SVG 拼装，可选 sharp PNG）→ `StorageService` 存储 → 落库 `certificate_record`；有 Redis 走 BullMQ、无则同步；含 `AssetController`（`/api/assets/*` 本地资产流，防路径穿越）（§4.4/§4.5） |
+| `AlbumModule` | `services/api/src/album/` | 纪念册：6 页暗黑高级风 SVG + 合并长图，**复用 certificate 的 SVG 基建**与 `enqueueOrRun` 幂等/降级；`letter` 页调 `cosmic-letter` skill；有 Redis 走 BullMQ（队列 `album`）、无则同步（§4.10） |
+| `OrdersModule` | `services/api/src/orders/` | 订单与支付骨架：`SKU_CATALOG` 服务端权威金额、`PaymentProvider` 抽象（mock/wechat/alipay，工厂降级 mock）、回调验签 + 对账 + CAS 幂等履约（§4.9） |
 | `AgentModule` | `services/api/src/agent/` | Agent 技能编排：`SkillRegistry` 分发 + `LlmProvider` 抽象（Anthropic / 模板兜底）；技能「宇宙来信」`cosmic-letter`，落 `agent_task`（§4.6） |
 | `AdminModule` | `services/api/src/admin/` | 纪念登记审核后台 API：`AdminGuard`（`x-admin-token`）+ 登记列表/approve/reject + agent 任务观测（§4.7） |
 | `HealthModule` | `services/api/src/health/` | `GET /api/health`：自身可用即 200，DB/Redis 状态放 body |
 | `PrismaModule` | `services/api/src/prisma/` | 全局 `PrismaService`：启动探测连接，失败不 crash，需 DB 的接口返回 503 `DB_UNAVAILABLE` |
 | `RedisModule` | `services/api/src/redis/` | 全局 `RedisService`：`REDIS_URL` 未配置整体降级为 noop |
-| `common/` | `services/api/src/common/` | 合规声明、业务错误码（`AppError`，Phase 3 增 6 码）、全局异常过滤器、编号/slug 生成器 |
-| `OrderModule` | （Phase 3+ 预留） | 订单支付；库表 `order` 已建，模块未启用 |
+| `common/` | `services/api/src/common/` | 合规声明、业务错误码（`AppError`，Phase 4 增 couple/order/payment 共 8 码）、全局异常过滤器、编号/slug 生成器 |
 
 **数据源双轨（关键决策）**：
 
@@ -207,7 +227,68 @@ sequenceDiagram
   approve / reject（审计落 `reviewNote`）、agent 任务分页观测。状态流转矩阵与非法流转 `409 INVALID_STATE_TRANSITION` 见 [api-spec.md §9](./api-spec.md)。
 - 与登记初始状态联动：`REVIEW_ALL_FREETEXT=1` 时含自由文本的登记先进 `PENDING_REVIEW`，由后台 approve 转 `ACTIVE`。
 
-### 4.8 搜索路径演进
+### 4.8 情侣双星（CoupleGroup，加法不改证书）
+
+- **轻量分组模型**：新增 `CoupleGroup`（`coupleSlug`/`relationLabel`/`coupleBlessing`），两条普通
+  `MemorialRegistration` 通过 `coupleGroupId`+`coupleRole(A/B)` 挂靠。`CoupleGroup` **不持有 status**——
+  公开可见性以两条成员登记的 status 为准，**复用现有 admin approve/reject，无需改后台**。
+- **决策：为何不用纯字段方案**：在登记表加 `coupleGroupId`/`coupleRole` 之外还需一个稳定的对外 `coupleSlug`
+  与合并展示字段（relationLabel/coupleBlessing）；独立 group 让「一对」有主体、`@@unique([coupleGroupId, coupleRole])`
+  防止写入两个 A（Postgres 唯一索引对 NULL 不去重，单星登记不受约束）。
+- **事务与幂等**：`createCouple` 在**单事务**内建 group + 两条登记，任一 `@unique`（registrationNo/publicSlug/coupleSlug）
+  冲突整体回滚换新 ID 重试；同星 → `COUPLE_SAME_STAR`；两名字/两祝福/标签**合并一次审核**。
+- **证书/纪念册零改动**：两颗星各自按 `registrationNo` 走既有 certificate/album 接口。契约见 [api-spec.md §3.5/§3.6](./api-spec.md)。
+
+### 4.9 订单支付抽象与状态机（OrdersModule · 骨架）
+
+- **金额服务端权威**：前端只传 `skuCode`，金额从 `order.constants.ts` 的 `SKU_CATALOG` 取，**永不信任前端金额**；
+  回调对账也以订单落库金额为准（不符 → 落 `payMeta.reconcileError`、不置 PAID）。
+- **PaymentProvider 抽象**（DI token `PAYMENT_PROVIDER`）：`payment-provider.factory.ts` 按 `PAYMENT_PROVIDER`
+  env 选 `WechatPayProvider`/`AlipayProvider`（凭证齐全且 `active`）或降级 `MockPaymentProvider`——**照抄
+  `llm/provider.factory` 与 `storageFactory` 的工厂降级模式，绝不因缺凭证 crash**。接口：`create`/`verifyNotify`/`queryStatus`/`ackBody`。
+- **状态机**：`CREATED →（回调/mock pay）→ PAID | FAILED`；`enum OrderStatus{CREATED PAID FAILED CANCELLED REFUNDED}`
+  （FAILED=支付失败、CANCELLED=用户/超时取消，语义不同）。
+- **CAS 幂等履约**：`updateMany(where status=CREATED → PAID)` 命中 1 行 = 首次成功 → `OrderFulfillmentService.fulfill`
+  **一次**（best-effort，异常不回滚支付）；命中 0 行 = 已处理不重复履约。`providerTxnId @unique` 阻止「同一第三方交易被两个订单认领」。
+- **履约分派**：按 `sku.fulfillment` — `UNLOCK_CERT`/`DUAL_STAR` → `CertificateService.enqueueOrRun`（幂等）；
+  `MEMORIAL_BOOK` 本期占位 log（落地后接 AlbumService）；`PHYSICAL_*` 仅记录待发货。
+- **测试后门收口**：`POST /api/orders/:orderNo/pay` **仅 `provider==='mock'` 可用**，真实订单 → `PAYMENT_PROVIDER_MISMATCH`。
+
+```mermaid
+sequenceDiagram
+  participant U as 用户 / 端
+  participant O as OrdersController
+  participant S as OrdersService
+  participant P as PaymentProvider（工厂选型）
+  participant G as 支付网关
+  participant F as OrderFulfillment
+  U->>O: POST /api/orders { skuCode, registrationNo? }
+  S->>S: SKU 权威金额落库（orderNo @unique 冲突重试）+ 锁定 provider
+  S->>P: create() → payParams
+  O-->>U: { order(CREATED), payParams, compliance }
+  U->>G: 用 payParams 拉起支付（真实）/ POST …/pay（mock）
+  G->>O: POST /api/payments/notify/:provider（异步回调）
+  S->>P: verifyNotify（验签，失败→PAYMENT_VERIFY_FAILED）
+  S->>S: 对账金额 + CAS(CREATED→PAID)
+  alt 命中 1 行（首次）
+    S->>F: fulfill（履约一次，best-effort）
+  else 命中 0 行（重复）
+    S->>S: 幂等返回，不重复履约
+  end
+  O-->>G: ackBody（微信 {code:SUCCESS} / 支付宝 success）
+```
+
+### 4.10 纪念册生成（AlbumModule · 复用证书基建）
+
+- **零新依赖、纯 SVG**：6 页（`cover → star-map → story → letter → astro → dedication`）W1200×H1600 与证书同尺寸，
+  复用 `certificate/svg/*`（`svg-utils`/`format`/`projection`/`star-map`）与 `certificate.constants` 的 `XML_DECL`；
+  PDF/长图走「多页 SVG 合并成竖排长图」的零依赖方案（`svg-embed` 把每页作嵌套视口注入）。
+- **enqueueOrRun 幂等/降级**：与证书同构——有 Redis 走 BullMQ（队列 `album`、job `generate-album`），无 Redis 同步生成；
+  幂等锚点 `album_record @@unique([registrationId, templateVersion])`，`READY`/`GENERATING` 直接返回。
+- **宇宙来信页**：`letter` 页调 `AgentService.runSkill('cosmic-letter')`，失败/无 key 降级模板（`letterMode` 落库可观测），
+  **绝不拖垮整册**。资产同走 `StorageService`（OSS 签名 / 本地 `/api/assets/*`）。契约见 [api-spec.md §11](./api-spec.md)。
+
+### 4.11 搜索路径演进
 
 - **Phase 2/3（现状）**：`@star/astro-data` 内存目录支撑（扩容后 5058 颗仍是毫秒级）。
 - **Phase 3**：Postgres `pg_trgm` + 全文检索，基于 `celestial_name_alias.aliasNorm`。
@@ -281,11 +362,40 @@ sequenceDiagram
 前端演示用的 `makeDemoRegistrationNo()` 仅作回退，**正式编号一律由后端
 `services/api/src/common/ids/registration-no.ts` 生成**（CSPRNG + 去混淆字母表 + DB 唯一约束）。
 
+### 6.3 小程序扫码找星 → astro-core 多端复用（Phase 4）
+
+证书二维码承载公开纪念页链接（`…/m/<slug>`）。用户微信扫码进入小程序，`lib/scene.ts` 的纯函数
+`extractId` 把「扫码 / 小程序码 scene / 普通链接二维码 / 直接 query」统一抽取成 `{ slug? , no? }`；
+detail 页拉公开数据展示纪念星/祝福/宇宙来信/证书，find 页用**手机罗盘 + 定位**做真实天空方向引导——
+可见性完全由**同一个 `@star/astro-core`** 计算，与 web 端零算法漂移。
+
+```mermaid
+sequenceDiagram
+  participant U as 用户
+  participant MP as apps/miniapp
+  participant SC as lib/scene(extractId 纯函数)
+  participant AC as "@star/astro-core（源码引用）"
+  participant A as services/api
+  U->>MP: 微信扫证书二维码进入
+  MP->>SC: extractId(扫码内容) → { slug }
+  MP->>A: GET /api/memorial/public/:slug（详情/证书）
+  A-->>MP: memorial + certificate + compliance
+  U->>MP: 进入「找星」页（授权定位 + 罗盘）
+  MP->>AC: computeVisibility(赤道坐标, 观测点, now)
+  AC-->>MP: 地平方位/高度 + 16 方位中文
+  MP->>MP: computeGuidance（左右转/抬降手机 + 「已对准」判定）
+  U->>MP: 对准后生成 Canvas 海报，保存/转发
+```
+
+后端不可达/未配 `BASE_URL` 时小程序整体降级演示（内置示例星「天狼星」），与 web 端 `isApiConfigured` 同语义；
+detail/find 页底部与海报画布常驻逐字合规声明 `COMPLIANCE_NOTICE`。
+
 ## 7. 环境与部署形态（概览）
 
 三种环境：本地开发容器（无 docker / PG / Redis，只做 typecheck + build + 单测）、
-真实开发机（`infra/docker-compose.yml` 起 Postgres + Redis）、生产（托管 PG/Redis + OSS）。
-`api` 与 `web` 各自独立进程，`api` 默认 3001、`web` 3000。全量环境变量、启动顺序、
+真实开发机（`infra/docker-compose.yml` 起 Postgres + Redis）、生产（托管 PG/Redis + OSS + 支付网关）。
+`api` 与 `web` 各自独立进程，`api` 默认 3001、`web` 3000。小程序（`apps/miniapp`）无独立服务进程，
+产物在微信开发者工具/公众平台上传，运行时只依赖 `api`。全量环境变量、小程序构建、启动顺序、
 故障排查见 [deployment.md](./deployment.md)。
 
 ## 8. 技术选型定稿（不可变更清单）
@@ -299,7 +409,7 @@ sequenceDiagram
 | 搜索 | Postgres（pg_trgm/全文）；Phase 2 暂由 astro-data 内存目录支撑 |
 | 包管理 / 编排 | pnpm workspace + Turborepo |
 | Node | 22 |
-| 共享包消费 | TS 源码直连（`main: ./src/index.ts`），Next `transpilePackages` / Nest webpack bundle |
+| 共享包消费 | TS 源码直连（`main: ./src/index.ts`），Next `transpilePackages` / Nest webpack bundle / 小程序源码引用 + tsconfig paths |
 
 ## 9. 演进路线
 
@@ -307,5 +417,6 @@ sequenceDiagram
 | --- | --- |
 | **1（已完成）** | 沉浸式星空前端 + 共享天文包 + 60 颗精选星表 + 纯前端演示命名 |
 | **2** | NestJS API 地基：天体搜索/详情、纪念登记落库、公开纪念页 `/m/[slug]`、Prisma schema 全量主表、docker-compose 与部署文档 |
-| **3（本期）** | 商业闭环：证书 + 星图生成（纯 SVG，BullMQ / 无 Redis 同步降级）→ `StorageService`（OSS / 本地磁盘 / data URL 降级）、Agent Skills（宇宙来信，`LlmProvider` Anthropic / 模板降级）、审核后台 API（`AdminGuard`）、星表扩容 ETL 落地（HYG v41 → 5058 颗）。订单支付、搜索 DB 化留待后续 |
-| **4** | 微信小程序扫码找星、情侣双星、纪念册、实体礼盒供应链；订单支付、内容安全云审核、搜索 DB 化（pg_trgm） |
+| **3** | 商业闭环：证书 + 星图生成（纯 SVG，BullMQ / 无 Redis 同步降级）→ `StorageService`（OSS / 本地磁盘 / data URL 降级）、Agent Skills（宇宙来信，`LlmProvider` Anthropic / 模板降级）、审核后台 API（`AdminGuard`）、星表扩容 ETL 落地（HYG v41 → 5058 颗） |
+| **4（本期）** | 多端与升级：微信小程序扫码找星（源码引用 astro-core、罗盘方向引导、海报分享）、情侣双星（`CoupleGroup`）、纪念册（复用证书 SVG 基建）、订单支付骨架（`PaymentProvider` 抽象 + mock）。真实支付网关联调、搜索 DB 化（pg_trgm）、内容安全云审核、实体礼盒供应链留待后续 |
+| **5+** | 真实微信/支付宝网关联调、搜索 pg_trgm、内容安全云审核、实体礼盒供应链与物流；证书/纪念册渲染独立 worker 伸缩 |

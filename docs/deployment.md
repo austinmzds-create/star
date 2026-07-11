@@ -2,7 +2,7 @@
 
 > **定位**：从零把真实环境跑起来的 runbook；兼说明本地无 Docker 容器时的降级验证方式。
 > **读者**：后端工程师、运维。
-> **最后更新**：2026-07-11（Phase 3 · 证书/存储/Agent/后台环境变量与运维）。
+> **最后更新**：2026-07-11（Phase 4 · 小程序构建与部署、订单支付 provider 与环境变量）。
 > **关联文档**：[系统架构](./architecture.md) · [数据模型](./data-model.md) · [API 规范](./api-spec.md)
 
 ---
@@ -11,9 +11,11 @@
 
 | 环境 | Postgres/Redis | docker | 能做什么 |
 | --- | --- | --- | --- |
-| 本地开发容器（当前 CI 同款） | ❌ 无 | ❌ 无 | `prisma generate` + typecheck + build + 单测（mock/内存实现）；`celestial`/`health`/`agent`（模板兜底）接口可真跑，登记/证书/后台接口返回 503 |
-| 真实开发机 | `infra/docker-compose.yml` 起 | ✅ | 全功能：migrate + seed + api + web 联调；无 OSS 时证书走本地磁盘 `/api/assets`、无 Anthropic key 时来信走模板 |
-| 生产 | 托管 PG / Redis + 阿里云 OSS + Anthropic Key | 视托管形态 | 全功能：BullMQ 异步证书 → OSS 签名 URL、宇宙来信真调 Claude、审核后台 |
+| 本地开发容器（当前 CI 同款） | ❌ 无 | ❌ 无 | `prisma generate` + typecheck + build + 单测（mock/内存实现）；`celestial`/`health`/`agent`（模板兜底）接口可真跑，登记/证书/纪念册/订单/后台接口返回 503。小程序 `pnpm --filter @star/miniapp typecheck` + `project.config.json` 可导入微信开发者工具 |
+| 真实开发机 | `infra/docker-compose.yml` 起 | ✅ | 全功能：migrate + seed + api + web 联调；无 OSS 时证书/纪念册走本地磁盘 `/api/assets`、无 Anthropic key 时来信走模板、无支付凭证时订单走 mock provider（`POST …/pay` 测试支付） |
+| 生产 | 托管 PG / Redis + 阿里云 OSS + Anthropic Key + 支付商户凭证 | 视托管形态 | 全功能：BullMQ 异步证书/纪念册 → OSS 签名 URL、宇宙来信真调 Claude、审核后台、真实微信/支付宝支付回调 |
+
+> 小程序（`apps/miniapp`）不是常驻服务：产物经微信开发者工具/公众平台上传，运行时只依赖 `api`。本地无微信运行时，验证止于 typecheck + 结构可导入（见 §10）。
 
 ## 2. 前置要求
 
@@ -66,6 +68,9 @@ docker compose -f infra/docker-compose.yml down -v
 | `ANTHROPIC_MODEL` | api | 文档占位（代码内硬编码 `claude-sonnet-5`）；创意文案模型名 |
 | `ADMIN_API_TOKEN` | api | 后台共享令牌（`x-admin-token` 比对）。**未配置 → 所有 `/api/admin/*` 返回 503 `ADMIN_NOT_ENABLED`** |
 | `REVIEW_ALL_FREETEXT` | api | 置 `1` → 含祝福语/故事文本的登记先进 `PENDING_REVIEW` 人工复审；默认 `0`=干净内容自动 `ACTIVE` |
+| `PAYMENT_PROVIDER` | api | `mock`（默认，本地/测试）\| `wechat` \| `alipay`。**真实网关凭证未配齐时自动降级 `mock`**（工厂降级，绝不 crash）。见 §4.4 |
+| `WXPAY_APP_ID` / `WXPAY_MCHID` / `WXPAY_API_V3_KEY` / `WXPAY_CERT_SERIAL` / `WXPAY_PRIVATE_KEY` / `WXPAY_NOTIFY_URL` | api | 微信支付商户凭证（`PAYMENT_PROVIDER=wechat` 时需齐全，否则降级 mock）。`WXPAY_NOTIFY_URL` 形如 `https://your-domain/api/payments/notify/wechat` |
+| `ALIPAY_APP_ID` / `ALIPAY_PRIVATE_KEY` / `ALIPAY_PUBLIC_KEY` / `ALIPAY_NOTIFY_URL` | api | 支付宝凭证（`PAYMENT_PROVIDER=alipay` 时需齐全，否则降级 mock）。`ALIPAY_NOTIFY_URL` 形如 `https://your-domain/api/payments/notify/alipay` |
 | `NEXT_PUBLIC_API_BASE_URL` | web（会内联进客户端 bundle） | api 基址。**留空 = 纯前端演示模式**（命名弹窗本地出编号、`/m/[slug]` 渲染降级页） |
 | `API_BASE_URL` | web（仅 SSR） | 可选，服务端组件专用内网基址（容器编排里如 `http://api:3001`），优先于上者 |
 
@@ -92,6 +97,23 @@ docker compose -f infra/docker-compose.yml down -v
 
 - 仓库**永不提交**真实密钥：只提交 `.env.example`（占位值），`.env*` 在 `.gitignore` 内。
 - 生产密钥走部署平台的 secret 注入；OSS AK 建议用 RAM 子账号最小权限（仅目标 bucket 读写）。
+- 支付商户私钥（`WXPAY_PRIVATE_KEY`/`ALIPAY_PRIVATE_KEY`）同走 secret 注入，绝不入库。
+
+### 4.4 支付 provider 选型（PaymentProvider）
+
+订单支付经 `PaymentProvider` 抽象（DI token `PAYMENT_PROVIDER`），`payment-provider.factory.ts` 按
+`PAYMENT_PROVIDER` env 选实现（照抄 `llm/provider.factory` 与 `storageFactory` 的工厂降级模式）：
+
+| `PAYMENT_PROVIDER` | 触发 | 行为 |
+| --- | --- | --- |
+| `mock`（默认） | 未配 / 显式 | `MockPaymentProvider`：`create` 返回 `payUrl`，`POST /api/orders/:orderNo/pay` 完成测试支付；`providerTxnId=MOCKTXN-<orderNo>` 可复现 |
+| `wechat` | 显式且 `WXPAY_*` 齐全（`active`） | 微信支付 provider（骨架）；凭证缺失 → **降级 mock**（warn 不 crash） |
+| `alipay` | 显式且 `ALIPAY_*` 齐全（`active`） | 支付宝 provider（骨架）；凭证缺失 → **降级 mock** |
+
+- **本期真实网关未接入**：wechat/alipay 段的 `verifyNotify` 骨架期直接抛（`PAYMENT_VERIFY_FAILED`）；
+  接入时补验签实现即可，控制器/状态机不动。
+- **真实微信支付需 raw body 验签**：生产须在 `main.ts` 配置 rawBody 中间件（本期 mock JSON 足够）。
+- 回调地址：`WXPAY_NOTIFY_URL`/`ALIPAY_NOTIFY_URL` 指向 `POST /api/payments/notify/{wechat|alipay}`，须公网可达且与 provider 段一致。
 
 ## 5. 数据库初始化
 
@@ -116,6 +138,11 @@ pnpm --filter @star/api db:seed           # = prisma db seed（tsx prisma/seed.t
 ```
 
 顺序不可乱：**seed 是登记接口的前置**（`memorial_registration.starObjectUid` 外键引用目录表）。
+
+> **Phase 4 迁移**：schema 已加 `couple_group`、`album_record` 两张新表、`memorial_registration` 的
+> `coupleGroupId`/`coupleRole` 两列 + `@@unique([coupleGroupId, coupleRole])`、`order` 的
+> `provider`/`providerTxnId`/`subject`/`payMeta` 四列 + `[provider,status]` 索引、`enum OrderStatus` 加 `FAILED`、
+> 新枚举 `CoupleRole`。本地只 `prisma generate`；真实环境 `prisma migrate dev --name phase4` 生成并应用一条迁移。
 
 ## 6. 应用启动
 
@@ -167,6 +194,13 @@ pnpm --filter @star/web build && pnpm --filter @star/web start
 - **审核后台**：所有 `/api/admin/*` 需请求头 `x-admin-token`。**生产必须配 `ADMIN_API_TOKEN`**（否则整段 503），
   用足够长的随机串、走 secret 注入。日常审核：`GET /api/admin/registrations?status=PENDING_REVIEW` → `approve`/`reject`。
   可选 `REVIEW_ALL_FREETEXT=1` 令所有含自由文本的登记先进人工复审队列。
+- **纪念册**：`POST /api/memorial/registrations/:no/album` 触发（幂等），`GET` 同路径查状态。与证书同构——有 Redis
+  走 BullMQ（队列 `album`）异步、无 Redis 同步出图；资产 key 形如 `albums/YYYY/MM/<regNo>-v1/album.svg`。`letter` 页调
+  `cosmic-letter` skill，失败/无 key 降级模板（`letterMode` 可观测），绝不拖垮整册。
+- **订单支付**：`POST /api/orders` 建单（金额服务端权威）、`GET /api/orders/:orderNo` 查单、`POST /api/payments/notify/:provider`
+  网关回调。本地/测试 `PAYMENT_PROVIDER=mock` 时用 `POST /api/orders/:orderNo/pay` 完成支付（仅 mock 可用）。
+  支付成功后按 SKU 履约（`UNLOCK_CERT`/`DUAL_STAR` 触发证书、`PHYSICAL_*` 记录待发货、`MEMORIAL_BOOK` 占位）。
+  情侣双星登记：`POST /api/memorial/couple`，公开页 `/couple/[slug]`（两条成员均 `ACTIVE` 才可见）。
 
 ## 7. 无 DB 环境的验证策略（本地容器 / CI 同策略）
 
@@ -177,9 +211,10 @@ pnpm typecheck      # 全 workspace 类型检查
 pnpm test           # astro-core / astro-data / api（api 单测全部 mock PrismaService，零外部依赖）
 pnpm --filter @star/api build
 pnpm --filter @star/web build
+pnpm --filter @star/miniapp typecheck   # 小程序：无微信运行时，验证止于 tsc + 结构可导入（§10）
 ```
 
-以上全绿 = 可合入。运行时行为（登记落库、纪念页）在真实开发机按 §3–§6 联调验证。
+以上全绿 = 可合入。运行时行为（登记落库、纪念页、订单支付回调、小程序真机罗盘）在真实开发机/微信开发者工具按 §3–§6、§10 联调验证。
 
 ## 8. 常见故障排查
 
@@ -212,3 +247,40 @@ pnpm --filter @star/web build
   web 为 Next standalone 产物，同理。数据层不动。
 - **备份**：生产 PG 开启每日 `pg_dump` + WAL 归档（托管服务自带则用托管的）；
   Redis 数据本期均可重建（缓存/队列），无需备份承诺。
+
+## 10. 微信小程序（apps/miniapp）构建与部署
+
+小程序不进 CI 常驻服务，产物经**微信开发者工具/微信公众平台**上传发布。运行时只依赖 `api`。
+
+### 10.1 天文核心复用：源码引用，不用「构建 npm」
+
+`@star/astro-core` 是 `type:module` 纯 TS、`main` 直指 `src/index.ts`，**无可分发 JS dist**，微信「构建 npm」会失败。
+因此采用**源码引用 + tsconfig paths**（决策记录见 [architecture.md §3.2](./architecture.md)）：
+
+- **typecheck 层（本期交付）**：`apps/miniapp/tsconfig.json` 的 `paths` 把 `@star/astro-core` 解析到
+  `../../packages/astro-core/src/index.ts` 并 `include` 该源码；`pnpm --filter @star/miniapp typecheck` 覆盖
+  miniprogram 全部 `.ts` + 共享 astro-core 源码。**本 workspace 是本轮唯一允许在仓库根 `pnpm install` 的工程**
+  （需 `miniprogram-api-typings`、`typescript`、`@star/astro-core` workspace 依赖）。
+- **接真机的 vendor 步骤**（本期不落地产物）：`node apps/miniapp/scripts/vendor-astro.mjs` 把 astro-core 6 个纯 TS
+  源码复制进 `miniprogram/lib/astro-core/`（可就地被微信 TS 插件编译），再把 `paths` 改指本地副本。产物已 `.gitignore` 忽略。
+
+### 10.2 用微信开发者工具打开与上传
+
+- `project.config.json`（`miniprogramRoot=miniprogram/`、`useCompilerPlugins:['typescript']`、占位 `appid=touristappid`）
+  保证「导入项目」可打开。接真机前把 `appid` 换成真实小程序 appid。
+- 上传：微信开发者工具「上传」→ 微信公众平台「版本管理」提交审核发布。
+
+### 10.3 后端基址与扫码进入配置
+
+- **`BASE_URL`**：小程序**不读 `.env`**，后端基址在 `miniprogram/config.ts` 的常量 `BASE_URL` 承载
+  （含协议、无尾斜杠，如 `https://api.example.com`）。**空串 = 演示模式**（无后端，全程内置示例星「天狼星」降级，
+  与 web 端 `isApiConfigured` 同语义）。可用微信开发者工具「自定义编译」注入。
+- **扫码进入**：证书二维码承载公开纪念页链接 `…/m/<slug>`；「扫普通链接二维码打开小程序」需在**微信公众平台**
+  配置业务域名/链接规则。代码侧 `lib/scene.ts` 的 `extractId` 已把「扫码 / 小程序码 scene / 普通链接 / 直接 query」
+  统一解析成 `{ slug? , no? }`（纯函数、无 `wx.*`、可 typecheck）。
+- **合规**：detail/find 页底部与海报画布常驻逐字合规声明 `COMPLIANCE_NOTICE`（与后端 `common/compliance.ts` 一致，不得删改）。
+
+### 10.4 验证口径
+
+本地无微信运行时、不跑真机：验证 = `pnpm --filter @star/miniapp typecheck` 通过 + `project.config.json` 可在
+微信开发者工具打开。真机行为（定位授权、罗盘方向引导、海报保存/转发）在开发者工具「真机调试」验证。

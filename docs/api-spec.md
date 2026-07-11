@@ -4,7 +4,7 @@
 > 本文档与实现同源：控制器在 `services/api/src/{celestial,memorial,certificate,agent,admin,health}/`，
 > 错误码在 `services/api/src/common/errors/app-error.ts`，改实现必须同步改本文档。
 > **读者**：前端 / 后端 / 小程序工程师。
-> **最后更新**：2026-07-11（Phase 3 · 商业闭环：证书生成 / Agent Skills / 审核后台落地）。
+> **最后更新**：2026-07-11（Phase 4 · 多端与升级：情侣双星 / 纪念册 / 订单支付骨架；小程序按本契约对接）。
 > **关联文档**：[系统架构](./architecture.md) · [数据模型](./data-model.md) · [部署运维](./deployment.md)
 
 ---
@@ -50,6 +50,14 @@
 | `ADMIN_NOT_ENABLED` | 503 | 后台未配置 `ADMIN_API_TOKEN`，所有 `/api/admin/*` 拒绝服务（避免裸奔） |
 | `ADMIN_UNAUTHORIZED` | 401 | 后台已启用但 `x-admin-token` 缺失/不匹配 |
 | `INVALID_STATE_TRANSITION` | 409 | 非法状态流转（如对已 `REJECTED` 的登记执行 approve） |
+| `COUPLE_SAME_STAR` | 400 | 情侣双星 `starA`/`starB` 指向同一颗星（§3.5） |
+| `COUPLE_PAGE_NOT_FOUND` | 404 | 情侣 `coupleSlug` 无对应分组 / 两条成员未全部 `ACTIVE`（不区分，防枚举，§3.6） |
+| `ORDER_NOT_FOUND` | 404 | orderNo 无对应订单（§10） |
+| `SKU_NOT_FOUND` | 404 | skuCode 不在服务端 `SKU_CATALOG`（§10.1） |
+| `PAYMENT_PROVIDER_MISMATCH` | 409 | 对非 `mock` provider 的订单调用测试支付端点 `/pay`（§10.3） |
+| `PAYMENT_PROVIDER_UNAVAILABLE` | 503 | 选定支付 provider 未就绪（骨架期真实网关未接入时的预期码） |
+| `PAYMENT_VERIFY_FAILED` | 400 | 支付回调验签失败 / 未接入 provider 段收到回调（§10.4） |
+| `ORDER_AMOUNT_MISMATCH` | 409 | 回调金额与订单服务端权威金额不符（对账拒绝，§10.4） |
 | `DB_UNAVAILABLE` | 503 | 数据库不可用（需 DB 的接口专属；无 DB 环境的预期行为） |
 | `INTERNAL_ERROR` | 500 | 未知异常 / 编号生成重试耗尽 |
 
@@ -267,6 +275,79 @@ curl 'http://localhost:3001/api/memorial/public/m7k2xq9f4t3w'
 证书触发/查询、公开页附带证书、本地资产流已落地，完整契约见 [§5 Certificate 证书与星图](#5-certificate-证书与星图)。
 存储驱动为 OSS 时 `certUrl`/`starMapUrl` 为**短时签名 URL**；本地驱动时为 `/api/assets/*` 直链。
 
+### 3.5 POST /api/memorial/couple — 情侣双星创建（Phase 4）
+
+一次登记**两颗星**并绑定为一对，共享一个对外 `coupleSlug`。两颗星各自是普通
+`MemorialRegistration`（各有 `registrationNo`/`publicSlug`），通过轻量 `CoupleGroup` 关联
+（见 [data-model.md §4A](./data-model.md)）；证书/纪念册沿用各自 `registrationNo` 的既有接口，无证书侧改动。
+
+请求体（`CreateCoupleDto`）：
+
+| 字段 | 类型 | 约束 |
+| --- | --- | --- |
+| `starA` / `starB` | object，必填 | 各含 `starObjectUid`（必填，须存在且 `isNamable=true`）、`memorialName`（1–40 码点）、`blessingText?`（≤140） |
+| `occasionType` | enum，可选 | 缺省 `LOVE`；两颗星共享（场景码表见 §3.1） |
+| `relationLabel` | string，可选 | 关系标签如「恋人」「夫妻」，≤40 码点 |
+| `coupleBlessing` | string，可选 | 合并祝福语，≤140；couple 页头部展示 |
+| `memorialDate` | string，可选 | `YYYY-MM-DD`，两颗星共享 |
+| `contactEmail` | string，可选 | 隐私字段，只写不读 |
+
+校验/事务：同星 → `400 COUPLE_SAME_STAR`；任一星不存在 → `404 CELESTIAL_NOT_FOUND`、不可命名 →
+`422 CELESTIAL_NOT_NAMABLE`；两名字/两祝福/关系标签/合并祝福**合并做一次内容审核**（reject →
+`422 CONTENT_REJECTED`，复审词 → 两条均 `PENDING_REVIEW`）。`CoupleGroup` + 两条登记在**单事务**内创建，
+任一 `@unique`（registrationNo/publicSlug/coupleSlug）冲突整体回滚换新 ID 重试。
+
+```bash
+curl -X POST 'http://localhost:3001/api/memorial/couple' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "starA": { "starObjectUid": "HIP55642", "memorialName": "阿哲的星", "blessingText": "向你." },
+    "starB": { "starObjectUid": "HIP57632", "memorialName": "小满的星" },
+    "relationLabel": "恋人", "coupleBlessing": "两颗星，一段光年.", "memorialDate": "2026-05-20"
+  }'
+```
+
+响应 `201`：
+
+```jsonc
+{
+  "couple": {
+    "coupleSlug": "c7k2xq9f4t3w",         // 情侣公开页 /couple/[slug]
+    "relationLabel": "恋人",
+    "coupleBlessing": "两颗星，一段光年.",
+    "occasionType": "LOVE",
+    "memorialDate": "2026-05-20",
+    "status": "ACTIVE",                     // 聚合态：两条皆 ACTIVE → ACTIVE，否则 PENDING_REVIEW
+    "createdAt": "2026-07-11T08:30:00.000Z",
+    "registrations": [
+      { "role": "A", "registrationNo": "STAR-…", "publicSlug": "m…", "status": "ACTIVE",
+        "memorialName": "阿哲的星", "blessingText": "向你.", "star": { /* StarSnapshot */ } },
+      { "role": "B", "registrationNo": "STAR-…", "publicSlug": "m…", "status": "ACTIVE",
+        "memorialName": "小满的星", "blessingText": null, "star": { /* StarSnapshot */ } }
+    ]
+  },
+  "compliance": "……（同 §1.5 固定文案）"
+}
+```
+
+错误：`400 VALIDATION_FAILED` / `400 COUPLE_SAME_STAR` / `404 CELESTIAL_NOT_FOUND` /
+`422 CELESTIAL_NOT_NAMABLE` / `422 CONTENT_REJECTED` / `503 DB_UNAVAILABLE`。
+
+### 3.6 GET /api/memorial/couple/public/:coupleSlug — 情侣公开页数据（Phase 4）
+
+`apps/web` 的 `/couple/[slug]` 服务端组件消费。**门控**：分组存在 + 恰两条成员 + **两条皆 `ACTIVE`**
+才可见（复用现有 admin approve/reject，无需改后台）；否则统一 `404 COUPLE_PAGE_NOT_FOUND`（防枚举）。
+
+响应 `200`：`couple.stars[]` 每项含 `role`/`registrationNo`/`memorialName`/`blessingText`/`star`（StarSnapshot）
+与 `certificate`（就绪时 `{status:"READY",certUrl,starMapUrl}`，否则 `null`），按 `role`（A→B）排序；
+携带 `relationLabel`/`coupleBlessing`/`occasionType`/`memorialDate`/`createdAt` 与 `compliance`。
+
+错误：`404 COUPLE_PAGE_NOT_FOUND` / `503 DB_UNAVAILABLE`。
+
+### 3.7 纪念册资产（Phase 4 → 见 §11）
+
+按 `registrationNo` 触发/查询一本 6 页 SVG 纪念册，完整契约见 [§11 Album 纪念册](#11-album-纪念册)。
+
 ## 4. Visibility 可见性（刻意不做接口）
 
 「今晚可见性」（此刻方位/高度、过中天时刻与最高高度）由前端直接调
@@ -388,6 +469,101 @@ curl 'http://localhost:3001/api/memorial/public/m7k2xq9f4t3w'
 > 登记初始状态：命中违禁词 → 422 不落库；命中复审词 → `PENDING_REVIEW`；干净内容默认 `ACTIVE`。
 > 置 `REVIEW_ALL_FREETEXT=1` 则任何含祝福语/故事文本的登记先进 `PENDING_REVIEW`（默认关闭）。
 
+## 10. Orders 订单与支付（Phase 4 · 骨架）
+
+> 本期为**可类型检查 + 可单测的订单/支付骨架**：真实微信/支付宝需商户凭证，本地无法联调，
+> 故只做「接口 + Mock provider + 完整设计」。金额**服务端权威**（前端只传 `skuCode`，永不信任前端金额），
+> 回调按 provider 验签 + 金额对账 + CAS 幂等履约一次。强依赖 Prisma（无 DB → `503 DB_UNAVAILABLE`）。
+> 所有对外订单响应带 `compliance`。provider 选型见 [deployment.md §4.4](./deployment.md)、状态机见 [architecture.md §4.9](./architecture.md)。
+
+### 10.1 SKU 目录（服务端权威，`order.constants.ts` 的 `SKU_CATALOG`）
+
+| skuCode | 名称 | 价（分） | 需登记 | 履约 |
+| --- | --- | --- | --- | --- |
+| `CERT_DIGITAL` | 电子纪念证书 | 1900 | 是 | `UNLOCK_CERT`（触发证书生成） |
+| `CERT_PRINT` | 纸质纪念证书 | 9900 | 是 | `PHYSICAL_CERT`（实物待发货，本期仅记录） |
+| `GIFT_BOX` | 星辰纪念礼盒 | 29900 | 是 | `PHYSICAL_GIFT`（实物待发货） |
+| `DUAL_STAR` | 双星纪念 | 3900 | 是 | `DUAL_STAR`（履约同 `UNLOCK_CERT`） |
+| `MEMORIAL_BOOK` | 纪念册 | 6900 | 是 | `MEMORIAL_BOOK`（占位；落地后触发 Album 生成） |
+
+### 10.2 POST /api/orders — 建单
+
+请求体（`CreateOrderDto`，**无金额字段**）：`{ skuCode, registrationNo? }`。`requiresRegistration=true`
+的 SKU 必须带有效 `registrationNo`（缺失 → `400 VALIDATION_FAILED`；不存在 → `404 REGISTRATION_NOT_FOUND`）。
+服务端从 SKU 取权威金额落库，`orderNo`（`ORD-YYYYMMDD-XXXXXX`，CSPRNG）唯一性由 `@unique` 兜底冲突重试，
+下单时锁定 `provider`（= 启动期选定的 provider name）并拉起支付参数。
+
+响应 `201`：
+
+```jsonc
+{
+  "order": {
+    "orderNo": "ORD-20260711-7K9PQ2", "skuCode": "CERT_DIGITAL",
+    "subject": "电子纪念证书 · 小满的星",   // 主体快照（SKU 名 + 纪念名）
+    "amountFen": 1900, "currency": "CNY",
+    "provider": "mock", "status": "CREATED",
+    "providerTxnId": null, "paidAt": null,
+    "registrationId": "clxxx…", "createdAt": "…"
+  },
+  "payParams": { "kind": "mock", "payUrl": "/api/orders/ORD-20260711-7K9PQ2/pay",
+                 "note": "本地/测试支付，POST payUrl 即完成" },
+  "compliance": "……"
+}
+```
+
+> `payParams` 字段随 provider 不同：mock 给 `payUrl`；真实 wechat/alipay 给各自的 JSAPI/表单参数（骨架期）。
+
+错误：`400 VALIDATION_FAILED` / `404 SKU_NOT_FOUND` / `404 REGISTRATION_NOT_FOUND` / `503 DB_UNAVAILABLE`。
+
+### 10.3 GET /api/orders/:orderNo — 查单 · POST /api/orders/:orderNo/pay — 测试支付
+
+- **查单** `200`：`{ order: OrderView, compliance }`。错误 `404 ORDER_NOT_FOUND`。
+- **测试支付**（`PayOrderDto`：`{ outcome?: 'success'|'fail' }`，缺省 success）：**仅 `provider==='mock'` 可用**，
+  等价于构造一次 mock 回调 → `markPaid`/`markFailed`。真实 provider 的订单调用此端点 → `409 PAYMENT_PROVIDER_MISMATCH`
+  （不能靠此端点为真实支付开后门）。响应 `{ order, compliance }`，`order.status` 变为 `PAID`/`FAILED`。
+
+### 10.4 POST /api/payments/notify/:provider — 网关异步回调
+
+`provider ∈ mock|wechat|alipay`。按 URL 段选 provider 验签（失败/未接入段 → `400 PAYMENT_VERIFY_FAILED`）→
+解析出 `orderNo` → 幂等置账：
+
+- **对账**：回调带金额且与订单权威金额不符 → **不置 PAID**，落 `payMeta.reconcileError=AMOUNT_MISMATCH` 并告警。
+- **CAS 幂等**：`updateMany(where status=CREATED → PAID)` 命中 1 行 = 首次成功 → **履约一次**（best-effort，异常不回滚支付）；
+  命中 0 行 = 已处理，不重复履约（重复回调 txnId 不一致时告警）。
+- 返回对应 provider 的 ack body（微信 `{code:'SUCCESS',message:'OK'}`，支付宝纯文本 `success`），HTTP `200`。
+
+> 真实微信支付需 **raw body 验签**——生产须在 `main.ts` 配 rawBody 中间件（本期 mock JSON 足够，已在代码注释标注）。
+
+## 11. Album 纪念册（Phase 4）
+
+一本 **6 页暗黑高级风 SVG 纪念册**（`cover → star-map → story → letter → astro → dedication`）+ 合并长图，
+复用 `certificate` 的全部 SVG 基建与 `enqueueOrRun` 幂等/降级模式；`letter` 页调 `cosmic-letter` skill 生成宇宙来信
+（失败/无 key 降级模板，不拖垮整册）。有 Redis 走 BullMQ（队列 `album`）、无 Redis 同步生成。所有响应带 `compliance`。
+
+### POST /api/memorial/registrations/:registrationNo/album（触发，幂等）
+
+无 body。`202`。`READY`/`GENERATING` 直接返回既有记录；`PENDING`/`FAILED` 入队或同步生成。
+幂等锚点 `album_record @@unique([registrationId, templateVersion])`。
+
+### GET /api/memorial/registrations/:registrationNo/album（取状态与 URL）
+
+响应形状（`AlbumDto`）：
+
+```jsonc
+{
+  "registrationNo": "STAR-20260710-K7PX",
+  "status": "READY",                 // PENDING | GENERATING | READY | FAILED（复用 CertificateStatus）
+  "templateVersion": "v1", "assetFormat": "svg",
+  "albumUrl": "…/albums/2026/07/STAR-…-v1/album.svg",   // 合并长图；未就绪为 null
+  "pageUrls": [ { "name": "cover", "url": "…" }, { "name": "star-map", "url": "…" }, … ],
+  "pageCount": 6,
+  "letterMode": "llm",               // 'llm' | 'template'，宇宙来信页可观测；未生成为 null
+  "updatedAt": "…", "compliance": "…"
+}
+```
+
+错误：`404 REGISTRATION_NOT_FOUND` / `503 DB_UNAVAILABLE`。资产 URL 与证书同走 `StorageService`（OSS 签名 / 本地 `/api/assets/*`）。
+
 ## 附录 A：全接口一览
 
 | 方法 | 路径 | 鉴权 | 依赖 DB | 幂等 | 状态 |
@@ -396,10 +572,18 @@ curl 'http://localhost:3001/api/memorial/public/m7k2xq9f4t3w'
 | GET | `/api/celestial/search` | 匿名 | 否（内存目录） | 是 | ✅ 已实现 |
 | GET | `/api/celestial/:objectUid` | 匿名 | 否（内存目录） | 是 | ✅ 已实现 |
 | POST | `/api/memorial/registrations` | 匿名 | **是** | 头已预留，本期未消费 | ✅ 已实现 |
+| POST | `/api/memorial/couple` | 匿名 | **是** | 冲突重试；无幂等键 | ✅ 已实现（Phase 4） |
+| GET | `/api/memorial/couple/public/:coupleSlug` | 匿名 | **是** | 是 | ✅ 已实现（Phase 4） |
 | GET | `/api/memorial/registrations/:registrationNo` | 匿名 | **是** | 是 | ✅ 已实现 |
 | GET | `/api/memorial/public/:publicSlug` | 匿名 | **是** | 是 | ✅ 已实现 |
 | POST | `/api/memorial/registrations/:no/certificate` | 匿名 | **是** | 是（READY/GENERATING 复用） | ✅ 已实现 |
 | GET | `/api/memorial/registrations/:no/certificate` | 匿名 | **是** | 是 | ✅ 已实现 |
+| POST | `/api/memorial/registrations/:no/album` | 匿名 | **是** | 是（READY/GENERATING 复用） | ✅ 已实现（Phase 4） |
+| GET | `/api/memorial/registrations/:no/album` | 匿名 | **是** | 是 | ✅ 已实现（Phase 4） |
+| POST | `/api/orders` | 匿名 | **是** | 冲突重试；无幂等键 | ✅ 已实现（Phase 4 骨架） |
+| GET | `/api/orders/:orderNo` | 匿名 | **是** | 是 | ✅ 已实现（Phase 4 骨架） |
+| POST | `/api/orders/:orderNo/pay` | 匿名 | **是** | 是（CAS 幂等，仅 mock） | ✅ 已实现（Phase 4 骨架） |
+| POST | `/api/payments/notify/:provider` | 网关验签 | **是** | 是（CAS 幂等履约一次） | ✅ 已实现（mock；真实网关待接） |
 | GET | `/api/assets/*path` | 匿名 | 否（本地磁盘） | 是 | ✅ 已实现（仅本地存储） |
 | POST | `/api/agent/skills/cosmic-letter/run` | 匿名 | 否（DB 可用则落 agent_task） | 否 | ✅ 已实现 |
 | GET | `/api/admin/registrations` | `x-admin-token` | **是** | 是 | ✅ 已实现 |

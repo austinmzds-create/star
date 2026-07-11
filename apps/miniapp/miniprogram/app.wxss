@@ -1,0 +1,54 @@
+/* 全局星空主题与通用类。各页 wxss 在此基础上扩展。 */
+
+page {
+  --bg-deep: #0a0e1a;
+  --bg-mid: #131a2e;
+  --gold: #f4d58d;
+  --gold-soft: #e8c874;
+  --text-main: #eef2ff;
+  --text-dim: #9aa6c4;
+  --glass: rgba(255, 255, 255, 0.06);
+  --glass-border: rgba(255, 255, 255, 0.12);
+
+  background: radial-gradient(120% 80% at 50% 0%, #1a2340 0%, var(--bg-deep) 60%);
+  color: var(--text-main);
+  font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+  min-height: 100vh;
+}
+
+/* 合规脚注：所有面向用户页面底部常驻。字号小、颜色暗，但完整可读。 */
+.compliance {
+  display: block;
+  font-size: 20rpx;
+  line-height: 1.6;
+  color: var(--text-dim);
+  padding: 24rpx 40rpx 40rpx;
+  text-align: center;
+  letter-spacing: 0.2rpx;
+}
+
+.btn-gold {
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-soft) 100%);
+  color: #2a1e05;
+  font-weight: 600;
+  border-radius: 48rpx;
+  border: none;
+}
+
+.btn-ghost {
+  background: var(--glass);
+  color: var(--text-main);
+  border: 1rpx solid var(--glass-border);
+  border-radius: 48rpx;
+}
+
+.glass {
+  background: var(--glass);
+  border: 1rpx solid var(--glass-border);
+  border-radius: 24rpx;
+  backdrop-filter: blur(8rpx);
+}
+
+button::after {
+  border: none;
+}

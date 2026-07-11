@@ -27,12 +27,13 @@
 ```
 star/
 ├── apps/
-│   └── web/                # PC 沉浸式星空前端（Next.js + R3F）+ 公开纪念页 /m/[slug]
+│   ├── web/                # PC 沉浸式星空前端（Next.js + R3F）+ 公开纪念页 /m/[slug] + 情侣页 /couple/[slug]
+│   └── miniapp/            # 微信小程序「扫码找星」：扫证书二维码 → 纪念星/祝福/宇宙来信 → 手机罗盘方向引导找星 → 海报分享（源码引用 @star/astro-core）
 ├── packages/
-│   ├── astro-core/         # 共享天文计算：RA/Dec→天球投影 / →地平坐标 / 可见性 / 最佳观测时间
+│   ├── astro-core/         # 共享天文计算：RA/Dec→天球投影 / →地平坐标 / 可见性 / 最佳观测时间（web + 小程序 + api 三端复用）
 │   └── astro-data/         # 共享星体类型 + 星表（手写 60 精选 + HYG v41 生成 5058 亮星）+ 中英文搜索索引
 ├── services/
-│   └── api/                # NestJS 11 + Prisma 后端：天体搜索/详情、纪念登记、证书/星图生成、Agent 技能、审核后台、健康检查
+│   └── api/                # NestJS 11 + Prisma 后端：天体搜索/详情、纪念登记（含情侣双星）、证书/星图/纪念册生成、订单支付、Agent 技能、审核后台、健康检查
 ├── infra/                  # docker-compose.yml（Postgres + Redis，真实环境用）
 ├── docs/                   # 架构 / 数据模型 / API 规范 / 部署运维
 ├── turbo.json
@@ -99,10 +100,30 @@ star/
   `ADMIN_UNAUTHORIZED` / `INVALID_STATE_TRANSITION`）；`.env.example` 补齐存储/LLM/后台占位变量。
   验证仍为 typecheck + build + 单测（mock Prisma / mock provider，无 Redis/OSS/Key 均降级可跑）。
 
+## 已完成（Phase 4 · 多端与升级）
+
+- **微信小程序「扫码找星」**（`apps/miniapp`）：扫证书二维码 → detail 展示纪念星/祝福/宇宙来信/证书 →
+  find 页用**手机罗盘 + 定位**在真实天空做方向引导（左右转 / 抬降手机 +「已对准」判定）→ share 页 Canvas 程序化绘制星空海报保存/转发。
+  **源码引用 `@star/astro-core`**（不用微信「构建 npm」，纯 TS 零依赖可就地编译），可见性算法与 web 端零漂移；
+  `lib/scene.ts` 纯函数解析扫码/小程序码/普通链接入口；无后端/未配 `BASE_URL` 时整体降级演示（内置示例星）。
+  验证 = `pnpm --filter @star/miniapp typecheck` + `project.config.json` 可在微信开发者工具打开（无真机、无微信运行时）。
+- **情侣双星**（`services/api` + `apps/web`）：`POST /api/memorial/couple` 一次登记两颗星并绑定为一对，
+  轻量 `CoupleGroup`（`coupleSlug`）承接，两颗星各自是普通登记（证书/纪念册零改动）；公开页 `/couple/[slug]`
+  两条成员均 `ACTIVE` 才可见（复用现有 admin 审核，无需改后台）。合并一次内容审核、单事务创建、冲突重试。
+- **纪念册**（`services/api/src/album`）：一本 6 页暗黑高级风 SVG（`cover→star-map→story→letter→astro→dedication`）+ 合并长图，
+  **复用证书 SVG 基建**与 `enqueueOrRun` 幂等/降级；`letter` 页调 `cosmic-letter` skill（失败/无 key 降级模板，`letterMode` 可观测）。
+  有 Redis 走 BullMQ（队列 `album`）、无 Redis 同步生成。纯 SVG 零新依赖。
+- **订单与支付骨架**（`services/api/src/orders`）：`SKU_CATALOG` 服务端权威金额（前端只传 `skuCode`，永不信任前端金额）、
+  `PaymentProvider` 抽象（mock / wechat / alipay，工厂按 `PAYMENT_PROVIDER` env 选型，凭证缺失降级 mock 绝不 crash）、
+  回调验签 + 金额对账 + CAS 幂等履约一次（`providerTxnId @unique` 防重复认领）。真实网关待接，本地/测试用 mock（`POST …/pay`）。
+- schema Phase 4 扩展：新增 `couple_group` / `album_record` 表、`memorial_registration` 加 `coupleGroupId`/`coupleRole`、
+  `order` 加 `provider`/`providerTxnId`/`subject`/`payMeta` + `OrderStatus.FAILED` + `CoupleRole` 枚举；新增 8 个业务错误码
+  （couple/order/payment）。验证仍为 typecheck + build + 单测（mock Prisma / mock provider）；小程序 typecheck 独立通过。
+
 ## 路线图
 
-- **Phase 4**：微信小程序扫码找星、情侣双星、纪念册、实体礼盒供应链；订单支付、内容安全云审核、
-  搜索 DB 化（pg_trgm）、证书渲染独立 worker 伸缩。
+- **Phase 5+**：真实微信/支付宝支付网关联调、搜索 DB 化（pg_trgm）、内容安全云审核、实体礼盒供应链与物流；
+  证书/纪念册渲染独立 worker 伸缩。
 
 ## 本地开发
 

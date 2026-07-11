@@ -5,9 +5,12 @@ import { useUniverse } from '@/lib/store';
 export function ControlBar() {
   const autoRotate = useUniverse((s) => s.autoRotate);
   const showLabels = useUniverse((s) => s.showLabels);
+  const coupleMode = useUniverse((s) => s.coupleMode);
   const toggleAutoRotate = useUniverse((s) => s.toggleAutoRotate);
   const toggleLabels = useUniverse((s) => s.toggleLabels);
   const resetView = useUniverse((s) => s.resetView);
+  const enterCoupleMode = useUniverse((s) => s.enterCoupleMode);
+  const exitCoupleMode = useUniverse((s) => s.exitCoupleMode);
 
   return (
     <div className="pointer-events-auto absolute bottom-6 left-1/2 z-20 -translate-x-1/2">
@@ -17,6 +20,13 @@ export function ControlBar() {
         </Toggle>
         <Toggle active={showLabels} onClick={toggleLabels}>
           名称标签
+        </Toggle>
+        <div className="mx-1 h-5 w-px bg-white/10" />
+        <Toggle
+          active={coupleMode}
+          onClick={coupleMode ? exitCoupleMode : enterCoupleMode}
+        >
+          ✦ 情侣双星
         </Toggle>
         <div className="mx-1 h-5 w-px bg-white/10" />
         <button

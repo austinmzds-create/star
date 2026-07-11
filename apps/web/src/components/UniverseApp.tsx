@@ -4,6 +4,8 @@ import dynamic from 'next/dynamic';
 import { BrandMark } from './ui/BrandMark';
 import { ComplianceNote } from './ui/ComplianceNote';
 import { ControlBar } from './ui/ControlBar';
+import { CoupleModal } from './ui/CoupleModal';
+import { CoupleTray } from './ui/CoupleTray';
 import { HintOverlay } from './ui/HintOverlay';
 import { MemorialModal } from './ui/MemorialModal';
 import { SearchPanel } from './ui/SearchPanel';
@@ -26,9 +28,11 @@ export function UniverseApp() {
       <SearchPanel />
       <StarInfoCard />
       <ControlBar />
+      <CoupleTray />
       <HintOverlay />
       <ComplianceNote />
       <MemorialModal />
+      <CoupleModal />
     </div>
   );
 }

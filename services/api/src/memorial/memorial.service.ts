@@ -1,5 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { RegistrationStatus, type MemorialRegistration } from '@prisma/client';
+import {
+  CoupleRole,
+  OccasionType,
+  RegistrationStatus,
+  type CoupleGroup,
+  type MemorialRegistration,
+} from '@prisma/client';
+import type { CelestialObject } from '@star/astro-data';
 import { COMPLIANCE_NOTICE } from '../common/compliance';
 import { AppError, ErrorCodes } from '../common/errors/app-error';
 import { makePublicSlug } from '../common/ids/public-slug';
@@ -13,6 +20,7 @@ import {
   type ModerationResult,
 } from './moderation/moderation.types';
 import type { CreateRegistrationDto } from './dto/create-registration.dto';
+import type { CreateCoupleDto } from './dto/create-couple.dto';
 
 /** 登记时刻的星体快照：证书与纪念页以此为准，不受未来星表数据修订影响。 */
 export interface StarSnapshot {
@@ -71,33 +79,21 @@ export class MemorialService {
     }
     const status = this.decideInitialStatus(dto, verdict);
 
-    // 写入时快照星体关键字段，证书/纪念页展示不受未来星表修订影响
-    const snapshot: StarSnapshot = {
-      objectUid: star.objectUid,
-      nameZh: star.nameZh,
-      nameEn: star.nameEn,
-      constellationZh: star.constellationZh,
-      raDeg: star.raDeg,
-      decDeg: star.decDeg,
-      magnitude: star.magnitude,
-    };
-
     // 唯一约束冲突（P2002）时重新生成编号/slug 再试，最多 MAX_ID_RETRIES 次
     for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt++) {
       try {
         const created = await this.prisma.memorialRegistration.create({
           data: {
-            registrationNo: makeRegistrationNo(),
-            publicSlug: makePublicSlug(),
-            starObjectUid: star.objectUid,
-            starSnapshotJson: { ...snapshot },
-            memorialName: dto.memorialName,
-            occasionType: dto.occasionType,
-            memorialDate: dto.memorialDate ? new Date(`${dto.memorialDate}T00:00:00Z`) : null,
-            blessingText: dto.blessingText ?? null,
-            storyText: dto.storyText ?? null,
+            ...this.buildRegistrationData({
+              star,
+              memorialName: dto.memorialName,
+              occasionType: dto.occasionType,
+              memorialDate: dto.memorialDate ?? null,
+              blessingText: dto.blessingText ?? null,
+              status,
+            }),
             contactEmail: dto.contactEmail ?? null,
-            status,
+            storyText: dto.storyText ?? null,
           },
         });
         return { registration: this.toOwnerView(created), compliance: COMPLIANCE_NOTICE };
@@ -107,6 +103,140 @@ export class MemorialService {
       }
     }
     throw new AppError(ErrorCodes.INTERNAL_ERROR, '编号生成冲突，请重试');
+  }
+
+  /**
+   * 创建情侣双星登记。校验链：DB 可用 → 同星校验 → 两星存在且可命名 → 合并内容审核
+   * → 事务创建 CoupleGroup + 两条 MemorialRegistration（任一唯一冲突整体回滚重试）。
+   */
+  async createCouple(dto: CreateCoupleDto) {
+    this.prisma.ensureAvailable();
+
+    // 1. 同星校验（400）
+    if (dto.starA.starObjectUid === dto.starB.starObjectUid) {
+      throw new AppError(ErrorCodes.COUPLE_SAME_STAR, '情侣双星不能是同一颗星', {
+        objectUid: dto.starA.starObjectUid,
+      });
+    }
+
+    // 2. 两颗星存在性 + 可命名性（404 / 422）
+    const starA = this.celestial.getNamableByUid(dto.starA.starObjectUid);
+    const starB = this.celestial.getNamableByUid(dto.starB.starObjectUid);
+
+    // 3. 合并内容审核（两名字 + 两祝福 + 关系标签 + 合并祝福）
+    const verdict = await this.moderation.check(
+      [
+        dto.starA.memorialName,
+        dto.starB.memorialName,
+        dto.starA.blessingText,
+        dto.starB.blessingText,
+        dto.relationLabel,
+        dto.coupleBlessing,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+    if (verdict.verdict === 'reject') {
+      throw new AppError(ErrorCodes.CONTENT_REJECTED, '内容包含不适宜文本', {
+        reason: verdict.reason,
+      });
+    }
+    const occasion = dto.occasionType ?? OccasionType.LOVE;
+    const status = this.decideCoupleStatus(dto, verdict);
+
+    // 4. 事务创建 group + 两条登记；任一 @unique 冲突整体回滚换新 ID 重试
+    for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt++) {
+      try {
+        const result = await this.prisma.$transaction(async (tx) => {
+          const group = await tx.coupleGroup.create({
+            data: {
+              coupleSlug: makePublicSlug(),
+              relationLabel: dto.relationLabel ?? null,
+              coupleBlessing: dto.coupleBlessing ?? null,
+            },
+          });
+          const regA = await tx.memorialRegistration.create({
+            data: {
+              ...this.buildRegistrationData({
+                star: starA,
+                memorialName: dto.starA.memorialName,
+                occasionType: occasion,
+                memorialDate: dto.memorialDate ?? null,
+                blessingText: dto.starA.blessingText ?? null,
+                status,
+              }),
+              contactEmail: dto.contactEmail ?? null,
+              coupleGroupId: group.id,
+              coupleRole: CoupleRole.A,
+            },
+          });
+          const regB = await tx.memorialRegistration.create({
+            data: {
+              ...this.buildRegistrationData({
+                star: starB,
+                memorialName: dto.starB.memorialName,
+                occasionType: occasion,
+                memorialDate: dto.memorialDate ?? null,
+                blessingText: dto.starB.blessingText ?? null,
+                status,
+              }),
+              contactEmail: dto.contactEmail ?? null,
+              coupleGroupId: group.id,
+              coupleRole: CoupleRole.B,
+            },
+          });
+          return { group, regA, regB };
+        });
+        return this.toCoupleCreateView(result.group, result.regA, result.regB);
+      } catch (e) {
+        if (isUniqueViolation(e)) continue; // 编号/slug/coupleSlug 任一冲突 → 换新 ID 重试
+        throw e;
+      }
+    }
+    throw new AppError(ErrorCodes.INTERNAL_ERROR, '编号生成冲突，请重试');
+  }
+
+  /** 情侣公开页数据：仅两成员皆 ACTIVE 可见；否则一律 COUPLE_PAGE_NOT_FOUND。 */
+  async findCouplePublicBySlug(coupleSlug: string) {
+    this.prisma.ensureAvailable();
+    const group = await this.prisma.coupleGroup.findUnique({
+      where: { coupleSlug },
+      include: { registrations: true },
+    });
+    // 门控：group 存在 + 恰两条成员 + 两条皆 ACTIVE（复用现有 admin approve/reject，无需改后台）
+    if (
+      !group ||
+      group.registrations.length < 2 ||
+      group.registrations.some((r) => r.status !== RegistrationStatus.ACTIVE)
+    ) {
+      throw new AppError(ErrorCodes.COUPLE_PAGE_NOT_FOUND, '情侣纪念页不存在');
+    }
+    const sorted = [...group.registrations].sort((a, b) =>
+      (a.coupleRole ?? '').localeCompare(b.coupleRole ?? ''),
+    );
+    const stars = await Promise.all(
+      sorted.map(async (reg) => ({
+        role: reg.coupleRole,
+        registrationNo: reg.registrationNo,
+        memorialName: reg.memorialName,
+        blessingText: reg.blessingText,
+        star: reg.starSnapshotJson as unknown as StarSnapshot,
+        certificate: await this.certificate.getPublicAssets(reg.id), // 未就绪 null
+      })),
+    );
+    const first = sorted[0]!;
+    return {
+      couple: {
+        coupleSlug: group.coupleSlug,
+        relationLabel: group.relationLabel,
+        coupleBlessing: group.coupleBlessing,
+        occasionType: first.occasionType,
+        memorialDate: this.formatDate(first.memorialDate),
+        createdAt: group.createdAt,
+        stars,
+      },
+      compliance: COMPLIANCE_NOTICE,
+    };
   }
 
   /** 凭纪念编号查询（登记人自查，任何 status 均可见）。 */
@@ -155,6 +285,89 @@ export class MemorialService {
       return RegistrationStatus.PENDING_REVIEW;
     }
     return RegistrationStatus.ACTIVE;
+  }
+
+  /** 情侣双星初始状态决策：复审词 → 待审；REVIEW_ALL_FREETEXT=1 且有任一自由文本 → 待审。 */
+  private decideCoupleStatus(dto: CreateCoupleDto, verdict: ModerationResult): RegistrationStatus {
+    if (verdict.verdict === 'review') return RegistrationStatus.PENDING_REVIEW;
+    if (
+      process.env.REVIEW_ALL_FREETEXT === '1' &&
+      (dto.starA.blessingText || dto.starB.blessingText || dto.coupleBlessing)
+    ) {
+      return RegistrationStatus.PENDING_REVIEW;
+    }
+    return RegistrationStatus.ACTIVE;
+  }
+
+  /** 由星体构造登记快照（create 与 createCouple 共用）。 */
+  private buildStarSnapshot(star: CelestialObject): StarSnapshot {
+    return {
+      objectUid: star.objectUid,
+      nameZh: star.nameZh,
+      nameEn: star.nameEn,
+      constellationZh: star.constellationZh,
+      raDeg: star.raDeg,
+      decDeg: star.decDeg,
+      magnitude: star.magnitude,
+    };
+  }
+
+  /**
+   * 构造一条 memorialRegistration 的写入 data 子集（不含 couple 字段与 contactEmail/storyText）。
+   * 每次调用生成新的 registrationNo/publicSlug，供 P2002 重试换新 ID。
+   */
+  private buildRegistrationData(args: {
+    star: CelestialObject;
+    memorialName: string;
+    occasionType: OccasionType;
+    memorialDate: string | null;
+    blessingText: string | null;
+    status: RegistrationStatus;
+  }) {
+    return {
+      registrationNo: makeRegistrationNo(),
+      publicSlug: makePublicSlug(),
+      starObjectUid: args.star.objectUid,
+      starSnapshotJson: { ...this.buildStarSnapshot(args.star) },
+      memorialName: args.memorialName,
+      occasionType: args.occasionType,
+      memorialDate: args.memorialDate ? new Date(`${args.memorialDate}T00:00:00Z`) : null,
+      blessingText: args.blessingText,
+      status: args.status,
+    };
+  }
+
+  /** 情侣创建响应组装：顶层 status 为聚合值（皆 ACTIVE → ACTIVE，否则 PENDING_REVIEW）。 */
+  private toCoupleCreateView(
+    group: CoupleGroup,
+    a: MemorialRegistration,
+    b: MemorialRegistration,
+  ) {
+    const agg = [a, b].every((r) => r.status === RegistrationStatus.ACTIVE)
+      ? RegistrationStatus.ACTIVE
+      : RegistrationStatus.PENDING_REVIEW;
+    const unit = (r: MemorialRegistration) => ({
+      role: r.coupleRole,
+      registrationNo: r.registrationNo,
+      publicSlug: r.publicSlug,
+      status: r.status,
+      memorialName: r.memorialName,
+      blessingText: r.blessingText,
+      star: r.starSnapshotJson as unknown as StarSnapshot,
+    });
+    return {
+      couple: {
+        coupleSlug: group.coupleSlug,
+        relationLabel: group.relationLabel,
+        coupleBlessing: group.coupleBlessing,
+        occasionType: a.occasionType,
+        memorialDate: this.formatDate(a.memorialDate),
+        status: agg,
+        createdAt: group.createdAt,
+        registrations: [unit(a), unit(b)],
+      },
+      compliance: COMPLIANCE_NOTICE,
+    };
   }
 
   /** 登记人视图：绝不含 contactEmail / reviewNote / 内部 id / ownerUserId。 */

@@ -24,8 +24,13 @@ export function StarInfoCard() {
   const setObserveTime = useUniverse((s) => s.setObserveTime);
   const selectStar = useUniverse((s) => s.selectStar);
   const openMemorial = useUniverse((s) => s.openMemorial);
+  const coupleMode = useUniverse((s) => s.coupleMode);
+  const coupleSlotA = useUniverse((s) => s.coupleSlotA);
+  const coupleSlotB = useUniverse((s) => s.coupleSlotB);
+  const addStarToCouple = useUniverse((s) => s.addStarToCouple);
 
   const star = selectedUid ? getCelestialByUid(selectedUid) : undefined;
+  const inCouple = star ? star.objectUid === coupleSlotA || star.objectUid === coupleSlotB : false;
 
   useEffect(() => {
     if (observeTime == null) setObserveTime(Date.now());
@@ -138,12 +143,25 @@ export function StarInfoCard() {
               </div>
             )}
 
-            <button
-              onClick={openMemorial}
-              className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
-            >
-              为这颗星创建纪念命名
-            </button>
+            {coupleMode ? (
+              <button
+                onClick={() => addStarToCouple(star.objectUid)}
+                className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
+                  inCouple
+                    ? 'border border-nebula-400/40 bg-nebula-500/20'
+                    : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
+                }`}
+              >
+                {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
+              </button>
+            ) : (
+              <button
+                onClick={openMemorial}
+                className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+              >
+                为这颗星创建纪念命名
+              </button>
+            )}
             <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
               私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
             </p>

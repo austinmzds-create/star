@@ -3,7 +3,12 @@
 import { getCelestialByUid } from '@star/astro-data';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
-import { createMemorialRegistration, generateCosmicLetter, isApiConfigured } from '@/lib/api';
+import {
+  createMemorialRegistration,
+  generateCosmicLetter,
+  isApiConfigured,
+  triggerAlbum,
+} from '@/lib/api';
 import { formatDec, formatRA } from '@/lib/format';
 import { useUniverse } from '@/lib/store';
 
@@ -289,6 +294,8 @@ export function MemorialModal() {
                   )}
                 </div>
 
+                <AlbumEntry done={done} />
+
                 <div className="mt-6 flex gap-3">
                   <button
                     onClick={() => setDone(null)}
@@ -309,6 +316,71 @@ export function MemorialModal() {
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+/**
+ * 成功态内的「珍藏纪念册 / 实体礼盒」入口（紧凑版）。
+ * live 模式：一键触发后端生成（幂等），随后引导至纪念页逐页预览与下载；
+ * demo 模式：清晰告知需连接服务，不发起请求。实体礼盒为本期 UI 占位。
+ */
+function AlbumEntry({ done }: { done: DoneState }) {
+  const [albumState, setAlbumState] = useState<'idle' | 'starting' | 'started' | 'unavailable'>(
+    'idle',
+  );
+
+  const startAlbum = async () => {
+    if (albumState === 'starting') return;
+    setAlbumState('starting');
+    const outcome = await triggerAlbum(done.regNo);
+    setAlbumState(outcome.mode === 'live' ? 'started' : 'unavailable');
+  };
+
+  return (
+    <div className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4 text-center">
+      <div className="text-[11px] uppercase tracking-[0.24em] text-gold/70">珍藏纪念册</div>
+      <p className="mt-2 text-[12px] leading-relaxed text-nebula-200/60">
+        六页暗夜高级风纪念册：封面、专属星图、纪念寄语、宇宙来信、星象档案与献词。
+      </p>
+
+      {done.mode === 'live' ? (
+        albumState === 'started' ? (
+          <div className="mt-3">
+            <p className="text-[12px] text-nebula-100/80">已开始生成，可在纪念页逐页预览与下载。</p>
+            {done.slug && (
+              <a
+                href={`/m/${done.slug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 inline-block text-[12px] text-nebula-200/80 underline underline-offset-4 transition hover:text-white"
+              >
+                前往纪念页查看 →
+              </a>
+            )}
+          </div>
+        ) : albumState === 'unavailable' ? (
+          <p className="mt-3 text-[12px] text-nebula-200/55">
+            纪念册服务暂不可用，请稍后在纪念页重试。
+          </p>
+        ) : (
+          <button
+            onClick={startAlbum}
+            disabled={albumState === 'starting'}
+            className="mt-3 rounded-2xl border border-nebula-400/30 bg-nebula-500/10 px-5 py-2.5 text-[13px] text-nebula-100/90 transition hover:bg-nebula-500/20 disabled:cursor-wait disabled:opacity-60"
+          >
+            {albumState === 'starting' ? '正在装订…' : '✦ 生成珍藏纪念册'}
+          </button>
+        )
+      ) : (
+        <p className="mt-3 text-[12px] text-nebula-200/55">
+          连接服务后，可一键生成纪念册并升级为实体证书 / 礼盒。
+        </p>
+      )}
+
+      <p className="mt-3 text-[10.5px] leading-relaxed text-nebula-200/35">
+        实体礼盒为私人纪念礼品，不涉及星体产权或官方命名。
+      </p>
+    </div>
   );
 }
 

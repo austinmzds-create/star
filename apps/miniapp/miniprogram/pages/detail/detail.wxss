@@ -1,0 +1,105 @@
+.page {
+  min-height: 100vh;
+  padding: 40rpx 40rpx 0;
+  box-sizing: border-box;
+}
+
+.center {
+  text-align: center;
+  padding: 200rpx 0;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.demo-tag {
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--gold-soft);
+  margin-bottom: 20rpx;
+}
+
+.star-card {
+  padding: 56rpx 40rpx;
+  text-align: center;
+}
+
+.star-visual {
+  height: 120rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.star-dot {
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff8e6 0%, var(--gold) 40%, rgba(244, 213, 141, 0) 75%);
+  box-shadow: 0 0 40rpx rgba(244, 213, 141, 0.6);
+}
+
+.memorial-name {
+  font-size: 52rpx;
+  font-weight: 700;
+  color: var(--gold);
+  margin-top: 16rpx;
+}
+
+.occasion {
+  font-size: 26rpx;
+  color: var(--text-dim);
+  margin-top: 16rpx;
+}
+
+.real-name {
+  font-size: 30rpx;
+  color: var(--text-main);
+  margin-top: 24rpx;
+}
+
+.meta {
+  font-size: 24rpx;
+  color: var(--text-dim);
+  margin-top: 10rpx;
+}
+
+.cert {
+  margin-top: 32rpx;
+  padding: 20rpx;
+}
+
+.cert-img {
+  width: 100%;
+  border-radius: 16rpx;
+}
+
+.block {
+  margin-top: 32rpx;
+  padding: 36rpx;
+}
+
+.block-title {
+  font-size: 26rpx;
+  color: var(--gold-soft);
+  margin-bottom: 16rpx;
+}
+
+.block-body {
+  font-size: 30rpx;
+  line-height: 1.7;
+  color: var(--text-main);
+  white-space: pre-wrap;
+}
+
+.cta {
+  margin-top: 48rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.cta button {
+  height: 96rpx;
+  line-height: 96rpx;
+  font-size: 32rpx;
+}

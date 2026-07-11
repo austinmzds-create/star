@@ -1,0 +1,19 @@
+{
+  "miniprogramRoot": "miniprogram/",
+  "compileType": "miniprogram",
+  "appid": "touristappid",
+  "projectname": "star-miniapp",
+  "description": "星辰纪念·扫码找星",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": false,
+    "useCompilerPlugins": ["typescript"],
+    "ignoreDevUnusedFiles": false,
+    "packNpmManually": false
+  },
+  "libVersion": "3.5.0",
+  "condition": {}
+}

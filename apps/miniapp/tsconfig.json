@@ -1,0 +1,33 @@
+{
+  // 微信小程序 TypeScript 工程配置。
+  // 关键点：
+  // 1. 通过 paths 别名把 @star/astro-core 解析到共享源码（单一真源，多端一致）；
+  // 2. include 把共享源码纳入 typecheck 范围，保证「一套算法」在小程序侧也类型自洽；
+  // 3. 与 tsconfig.base 对齐 strict + noUncheckedIndexedAccess。
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2020"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": {
+      "@star/astro-core": ["../../packages/astro-core/src/index.ts"]
+    },
+    // wx.* 全局类型经 typings/index.d.ts 的三斜线引用引入（该文件在 include 中）；
+    // 不用 types/typeRoots 强制解析，避免 miniprogram-api-typings 非 @types 布局导致找不到。
+    "types": []
+  },
+  "include": [
+    "miniprogram/**/*.ts",
+    "typings/**/*.d.ts",
+    "../../packages/astro-core/src/**/*.ts"
+  ],
+  "exclude": ["node_modules", "miniprogram_npm"]
+}

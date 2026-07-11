@@ -462,6 +462,370 @@ export async function generateCosmicLetter(
   }
 }
 
+// ─────────────────────────── 情侣双星（Couple Star） ───────────────────────────
+
+/** 情侣对中的单颗星单元（UI 形状）。memorialName 可为空串，调用方负责兜底非空。 */
+export interface CoupleUnitInput {
+  /** 星体唯一标识 */
+  objectUid: string;
+  /** 该颗星的纪念名，1-40 字（空串由调用方补兜底名） */
+  memorialName: string;
+  /** 该颗星的祝福语，<=140 字，可选 */
+  blessing?: string;
+}
+
+/** 创建情侣双星的输入（UI 形状）。occasion 传中文标签，发送前映射为枚举码。 */
+export interface CreateCoupleInput {
+  starA: CoupleUnitInput;
+  starB: CoupleUnitInput;
+  /** 纪念场景中文标签，缺省「情侣纪念」（LOVE） */
+  occasion?: string;
+  /** 关系/场景标签，如「恋人」「夫妻」，<=40 字，可选 */
+  relationLabel?: string;
+  /** 合并祝福语，<=140 字，可选 */
+  coupleBlessing?: string;
+  /** 纪念日期 YYYY-MM-DD，两颗星共享，可选 */
+  memorialDate?: string;
+}
+
+/** 情侣对中单颗星的创建结果（UI 形状）。 */
+export interface CoupleStarResult {
+  role: 'A' | 'B';
+  registrationNo: string;
+  publicSlug: string;
+  memorialName: string;
+  star: {
+    objectUid: string;
+    nameZh: string;
+    nameEn: string;
+    constellationZh: string;
+    raDeg: number;
+    decDeg: number;
+    magnitude: number | null;
+  };
+}
+
+/** 情侣双星创建成功结果（UI 形状）。 */
+export interface CoupleRegistrationResult {
+  /** 对外情侣纪念页 slug，用于 /couple/[slug] */
+  coupleSlug: string;
+  /** 聚合状态：两颗皆 ACTIVE → ACTIVE，否则 PENDING_REVIEW */
+  status: 'ACTIVE' | 'PENDING_REVIEW' | 'REJECTED';
+  registrations: CoupleStarResult[];
+}
+
+/** 情侣双星创建判别联合：live=服务端真实登记；demo=本地演示回退。 */
+export type CreateCoupleOutcome =
+  | { mode: 'live'; data: CoupleRegistrationResult }
+  | { mode: 'demo'; data: { registrationNoA: string; registrationNoB: string } };
+
+/** POST /api/memorial/couple 成功 body（与 MemorialService.toCoupleCreateView 逐字段对齐）。 */
+interface WireCoupleCreateResponse {
+  couple: {
+    coupleSlug: string;
+    relationLabel: string | null;
+    coupleBlessing: string | null;
+    occasionType: string;
+    memorialDate: string | null;
+    status: 'ACTIVE' | 'PENDING_REVIEW' | 'REJECTED';
+    createdAt: string;
+    registrations: Array<{
+      role: 'A' | 'B' | null;
+      registrationNo: string;
+      publicSlug: string;
+      status: string;
+      memorialName: string;
+      blessingText: string | null;
+      star: WireStarSnapshot;
+    }>;
+  };
+  compliance: string;
+}
+
+/** GET /api/memorial/couple/public/:coupleSlug 成功 body。 */
+interface WireCouplePublicResponse {
+  couple: {
+    coupleSlug: string;
+    relationLabel: string | null;
+    coupleBlessing: string | null;
+    occasionType: string;
+    memorialDate: string | null;
+    createdAt: string;
+    stars: Array<{
+      role: 'A' | 'B' | null;
+      registrationNo: string;
+      memorialName: string;
+      blessingText: string | null;
+      star: WireStarSnapshot;
+      certificate?: WirePublicCertificate | null;
+    }>;
+  };
+  compliance: string;
+}
+
+/** 从 wire 快照 + 本地目录距离，装配 UI 星体子集。 */
+function toUiStar(snap: WireStarSnapshot): CoupleStarResult['star'] {
+  return {
+    objectUid: snap.objectUid,
+    nameZh: snap.nameZh,
+    nameEn: snap.nameEn,
+    constellationZh: snap.constellationZh,
+    raDeg: snap.raDeg,
+    decDeg: snap.decDeg,
+    magnitude: snap.magnitude,
+  };
+}
+
+/** wire role 兜底为 'A'/'B'（后端理论上恒返回，容错处理 null/异常值）。 */
+function normalizeRole(role: 'A' | 'B' | null, index: number): 'A' | 'B' {
+  if (role === 'A' || role === 'B') return role;
+  return index === 0 ? 'A' : 'B';
+}
+
+/**
+ * 创建情侣双星登记。
+ * 与单星登记一致：任何失败（未配置/网络/超时/校验/两星相同/服务端异常）一律优雅回退演示模式，
+ * 绝不 throw。演示模式下生成两个同格式编号，成功态仍可展示这一对星。
+ */
+export async function createCoupleRegistration(
+  input: CreateCoupleInput,
+): Promise<CreateCoupleOutcome> {
+  if (!isApiConfigured()) {
+    return {
+      mode: 'demo',
+      data: { registrationNoA: makeDemoRegistrationNo(), registrationNoB: makeDemoRegistrationNo() },
+    };
+  }
+  try {
+    const body = {
+      starA: {
+        starObjectUid: input.starA.objectUid,
+        memorialName: input.starA.memorialName,
+        ...(input.starA.blessing?.trim() ? { blessingText: input.starA.blessing.trim() } : {}),
+      },
+      starB: {
+        starObjectUid: input.starB.objectUid,
+        memorialName: input.starB.memorialName,
+        ...(input.starB.blessing?.trim() ? { blessingText: input.starB.blessing.trim() } : {}),
+      },
+      occasionType: occasionLabelToCode(input.occasion ?? '情侣纪念'),
+      ...(input.relationLabel?.trim() ? { relationLabel: input.relationLabel.trim() } : {}),
+      ...(input.coupleBlessing?.trim() ? { coupleBlessing: input.coupleBlessing.trim() } : {}),
+      ...(input.memorialDate ? { memorialDate: input.memorialDate } : {}),
+    };
+    const res = await request<WireCoupleCreateResponse>('/api/memorial/couple', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Idempotency-Key': makeIdempotencyKey(),
+      },
+      body: JSON.stringify(body),
+    });
+    const c = res.couple;
+    return {
+      mode: 'live',
+      data: {
+        coupleSlug: c.coupleSlug,
+        status: c.status,
+        registrations: c.registrations.map((r, i) => ({
+          role: normalizeRole(r.role, i),
+          registrationNo: r.registrationNo,
+          publicSlug: r.publicSlug,
+          memorialName: r.memorialName,
+          star: toUiStar(r.star),
+        })),
+      },
+    };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] 创建情侣双星失败，已回退演示模式：', err);
+    }
+    return {
+      mode: 'demo',
+      data: { registrationNoA: makeDemoRegistrationNo(), registrationNoB: makeDemoRegistrationNo() },
+    };
+  }
+}
+
+/** 公开情侣纪念页内单颗星（UI 形状）。 */
+export interface PublicCoupleStar {
+  role: 'A' | 'B';
+  registrationNo: string;
+  memorialName: string;
+  blessing: string | null;
+  star: {
+    objectUid: string;
+    nameZh: string;
+    nameEn: string;
+    constellationZh: string;
+    raDeg: number;
+    decDeg: number;
+    magnitude: number | null;
+    distanceLy: number | null;
+  };
+  certificate: CertificateAssets | null;
+}
+
+/** 公开情侣纪念页视图（UI 形状）。 */
+export interface PublicCoupleView {
+  coupleSlug: string;
+  relationLabel: string | null;
+  coupleBlessing: string | null;
+  /** 纪念场景中文标签（已从枚举码映射） */
+  occasion: string;
+  memorialDate: string | null;
+  createdAt: string;
+  stars: PublicCoupleStar[];
+}
+
+/**
+ * 拉取公开情侣纪念页数据（仅服务端组件调用）。
+ * 失败返回 null，由页面渲染优雅降级占位，绝不抛错。60 秒 ISR。
+ */
+export async function getPublicCouple(coupleSlug: string): Promise<PublicCoupleView | null> {
+  if (!isApiConfigured()) return null;
+  try {
+    const res = await request<WireCouplePublicResponse>(
+      `/api/memorial/couple/public/${encodeURIComponent(coupleSlug)}`,
+      { next: { revalidate: 60 } },
+    );
+    const c = res.couple;
+    const { getCelestialByUid } = await import('@star/astro-data');
+    const stars: PublicCoupleStar[] = c.stars.map((s, i) => {
+      const catalogStar = getCelestialByUid(s.star.objectUid);
+      const cert = s.certificate;
+      const certificate: CertificateAssets | null =
+        cert && cert.status === 'READY' && cert.certUrl && cert.starMapUrl
+          ? { certUrl: cert.certUrl, starMapUrl: cert.starMapUrl }
+          : null;
+      return {
+        role: normalizeRole(s.role, i),
+        registrationNo: s.registrationNo,
+        memorialName: s.memorialName,
+        blessing: s.blessingText,
+        star: {
+          ...toUiStar(s.star),
+          distanceLy: catalogStar?.distanceLy ?? null,
+        },
+        certificate,
+      };
+    });
+    return {
+      coupleSlug: c.coupleSlug,
+      relationLabel: c.relationLabel,
+      coupleBlessing: c.coupleBlessing,
+      occasion: occasionCodeToLabel(c.occasionType),
+      memorialDate: c.memorialDate,
+      createdAt: c.createdAt,
+      stars,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─────────────────────────── 纪念册（Album） ───────────────────────────
+
+/** 纪念册生成状态（镜像后端 CertificateStatus）。 */
+export type AlbumStatus = 'PENDING' | 'GENERATING' | 'READY' | 'FAILED';
+
+/** 纪念册单页资产（UI 形状）。 */
+export interface AlbumPageAsset {
+  /** 后端页名（cover/star-map/story/letter/astro/dedication） */
+  name: string;
+  /** 中文页名标签（展示用） */
+  label: string;
+  url: string;
+}
+
+/** 纪念册视图（UI 形状）。 */
+export interface AlbumView {
+  status: AlbumStatus;
+  /** 合并长图 URL；仅 READY 时非空 */
+  albumUrl: string | null;
+  /** 分页资产；仅 READY 时非空 */
+  pages: AlbumPageAsset[];
+  /** 宇宙来信生成方式：llm/template/null */
+  letterMode: string | null;
+}
+
+/**
+ * 纪念册结果判别联合：
+ * - live：后端可达，data 为真实状态（可能仍在生成中）；
+ * - unavailable：未配置 API 或后端不可达 —— UI 据此展示「需连接服务后生成」降级提示。
+ */
+export type AlbumOutcome = { mode: 'live'; data: AlbumView } | { mode: 'unavailable' };
+
+/** 后端页名 → 中文标签。未知页名原样返回（向前兼容后端新增页）。 */
+const ALBUM_PAGE_LABELS: Record<string, string> = {
+  cover: '封面',
+  'star-map': '星图',
+  story: '纪念寄语',
+  letter: '宇宙来信',
+  astro: '星象档案',
+  dedication: '献词',
+};
+
+/** AlbumDto（后端）→ AlbumView（UI）。 */
+interface WireAlbumResponse {
+  registrationNo: string;
+  status: AlbumStatus;
+  albumUrl: string | null;
+  pageUrls: Array<{ name: string; url: string }>;
+  pageCount: number;
+  letterMode: string | null;
+}
+
+/** 把 wire album dto 收敛为 UI 视图。 */
+function toAlbumView(res: WireAlbumResponse): AlbumView {
+  return {
+    status: res.status,
+    albumUrl: res.albumUrl,
+    pages: (res.pageUrls ?? []).map((p) => ({
+      name: p.name,
+      label: ALBUM_PAGE_LABELS[p.name] ?? p.name,
+      url: p.url,
+    })),
+    letterMode: res.letterMode,
+  };
+}
+
+/**
+ * 触发纪念册生成（幂等）。后端异步入队/同步降级/已就绪同走 202 响应形状。
+ * 未配置 API 或失败 → mode='unavailable'，UI 展示降级提示，绝不 throw。
+ */
+export async function triggerAlbum(registrationNo: string): Promise<AlbumOutcome> {
+  if (!isApiConfigured()) return { mode: 'unavailable' };
+  try {
+    const res = await request<WireAlbumResponse>(
+      `/api/memorial/registrations/${encodeURIComponent(registrationNo)}/album`,
+      { method: 'POST' },
+    );
+    return { mode: 'live', data: toAlbumView(res) };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] 触发纪念册失败：', err);
+    }
+    return { mode: 'unavailable' };
+  }
+}
+
+/**
+ * 查询纪念册状态与资产 URL。
+ * 未配置 API 或失败 → mode='unavailable'，绝不 throw。
+ */
+export async function getAlbum(registrationNo: string): Promise<AlbumOutcome> {
+  if (!isApiConfigured()) return { mode: 'unavailable' };
+  try {
+    const res = await request<WireAlbumResponse>(
+      `/api/memorial/registrations/${encodeURIComponent(registrationNo)}/album`,
+    );
+    return { mode: 'live', data: toAlbumView(res) };
+  } catch {
+    return { mode: 'unavailable' };
+  }
+}
+
 /** 按编号查登记（预留给后续订单/证书页）。失败返回 null。 */
 export async function getRegistration(
   registrationNo: string,

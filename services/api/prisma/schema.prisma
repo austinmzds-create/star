@@ -45,12 +45,19 @@ enum CertificateStatus {
   FAILED
 }
 
-/// 订单状态（占位）
+/// 订单状态。FAILED=支付失败，CANCELLED=用户/超时取消，二者语义不同。
 enum OrderStatus {
   CREATED
   PAID
+  FAILED
   CANCELLED
   REFUNDED
+}
+
+/// 情侣双星中的角色（A=第一颗，B=第二颗）
+enum CoupleRole {
+  A
+  B
 }
 
 /// Agent 任务状态
@@ -175,17 +182,44 @@ model MemorialRegistration {
   contactEmail     String?
   /// 审核备注（复审拒绝原因等，内部字段）
   reviewNote       String?
+  /// 情侣双星分组外键（null=普通单星登记）
+  coupleGroupId    String?
+  coupleGroup      CoupleGroup?       @relation(fields: [coupleGroupId], references: [id])
+  /// 该登记在情侣对中的角色（A/B），单星登记为 null
+  coupleRole       CoupleRole?
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
   certificates CertificateRecord[]
   orders       Order[]
   agentTasks   AgentTask[]
+  albums       AlbumRecord[]
 
   @@index([starObjectUid, status])
   @@index([ownerUserId])
   @@index([status, createdAt(sort: Desc)])
+  @@index([coupleGroupId])
+  // 同一分组内 A/B 各一，防止写入两个 A（Postgres 唯一索引对 NULL 不去重，单星登记不受约束）
+  @@unique([coupleGroupId, coupleRole])
   @@map("memorial_registration")
+}
+
+/// 情侣双星分组：把两条 MemorialRegistration 关联为一对，共享一个对外 coupleSlug。
+/// 轻量设计：不持有 status——公开可见性以两条成员登记的 status 为准（复用现有 admin approve/reject，无需改后台）。
+model CoupleGroup {
+  id             String   @id @default(cuid())
+  /// 对外情侣纪念页短链 slug，形如 'c7k2xq9f4t3w'（与 publicSlug 同字母表，DB @unique 兜底唯一）
+  coupleSlug     String   @unique
+  /// 关系/场景标签，如 '恋人' / '夫妻' / '挚友'（展示用）
+  relationLabel  String?  @db.VarChar(64)
+  /// 合并祝福语（couple 页头部展示，<=140 字符）；两颗星各自的 blessingText 仍存在各自登记行
+  coupleBlessing String?  @db.VarChar(280)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  registrations MemorialRegistration[]
+
+  @@map("couple_group")
 }
 
 /// 证书记录：BullMQ worker（无 Redis 时同步）生成证书 + 星图 SVG/PNG 后写存储（OSS 或本地磁盘）。
@@ -226,15 +260,51 @@ model Order {
   amountFen      Int
   currency       String                @default("CNY")
   status         OrderStatus           @default(CREATED)
-  /// 支付渠道：'wxpay' | 'alipay'（预留）
+  /// 支付渠道：'wxpay' | 'alipay'（预留，写入时镜像 provider 值）
   channel        String?
+  /// 支付服务商：'mock' | 'wechat' | 'alipay'（下单时锁定的 provider.name）
+  provider       String?
+  /// 服务商侧交易号（微信 transaction_id / 支付宝 trade_no / mock 生成），回调幂等锚点之一
+  providerTxnId  String?               @unique
+  /// 下单主体描述快照（证书/纪念册名等，回调对账与展示用）
+  subject        String?
+  /// 支付/失败原始回执摘要（脱敏后 <=500 字符，审计用）
+  payMeta        Json?
   paidAt         DateTime?
   createdAt      DateTime              @default(now())
   updatedAt      DateTime              @updatedAt
 
   @@index([userId, status])
   @@index([status, createdAt(sort: Desc)])
+  @@index([provider, status])
   @@map("order")
+}
+
+/// 纪念册记录：多页 SVG + 合并长图，复用证书 SVG 基建生成，宇宙来信页调 cosmic-letter skill。
+model AlbumRecord {
+  id                String               @id @default(cuid())
+  registrationId    String
+  registration      MemorialRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  status            CertificateStatus    @default(PENDING) // 复用四态枚举
+  templateVersion   String               @default("v1")
+  /// 合并长图 object key，如 'albums/2026/07/STAR-…-v1/album.svg'
+  combinedObjectKey String?
+  /// 六页 object key，按 cover→dedication 固定顺序
+  pageObjectKeys    String[]             @default([])
+  pageCount         Int                  @default(0)
+  /// 合并产物格式 'svg' | 'png'
+  assetFormat       String               @default("svg")
+  /// 宇宙来信生成模式 'llm' | 'template'（可观测）
+  letterMode        String?
+  /// 关联 cosmic-letter 的 agent_task.id（可空）
+  letterTaskId      String?
+  error             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([registrationId, templateVersion]) // 幂等锚点
+  @@index([registrationId, status])
+  @@map("album_record")
 }
 
 /// Agent 任务表：AI 技能编排的持久化载体（证书文案生成、星空故事撰写等）

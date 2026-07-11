@@ -3,7 +3,7 @@
 > **定位**：库表**唯一事实来源**。`services/api/prisma/schema.prisma` 的每个 model 在本文有对应章节；
 > 星表扩容（60 颗 → 5058 亮星 + 命名候选池，Phase 3 已落地）全文在第 8 章。
 > **读者**：后端工程师、数据工程师。
-> **最后更新**：2026-07-11（Phase 3 · 证书记录/agent_task 字段、星表扩容落地）。
+> **最后更新**：2026-07-11（Phase 4 · 情侣双星 `couple_group`、纪念册 `album_record`、订单支付字段扩展）。
 > **关联文档**：[系统架构](./architecture.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
 
 ---
@@ -38,15 +38,18 @@ erDiagram
   celestial_object ||--o{ memorial_registration : "被登记"
   app_user ||--o{ memorial_registration : "拥有(预留)"
   app_user ||--o{ order : "下单(预留)"
+  couple_group ||--o{ memorial_registration : "情侣两颗星(A/B)"
   memorial_registration ||--o{ certificate_record : "证书"
-  memorial_registration ||--o{ order : "关联订单(预留)"
+  memorial_registration ||--o{ album_record : "纪念册"
+  memorial_registration ||--o{ order : "关联订单"
   memorial_registration ||--o{ agent_task : "AI任务(预留)"
 ```
 
 枚举：`CelestialType`（STAR/GALAXY/NEBULA/CLUSTER）、`RegistrationStatus`（PENDING_REVIEW/ACTIVE/REJECTED）、
 `OccasionType`（LOVE/BIRTHDAY/WEDDING/GRADUATION/NEWBORN/PET_MEMORIAL/IN_MEMORIAM/OTHER）、
-`CertificateStatus`（PENDING/GENERATING/READY/FAILED）、`OrderStatus`（CREATED/PAID/CANCELLED/REFUNDED）、
-`AgentTaskStatus`（QUEUED/RUNNING/SUCCEEDED/FAILED）。
+`CertificateStatus`（PENDING/GENERATING/READY/FAILED，纪念册 `album_record` 亦复用此枚举）、
+`OrderStatus`（CREATED/PAID/**FAILED**/CANCELLED/REFUNDED——Phase 4 增 `FAILED`，FAILED=支付失败、CANCELLED=用户/超时取消，语义不同）、
+`CoupleRole`（A/B，Phase 4 新增）、`AgentTaskStatus`（QUEUED/RUNNING/SUCCEEDED/FAILED）。
 
 ## 3. celestial_object 天体主表
 
@@ -110,10 +113,14 @@ erDiagram
 | `ownerUserId` | `String?` FK → `app_user.id` | 预留：本期匿名登记，恒为 null |
 | `contactEmail` | `String?` | **隐私字段，任何对外接口不返回** |
 | `reviewNote` | `String?` | 审核备注（内部字段） |
+| `coupleGroupId` | `String?` FK → `couple_group.id` | **Phase 4**：情侣双星分组外键；`null`=普通单星登记（见 §4A） |
+| `coupleRole` | `CoupleRole?`（A/B） | **Phase 4**：该登记在情侣对中的角色；单星登记为 `null` |
 | `createdAt` / `updatedAt` | `DateTime` | 审计 |
 
 索引：`@@index([starObjectUid, status])`（星体占用查询）、`@@index([ownerUserId])`、
-`@@index([status, createdAt(sort: Desc)])`（后台审核列表）。
+`@@index([status, createdAt(sort: Desc)])`（后台审核列表）、`@@index([coupleGroupId])`（Phase 4）。
+唯一约束 `@@unique([coupleGroupId, coupleRole])`（Phase 4）：同一分组内 A/B 各一，防止写入两个 A——
+**Postgres 唯一索引对 NULL 不去重，单星登记（两列均 null）不受此约束**。
 
 **registrationNo 生成规则**（`services/api/src/common/ids/registration-no.ts`）：
 
@@ -129,6 +136,26 @@ erDiagram
 Phase 3 落地扩容后的「独占型命名」时，按 §8.4 第 3 条补：
 `namingStatus` 字段 + `memorial_registration(starObjectUid)` 上 `WHERE status = 'ACTIVE'`
 的部分唯一索引（partial unique index），并发下重复占用由约束拒绝、API 返回业务冲突码。
+
+## 4A. couple_group 情侣双星分组表（Phase 4）
+
+把两条 `memorial_registration` 关联为一对，共享一个对外 `coupleSlug`。**轻量设计：不持有 status**——
+公开可见性以两条成员登记的 `status` 为准（复用现有 admin approve/reject，无需改后台）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 内部主键 |
+| `coupleSlug` | `String @unique` | 对外情侣纪念页短链，形如 `c7k2xq9f4t3w`（与 `publicSlug` 同去混淆字母表，DB `@unique` 兜底） |
+| `relationLabel` | `String? @db.VarChar(64)` | 关系/场景标签，如「恋人」「夫妻」「挚友」（展示用） |
+| `coupleBlessing` | `String? @db.VarChar(280)` | 合并祝福语（couple 页头部展示，≤140 字符）；两颗星各自的 `blessingText` 仍存各自登记行 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+关系：`registrations MemorialRegistration[]`（恰两条，A/B 由成员行的 `coupleRole` 区分）。
+
+**决策：轻量 group vs 纯字段方案**——纯在登记表加 `coupleGroupId`/`coupleRole` 无法承载稳定对外
+`coupleSlug` 与合并展示字段（relationLabel/coupleBlessing），且「一对」需要一个有主体的实体承接。
+独立 group + 成员行 `@@unique([coupleGroupId, coupleRole])` 是最小改动且不破坏现有 memorial 单测的方案。
+创建走单事务（group + 两条登记），任一 `@unique` 冲突整体回滚换新 ID 重试。API 契约见 [api-spec.md §3.5/§3.6](./api-spec.md)。
 
 ## 5. certificate_record 证书记录表
 
@@ -149,11 +176,59 @@ Phase 3 落地扩容后的「独占型命名」时，按 §8.4 第 3 条补：
 > 并加 `@@unique([registrationId, templateVersion])`。本地只 `prisma generate`；真实环境需一条
 > migration（drop `ossObjectKey`、add 三列 + 唯一约束）。
 
-### 5.1 其余占位表
+### 5.1 album_record 纪念册记录表（Phase 4）
+
+多页 SVG + 合并长图，复用证书 SVG 基建生成；结构与 `certificate_record` 高度同构（幂等锚点相同）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 主键 |
+| `registrationId` | FK → `memorial_registration.id`，`onDelete: Cascade` | 所属登记 |
+| `status` | `CertificateStatus @default(PENDING)` | **复用证书四态枚举** PENDING/GENERATING/READY/FAILED |
+| `combinedObjectKey` | `String?` | 合并长图 object key，如 `albums/2026/07/STAR-…-v1/album.svg` |
+| `pageObjectKeys` | `String[] @default([])` | 六页 object key，按 `cover→star-map→story→letter→astro→dedication` 固定顺序 |
+| `pageCount` | `Int @default(0)` | 页数（当前 6） |
+| `assetFormat` | `String @default("svg")` | 合并产物格式 `svg` \| `png` |
+| `letterMode` | `String?` | 宇宙来信生成模式 `llm` \| `template`（可观测） |
+| `letterTaskId` | `String?` | 关联 `cosmic-letter` 的 `agent_task.id`（可空） |
+| `error` | `String?` | 失败原因 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+索引：`@@unique([registrationId, templateVersion])`（幂等锚点，同证书）、`@@index([registrationId, status])`。
+`templateVersion @default("v1")`。API 契约见 [api-spec.md §11](./api-spec.md)、生成时序见 [architecture.md §4.10](./architecture.md)。
+
+### 5.2 order 订单表（Phase 4 · 从占位扩展为骨架）
+
+Phase 3 前 `order` 为纯占位、src/seed 零引用；Phase 4 **加字段不改名**扩为订单支付骨架的载体。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 主键 |
+| `orderNo` | `String @unique` | 对外订单号 `ORD-YYYYMMDD-XXXXXX`（6 位去混淆后缀，CSPRNG，`@unique` 兜底冲突重试） |
+| `userId` | `String?` FK → `app_user.id` | 预留：本期匿名下单 |
+| `registrationId` | `String?` FK → `memorial_registration.id` | 关联纪念登记（`requiresRegistration` 的 SKU 必填） |
+| `skuCode` | `String` | 商品码，金额从服务端 `SKU_CATALOG` 取，见下 |
+| `amountFen` | `Int` | 金额，单位**分**（避免浮点）；服务端权威，回调对账基准 |
+| `currency` | `String @default("CNY")` | 币种 |
+| `status` | `OrderStatus @default(CREATED)` | CREATED/PAID/FAILED/CANCELLED/REFUNDED |
+| `channel` | `String?` | 保留字段，写入时**镜像 `provider`** 值（向后兼容） |
+| `provider` | `String?` | **Phase 4**：支付服务商 `mock`\|`wechat`\|`alipay`（下单时锁定的 provider name） |
+| `providerTxnId` | `String? @unique` | **Phase 4**：服务商侧交易号（微信 transaction_id / 支付宝 trade_no / mock `MOCKTXN-<orderNo>`）；`@unique` 天然阻止「同一第三方交易被两个订单认领」 |
+| `subject` | `String?` | **Phase 4**：下单主体描述快照（SKU 名 + 纪念名），对账/展示用 |
+| `payMeta` | `Json?` | **Phase 4**：支付/失败原始回执摘要（脱敏 ≤500 字符）或对账错误（`reconcileError`），审计用 |
+| `paidAt` | `DateTime?` | 支付成功时刻 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+索引：`@@index([userId, status])`、`@@index([status, createdAt(sort: Desc)])`、`@@index([provider, status])`（Phase 4）。
+
+> **SKU 目录不入库**：`skuCode`→价格/名称/履约类型的映射是 `services/api/src/orders/order.constants.ts` 的
+> `SKU_CATALOG`（服务端权威常量，前端只传 `skuCode`、永不信任前端金额）。清单见 [api-spec.md §10.1](./api-spec.md)。
+> 真实环境需一条 migration：`enum OrderStatus` 加 `FAILED`，`order` 加 `provider`/`providerTxnId`/`subject`/`payMeta` 四列 + `[provider,status]` 索引。
+
+### 5.3 其余占位表
 
 - **`app_user`**：用户占位（微信 openid/unionid、email、phone 均可空且唯一；`role` 存字符串不做 RBAC）。
   本期不做鉴权，只保证外键落点存在。
-- **`order`**：订单占位（`orderNo` 唯一、`amountFen` 以**分**计避免浮点、`skuCode`、支付渠道预留）。
 - **`agent_task`**：AI 技能任务持久化载体（`skillCode` 如 `cosmic-letter`、`inputJson/outputJson`、
   `status` QUEUED/RUNNING/SUCCEEDED/FAILED、`attempts` 与 BullMQ 重试对齐）。
   Phase 3 新增 `modelName String?`（实际模型名，llm 模式 `claude-sonnet-5`/模板模式 `template`）
