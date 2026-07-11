@@ -1,4 +1,4 @@
-import { CELESTIAL_CATALOG } from './catalog';
+import { FULL_CATALOG } from './catalog';
 import type { CelestialObject, StarSearchResult } from './types';
 
 type MatchFamily = StarSearchResult['matchedOn'];
@@ -24,6 +24,7 @@ function collectFields(obj: CelestialObject): SearchField[] {
     { value: obj.nameEn, family: 'name', weight: 1 },
     { value: obj.nameZh, family: 'name', weight: 1 },
   ];
+  if (obj.commonNameZh) fields.push({ value: obj.commonNameZh, family: 'alias', weight: 0.9 });
   if (obj.bayer) fields.push({ value: obj.bayer, family: 'bayer', weight: 0.9 });
   for (const alias of obj.aliases) {
     fields.push({ value: alias, family: 'alias', weight: 0.85 });
@@ -90,21 +91,21 @@ function matchQualityNormalized(c: string, query: string): number {
 export interface SearchOptions {
   /** 返回结果上限，默认 8。 */
   limit?: number;
-  /** 待搜索的星体集合，默认使用精选星表。 */
+  /** 待搜索的星体集合，默认使用恒星 + 深空合并目录（FULL_CATALOG）。 */
   catalog?: CelestialObject[];
 }
 
 /**
  * 在星表中按查询词搜索星体，返回按相关性排序的结果。
- * 支持中文名、英文名、别名、拜耳命名、星表编号（HIP/HD）、objectUid、星座名。
- * 著名星在同等命中质量下置顶。
+ * 支持中文名、中文俗名、英文名、别名、拜耳命名、星表编号（HIP/HD/M/NGC/IC）、
+ * objectUid、星座名。著名星在同等命中质量下置顶。
  */
 export function searchCelestial(
   query: string,
   options: SearchOptions = {},
 ): StarSearchResult[] {
   const limit = options.limit ?? 8;
-  const catalog = options.catalog ?? CELESTIAL_CATALOG;
+  const catalog = options.catalog ?? FULL_CATALOG;
   const q = normalize(query);
   if (!q) return [];
 

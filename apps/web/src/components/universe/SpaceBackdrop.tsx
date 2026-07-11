@@ -57,15 +57,24 @@ interface NebulaBlob {
   opacity: number;
 }
 
+/**
+ * 程序化假星云（氛围团）。
+ *
+ * 【宇宙 V2 下调】真实 DSO 层（DeepSkyLayer，OpenNGC 574 个）上线后，
+ * 此层仅作极淡氛围，禁止与真实星云混淆：透明度全部 ×0.5，颜色从高饱和
+ * 紫/蓝收敛为冷灰蓝。位置已用 raDecToVector3 校验：4 团与著名 DSO 密集区
+ * （仙女 M31 / 猎户 M42 / 人马 M8 一带）角距均 > 30°，不会叠在真实天体上。
+ * 不整层删除——非 DSO 区域的天空需要一点氛围，否则过于空洞。
+ */
 const BLOBS: NebulaBlob[] = [
-  { position: [-620, 240, -560], scale: 720, color: '#5b4bff', opacity: 0.16 },
-  { position: [540, -180, -600], scale: 640, color: '#7a3bd6', opacity: 0.13 },
-  { position: [140, 420, 640], scale: 560, color: '#2f6bd6', opacity: 0.12 },
-  { position: [-460, -340, 520], scale: 600, color: '#1f8fa8', opacity: 0.1 },
+  { position: [-620, 240, -560], scale: 720, color: '#3a4a8a', opacity: 0.08 },
+  { position: [540, -180, -600], scale: 640, color: '#3d3a6e', opacity: 0.065 },
+  { position: [140, 420, 640], scale: 560, color: '#2f4a78', opacity: 0.06 },
+  { position: [-460, -340, 520], scale: 600, color: '#2a5a68', opacity: 0.05 },
 ];
 
-/** 渐变天穹 + 数团柔和星云光斑。 */
-export function SpaceBackdrop() {
+/** 渐变天穹 + 数团极淡氛围光斑（低端设备只留前 2 团）。 */
+export function SpaceBackdrop({ blobCount = BLOBS.length }: { blobCount?: number }) {
   const nebulaTex = useMemo(() => makeNebulaTexture(), []);
 
   return (
@@ -80,7 +89,7 @@ export function SpaceBackdrop() {
         />
       </mesh>
 
-      {BLOBS.map((blob, i) => (
+      {BLOBS.slice(0, blobCount).map((blob, i) => (
         <sprite key={i} position={blob.position} scale={[blob.scale, blob.scale, 1]}>
           <spriteMaterial
             map={nebulaTex}

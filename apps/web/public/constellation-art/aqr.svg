@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。宝瓶座：提瓶倾水的少年，头在危宿一306,105，瓶口斜下泼出波浪虚线流向南鱼座（左下）。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 头与躯干 -->
+      <circle cx="306" cy="105" r="18"/>
+      <path d="M 306 125 C 320 170 330 215 335 260"/>
+      <!-- 右臂舒展（虚宿一方向） -->
+      <path d="M 292 140 C 350 156 420 186 468 206" stroke="#8fb8e0"/>
+      <!-- 左臂提瓶 -->
+      <path d="M 298 135 C 275 130 252 128 236 128"/>
+      <!-- 倾斜的水瓶 -->
+      <path d="M 240 118 C 252 132 250 152 234 161 C 214 169 196 158 194 142 C 193 130 200 120 211 115"/>
+      <path d="M 211 115 C 220 108 232 108 240 118" stroke="#8fb8e0"/>
+      <!-- 瓶口泼出的三道波浪（虚线） -->
+      <path d="M 190 152 C 155 214 143 278 118 330 C 103 362 90 390 78 408" stroke="#8fb8e0" stroke-dasharray="3 9"/>
+      <path d="M 202 158 C 172 222 160 286 136 340 C 122 370 110 396 100 416" stroke="#8fb8e0" stroke-dasharray="3 9"/>
+      <path d="M 214 164 C 190 228 178 292 156 348 C 143 378 132 404 124 424" stroke="#8fb8e0" stroke-dasharray="3 9"/>
+      <!-- 双腿 -->
+      <path d="M 332 260 C 342 320 350 380 345 440"/>
+      <path d="M 324 262 C 306 330 285 395 261 450"/>
+      <!-- 腰间衣带 -->
+      <path d="M 318 205 C 332 210 344 208 354 200" stroke="#8fb8e0"/>
+      <!-- 危宿一（头顶）与瓶口星微芒 -->
+      <path d="M 306 78 L 306 92 M 299 85 L 313 85 M 228 119 L 228 133 M 221 126 L 235 126"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

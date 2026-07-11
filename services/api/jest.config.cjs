@@ -8,6 +8,7 @@ module.exports = {
   moduleNameMapper: {
     '^@star/astro-data$': '<rootDir>/../../packages/astro-data/src/index.ts',
     '^@star/astro-core$': '<rootDir>/../../packages/astro-core/src/index.ts',
+    '^@star/astro-ephem$': '<rootDir>/../../packages/astro-ephem/src/index.ts',
   },
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json' }],

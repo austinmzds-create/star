@@ -120,9 +120,27 @@ star/
   `order` 加 `provider`/`providerTxnId`/`subject`/`payMeta` + `OrderStatus.FAILED` + `CoupleRole` 枚举；新增 8 个业务错误码
   （couple/order/payment）。验证仍为 typecheck + build + 单测（mock Prisma / mock provider）；小程序 typecheck 独立通过。
 
+## 已完成（Phase 5 · 宇宙 V2）
+
+- **星表扩容**：核心层 mag≤6.5（≈9000 颗真实亮星，随包单 draw call）+ 扩展层 mag 6.5–7.5
+  （`apps/web/public/data/stars-extended.json` 空闲懒加载，纯渲染层）；深空天体 Messier 110 全量 +
+  亮 NGC/IC（OpenNGC，CC-BY-SA-4.0），可搜可点，全部 `isNamable=false`（合规红线不动）。
+- **星座动画与艺术（Star Walk 式）**：88 星座真实连线（d3-celestial，BSD-3，端点吸附为 objectUid）
+  合并为**单 LineSegments 单 draw call**，注视/点选/搜索激活时线条依次发光亮起（时序折进顶点属性，
+  shader 一个 smoothstep 完成）+ 星座中文名 CanvasTexture Sprite 淡入；注视判定 88 点积 + 滞回 +
+  驻留确认，帧内全 ref 零 React 抖动。**20 幅原创 SVG 发光线稿**（12 黄道 + 猎户/大熊/仙后/天鹅/
+  天琴/天鹰/飞马/南十字，`public/constellation-art/`，CC0 自绘、零第三方版权图像）以切平面 Mesh
+  锚定天球，关键星严格对位（猎户七星/北斗/仙后 W/秋季四边形），聚焦时淡入；其余 68 座连线 + 名称兜底。
+  ControlBar 新增「星座」开关（关闭整层卸载）；左下角星座信息卡内置 88 条原创中文神话/看点简介，
+  最亮星可点击飞往；星座不可命名、无购买入口。搜索框支持星座直达（顶部条目 → 镜头飞向星座质心）。
+- **行星日月**：`@star/astro-ephem`（astronomy-engine，MIT）按 observeTime 实时计算太阳/月亮/八大行星
+  RA/Dec，独特视觉 + 信息卡 + 可搜索；DB 中作为 `isEphemeris` 元数据行，坐标运行时计算。
+- 性能红线：恒星仍单 draw call；星座层 = 连线 1 draw + 名称 ≤2 sprite + 艺术图桌面 ≤2/移动 ≤1；
+  `prefers-reduced-motion`/coarse-pointer 自动降级。详见 [docs/architecture.md §5.3](./docs/architecture.md)。
+
 ## 路线图
 
-- **Phase 5+**：真实微信/支付宝支付网关联调、搜索 DB 化（pg_trgm）、内容安全云审核、实体礼盒供应链与物流；
+- **Phase 6+**：真实微信/支付宝支付网关联调、搜索 DB 化（pg_trgm）、内容安全云审核、实体礼盒供应链与物流；
   证书/纪念册渲染独立 worker 伸缩。
 
 ## 本地开发

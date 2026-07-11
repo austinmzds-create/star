@@ -10,6 +10,8 @@
   },
   "scripts": {
     "build:catalog": "node scripts/build-catalog.mjs",
+    "build:dso": "node scripts/build-dso.mjs",
+    "build:constellation-lines": "node scripts/build-constellation-lines.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

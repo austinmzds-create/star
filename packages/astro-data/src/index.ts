@@ -7,5 +7,6 @@
 
 export * from './types';
 export * from './constellations';
+export * from './constellation-lines';
 export * from './catalog';
 export * from './search';

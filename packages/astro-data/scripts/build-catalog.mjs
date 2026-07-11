@@ -1,9 +1,11 @@
 // @ts-check
 /**
- * 离线 ETL 脚本：下载 HYG Database v41 → 产出精简亮星 JSON。
+ * 离线 ETL 脚本：下载 HYG Database v41 → 双层产出。
+ *   核心层 mag ≤ 6.5 → src/generated/bright-stars.json（随包，短键对象格式不变）
+ *   扩展层 6.5 < mag ≤ 7.5 → apps/web/public/data/stars-extended.json（懒加载，列式紧凑格式）
  *
- * 手动/低频人工运行，产物（src/generated/bright-stars.json）提交入库；
- * 运行时（前端/后端）不联网，直接 import 该 JSON。
+ * 手动/低频人工运行，两个产物均提交入库；运行时（前端/后端）不联网。
+ * 扩展层为纯渲染层：不进搜索索引、不可拾取、不含编号（详见 generated/README.md）。
  *
  * 用法：
  *   node scripts/build-catalog.mjs            下载 HYG 并生成
@@ -14,22 +16,24 @@
  * 若 TLS 校验失败，设 NODE_EXTRA_CA_CERTS 指向代理 CA（如 /root/.ccr/ca-bundle.crt）后重跑，
  * 或让 curl 读 CURL_CA_BUNDLE（本脚本会把 NODE_EXTRA_CA_CERTS 传给 curl 的 --cacert）。
  *
- * 零新增依赖：仅用 Node 内置能力（fs/path/url/zlib/child_process）+ 系统 curl。
+ * 零新增依赖：仅用 Node 内置能力（fs/path/url/zlib）+ 系统 curl。
  */
 
 import { gunzipSync } from 'node:zlib';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { curlDownload, parseCsvLine, round } from './etl-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 const CACHE_DIR = resolve(__dirname, '.cache');
 const CACHE_CSV = resolve(CACHE_DIR, 'hygdata.csv');
 const OUT_JSON = resolve(PKG_ROOT, 'src/generated/bright-stars.json');
+const OUT_EXT_JSON = resolve(PKG_ROOT, '../../apps/web/public/data/stars-extended.json');
 
-const MAG_LIMIT = 6.0; // 任务定稿阈值：mag ≤ 6.0，约 5000 颗肉眼可见星。
+const MAG_CORE = 6.5; // 核心层阈值：mag ≤ 6.5，约 9000 颗（随包）。
+const MAG_EXT = 7.5; // 扩展层阈值：6.5 < mag ≤ 7.5，约 17000 颗（web 懒加载）。
 
 const HYG_URLS = [
   'https://raw.githubusercontent.com/astronexus/HYG-Database/main/hyg/CURRENT/hygdata_v41.csv',
@@ -50,66 +54,13 @@ const GREEK = {
   Rho: 'ρ', Sig: 'σ', Tau: 'τ', Ups: 'υ', Phi: 'φ', Chi: 'χ', Psi: 'ψ', Ome: 'ω',
 };
 
-/** 四舍五入到 n 位小数。 */
-function round(x, n) {
-  const f = 10 ** n;
-  return Math.round(x * f) / f;
-}
-
-/** 解析一行 CSV → string[]，处理双引号包裹与转义双引号 ""。 */
-function parseCsvLine(line) {
-  const out = [];
-  let cur = '';
-  let inQ = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQ) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; }
-        else inQ = false;
-      } else cur += ch;
-    } else {
-      if (ch === '"') inQ = true;
-      else if (ch === ',') { out.push(cur); cur = ''; }
-      else cur += ch;
-    }
-  }
-  out.push(cur);
-  return out;
-}
-
-/** 用 curl 下载单个 URL 到临时文件，返回 Buffer 或 null（失败）。 */
-function curlDownload(url, tmpPath) {
-  const args = ['-sSL', '--max-time', '90', '-o', tmpPath, '-w', '%{http_code}'];
-  const caBundle = process.env.NODE_EXTRA_CA_CERTS;
-  if (caBundle && existsSync(caBundle)) args.push('--cacert', caBundle);
-  args.push(url);
-  const r = spawnSync('curl', args, { encoding: 'utf8', maxBuffer: 1024 * 1024 });
-  if (r.status !== 0) {
-    console.log(`  → curl 退出码 ${r.status}：${(r.stderr || '').trim()}`);
-    return null;
-  }
-  const httpCode = (r.stdout || '').trim();
-  if (httpCode && !httpCode.startsWith('2')) {
-    console.log(`  → HTTP ${httpCode}，跳过`);
-    return null;
-  }
-  if (!existsSync(tmpPath)) return null;
-  const buf = readFileSync(tmpPath);
-  if (buf.byteLength < 1_000_000) {
-    console.log(`  → 仅 ${buf.byteLength} 字节（疑似错误页），跳过`);
-    return null;
-  }
-  return buf;
-}
-
 /** 依次尝试下载 HYG，第一个成功即止。返回 { text, url } 或抛错。 */
 function downloadHyg() {
   mkdirSync(CACHE_DIR, { recursive: true });
   const tmpPath = resolve(CACHE_DIR, '.download.tmp');
   for (const url of HYG_URLS) {
     console.log(`[download] 尝试 ${url}`);
-    const buf = curlDownload(url, tmpPath);
+    const buf = curlDownload(url, tmpPath, 1_000_000); // HYG 全量 CSV 应远超 1MB。
     if (!buf) continue;
     const text = url.endsWith('.gz')
       ? gunzipSync(buf).toString('utf8')
@@ -120,7 +71,7 @@ function downloadHyg() {
   throw new Error('所有 HYG URL 下载失败');
 }
 
-/** 解析 CSV 文本 → 精简 star 记录数组。 */
+/** 解析 CSV 文本 → { coreStars, extStars }（单次解析、按 mag 两路分流）。 */
 function parseHyg(csvText) {
   const lines = csvText.split(/\r?\n/);
   if (lines.length < 2) throw new Error('CSV 内容异常（行数不足）');
@@ -144,6 +95,7 @@ function parseHyg(csvText) {
   };
 
   const stars = [];
+  const extStars = [];
   let skippedMag = 0;
   let skippedOrphan = 0;
   let skippedCoord = 0;
@@ -158,13 +110,14 @@ function parseHyg(csvText) {
 
     const magStr = get(row, 'mag');
     const magNum = magStr === undefined ? NaN : parseFloat(magStr);
-    if (!Number.isFinite(magNum) || magNum > MAG_LIMIT) { skippedMag++; continue; }
+    if (!Number.isFinite(magNum) || magNum > MAG_EXT) { skippedMag++; continue; }
 
     const hip = get(row, 'hip');
     const hd = get(row, 'hd');
     const hr = get(row, 'hr');
     const gl = get(row, 'gl');
-    if (!hip && !hd && !hr) { skippedOrphan++; continue; } // 孤儿剔除。
+    // 孤儿剔除（核心/扩展层同规则，保数据质量；扩展层被剔的无编号暗星极少，可接受）。
+    if (!hip && !hd && !hr) { skippedOrphan++; continue; }
 
     const raStr = get(row, 'ra');
     const decStr = get(row, 'dec');
@@ -176,6 +129,19 @@ function parseHyg(csvText) {
       !Number.isFinite(raDeg) || raDeg < 0 || raDeg >= 360 ||
       !Number.isFinite(decDeg) || decDeg < -90 || decDeg > 90
     ) { skippedCoord++; continue; }
+
+    // —— 扩展层分流：仅渲染用途，只留坐标/星等/光谱主类（列式存储，见 writeExtended）——
+    if (magNum > MAG_CORE) {
+      const spect = get(row, 'spect');
+      const specClass = spect && /^[OBAFGKM]/i.test(spect) ? spect[0].toUpperCase() : '?';
+      extStars.push({
+        ra: round(raDeg, 3), // 0.001° = 3.6″，天球半径 1000 下远小于 1px（≈0.05°）。
+        dec: round(decDeg, 3),
+        mag: round(magNum, 2),
+        spec: specClass,
+      });
+      continue;
+    }
 
     // 距离：pc → ly；100000 为 HYG 未知哨兵。
     const distStr = get(row, 'dist');
@@ -227,15 +193,16 @@ function parseHyg(csvText) {
   }
 
   console.log(
-    `[parse] 命中 ${stars.length} 颗；跳过 mag=${skippedMag} 孤儿=${skippedOrphan} 坐标=${skippedCoord}`,
+    `[parse] 核心层 ${stars.length} 颗 + 扩展层 ${extStars.length} 颗；` +
+      `跳过 mag=${skippedMag} 孤儿=${skippedOrphan} 坐标=${skippedCoord}`,
   );
-  return stars;
+  return { coreStars: stars, extStars };
 }
 
-/** 生成产物自检。抛错则不写文件。 */
+/** 核心层产物自检。抛错则不写文件。 */
 function selfCheck(stars) {
-  if (stars.length < 3000 || stars.length > 8000) {
-    throw new Error(`星数 ${stars.length} 超出合理区间 [3000,8000]，疑似解析崩坏`);
+  if (stars.length < 7000 || stars.length > 11000) {
+    throw new Error(`星数 ${stars.length} 超出合理区间 [7000,11000]，疑似解析崩坏`);
   }
   const byUid = new Map();
   for (const s of stars) {
@@ -254,7 +221,23 @@ function selfCheck(stars) {
   if (!vega || Math.abs(vega.mag - 0.03) > 0.02) {
     throw new Error(`抽样失败：织女星 HIP91262 mag=${vega && vega.mag}（期望≈0.03）`);
   }
-  console.log('[check] 自检通过（含天狼星/织女星抽样）');
+  console.log('[check] 核心层自检通过（含天狼星/织女星抽样）');
+}
+
+/** 扩展层产物自检。抛错则不写文件。 */
+function selfCheckExt(extStars) {
+  if (extStars.length < 14000 || extStars.length > 20000) {
+    throw new Error(`扩展层星数 ${extStars.length} 超出合理区间 [14000,20000]，疑似解析崩坏`);
+  }
+  for (const s of extStars) {
+    if (!(s.mag > MAG_CORE && s.mag <= MAG_EXT + 0.005)) {
+      throw new Error(`扩展层 mag 越界：${s.mag}（应在 (${MAG_CORE}, ${MAG_EXT}]）`);
+    }
+    if (s.ra < 0 || s.ra >= 360) throw new Error(`扩展层 raDeg 越界：${s.ra}`);
+    if (s.dec < -90 || s.dec > 90) throw new Error(`扩展层 decDeg 越界：${s.dec}`);
+    if (!/^[OBAFGKM?]$/.test(s.spec)) throw new Error(`扩展层光谱主类非法：${s.spec}`);
+  }
+  console.log('[check] 扩展层自检通过');
 }
 
 async function main() {
@@ -295,11 +278,13 @@ async function main() {
     }
   }
 
-  const stars = parseHyg(csvText);
-  selfCheck(stars);
+  const { coreStars, extStars } = parseHyg(csvText);
+  selfCheck(coreStars);
+  selfCheckExt(extStars);
 
   // 按 mag 升序（亮 → 暗）。
-  stars.sort((a, b) => a.mag - b.mag);
+  coreStars.sort((a, b) => a.mag - b.mag);
+  extStars.sort((a, b) => a.mag - b.mag);
 
   const payload = {
     meta: {
@@ -307,16 +292,37 @@ async function main() {
       sourceUrl,
       license: 'CC BY-SA 4.0',
       generatedAt: new Date().toISOString(),
-      magLimit: MAG_LIMIT,
-      count: stars.length,
+      magLimit: MAG_CORE,
+      count: coreStars.length,
     },
-    stars,
+    stars: coreStars,
   };
 
   mkdirSync(dirname(OUT_JSON), { recursive: true });
   writeFileSync(OUT_JSON, JSON.stringify(payload) + '\n');
   const bytes = readFileSync(OUT_JSON).byteLength;
-  console.log(`[write] ${OUT_JSON} — ${stars.length} 颗，${(bytes / 1024).toFixed(0)} KB`);
+  console.log(`[write] ${OUT_JSON} — ${coreStars.length} 颗，${(bytes / 1024).toFixed(0)} KB`);
+
+  // 扩展层：列式紧凑格式（四并行数组 + 光谱主类字符串），web 端页面空闲后 fetch。
+  const extPayload = {
+    meta: {
+      source: 'HYG Database v41 (astronexus/HYG-Database)',
+      sourceUrl,
+      license: 'CC BY-SA 4.0',
+      generatedAt: new Date().toISOString(),
+      magRange: [MAG_CORE, MAG_EXT],
+      count: extStars.length,
+    },
+    n: extStars.length,
+    ra: extStars.map((s) => s.ra),
+    dec: extStars.map((s) => s.dec),
+    mag: extStars.map((s) => s.mag),
+    spec: extStars.map((s) => s.spec).join(''),
+  };
+  mkdirSync(dirname(OUT_EXT_JSON), { recursive: true });
+  writeFileSync(OUT_EXT_JSON, JSON.stringify(extPayload) + '\n');
+  const extBytes = readFileSync(OUT_EXT_JSON).byteLength;
+  console.log(`[write] ${OUT_EXT_JSON} — ${extStars.length} 颗，${(extBytes / 1024).toFixed(0)} KB`);
   console.log('完成。请更新 src/generated/README.md 的生成时间与行数。');
 }
 

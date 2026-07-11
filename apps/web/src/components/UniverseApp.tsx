@@ -3,6 +3,7 @@
 import dynamic from 'next/dynamic';
 import { BrandMark } from './ui/BrandMark';
 import { ComplianceNote } from './ui/ComplianceNote';
+import { ConstellationInfoCard } from './ui/ConstellationInfoCard';
 import { ControlBar } from './ui/ControlBar';
 import { CoupleModal } from './ui/CoupleModal';
 import { CoupleTray } from './ui/CoupleTray';
@@ -27,6 +28,7 @@ export function UniverseApp() {
       <BrandMark />
       <SearchPanel />
       <StarInfoCard />
+      <ConstellationInfoCard />
       <ControlBar />
       <CoupleTray />
       <HintOverlay />

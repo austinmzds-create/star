@@ -15,6 +15,7 @@
     "@react-three/fiber": "^9.1.2",
     "@star/astro-core": "workspace:*",
     "@star/astro-data": "workspace:*",
+    "@star/astro-ephem": "workspace:*",
     "framer-motion": "^12.4.7",
     "next": "^15.2.3",
     "react": "^19.0.0",

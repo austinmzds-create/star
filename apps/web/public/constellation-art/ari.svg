@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。白羊座：侧卧回首的公羊，卷角为画眼，头部骑准娄宿三233,145 / 娄宿一326,230 / 娄宿二335,278。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 脊背大 S 弧（尾→颈） -->
+      <path d="M 80 300 C 120 220 200 190 270 210"/>
+      <!-- 回首的头 -->
+      <path d="M 270 210 C 285 195 300 194 310 205"/>
+      <path d="M 310 205 C 318 218 315 232 305 240 C 298 246 288 244 285 236"/>
+      <circle cx="297" cy="214" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <!-- 卷曲羊角双螺线 -->
+      <path d="M 300 196 C 330 168 362 184 359 214 C 356 238 330 246 320 228 C 314 216 322 205 332 210"/>
+      <path d="M 348 206 C 350 224 336 232 328 222" stroke="#8fb8e0"/>
+      <!-- 胸与前腿收拢 -->
+      <path d="M 268 234 C 252 268 232 290 206 300"/>
+      <path d="M 206 300 C 216 312 236 315 253 308"/>
+      <!-- 腹线 -->
+      <path d="M 100 312 C 150 336 210 336 256 316"/>
+      <!-- 臀与小尾 -->
+      <path d="M 80 300 C 68 320 70 345 88 356"/>
+      <path d="M 83 306 C 66 300 58 312 64 327" stroke="#8fb8e0"/>
+      <!-- 后腿收拢 -->
+      <path d="M 118 340 C 133 356 158 359 180 351" stroke="#8fb8e0"/>
+      <!-- 头部三星星芒 -->
+      <path d="M 233 136 L 233 154 M 224 145 L 242 145 M 326 223 L 326 237 M 319 230 L 333 230 M 335 271 L 335 285 M 328 278 L 342 278"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

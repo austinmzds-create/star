@@ -1,9 +1,14 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   CELESTIAL_CATALOG,
+  DEEP_SKY_CATALOG,
+  FULL_CATALOG,
   getCelestialByUid,
   searchCelestial,
 } from '../src/index.js';
+import brightStars from '../src/generated/bright-stars.json';
 
 describe('CELESTIAL_CATALOG 数据完整性', () => {
   it('每颗星的字段都在合法范围内', () => {
@@ -110,6 +115,60 @@ describe('featured / isNamable 策略', () => {
   });
 });
 
+describe('核心层扩容（mag ≤ 6.5）', () => {
+  it('核心层规模 ∈ [8000,10000]，meta.magLimit = 6.5', () => {
+    expect(CELESTIAL_CATALOG.length).toBeGreaterThanOrEqual(8000);
+    expect(CELESTIAL_CATALOG.length).toBeLessThanOrEqual(10000);
+    expect(brightStars.meta.magLimit).toBe(6.5);
+  });
+
+  it('命名池规则不变的回归锁：6.0 < mag ≤ 6.5 的新增星 isNamable=false', () => {
+    const dim = CELESTIAL_CATALOG.filter(
+      (s) => s.magnitude > 6.0 && s.magnitude <= 6.5,
+    );
+    expect(dim.length).toBeGreaterThan(1000); // 扩容层确实存在
+    for (const s of dim) {
+      expect(s.isNamable, s.objectUid).toBe(false);
+    }
+  });
+
+  it('FULL_CATALOG 长度 = 恒星表 + 深空表之和', () => {
+    expect(FULL_CATALOG.length).toBe(CELESTIAL_CATALOG.length + DEEP_SKY_CATALOG.length);
+  });
+});
+
+describe('扩展层产物（apps/web/public/data/stars-extended.json）', () => {
+  const extPath = resolve(__dirname, '../../../apps/web/public/data/stars-extended.json');
+
+  it('文件存在且列式数组等长、坐标/星等/光谱域合法', () => {
+    expect(existsSync(extPath), extPath).toBe(true);
+    const ext = JSON.parse(readFileSync(extPath, 'utf8')) as {
+      meta: { magRange: [number, number]; count: number };
+      n: number;
+      ra: number[];
+      dec: number[];
+      mag: number[];
+      spec: string;
+    };
+    expect(ext.n).toBe(ext.meta.count);
+    expect(ext.ra.length).toBe(ext.n);
+    expect(ext.dec.length).toBe(ext.n);
+    expect(ext.mag.length).toBe(ext.n);
+    expect(ext.spec.length).toBe(ext.n);
+    expect(ext.n).toBeGreaterThanOrEqual(14000);
+    expect(ext.n).toBeLessThanOrEqual(20000);
+    for (let i = 0; i < ext.n; i++) {
+      expect(ext.ra[i]!).toBeGreaterThanOrEqual(0);
+      expect(ext.ra[i]!).toBeLessThan(360);
+      expect(ext.dec[i]!).toBeGreaterThanOrEqual(-90);
+      expect(ext.dec[i]!).toBeLessThanOrEqual(90);
+      expect(ext.mag[i]!).toBeGreaterThan(6.5);
+      expect(ext.mag[i]!).toBeLessThanOrEqual(7.51);
+    }
+    expect(/^[OBAFGKM?]+$/.test(ext.spec)).toBe(true);
+  });
+});
+
 describe('getCelestialByUid', () => {
   it('能取到已知星体，未知返回 undefined', () => {
     expect(getCelestialByUid('HIP32349')?.nameEn).toBe('Sirius');
@@ -148,10 +207,13 @@ describe('searchCelestial', () => {
     expect(searchCelestial('HD 48915')[0]?.object.nameEn).toBe('Sirius');
   });
 
-  it('星座名返回该星座下的星，按亮度优先', () => {
+  it('星座名返回该星座下的天体（名称前缀命中的 M42 置顶，恒星按亮度跟随）', () => {
     const r = searchCelestial('猎户座');
     expect(r.length).toBeGreaterThan(1);
-    expect(r[0]?.object.nameEn).toBe('Rigel'); // 猎户座最亮
+    // 「猎户座大星云」是名称前缀命中（权重 1），高于恒星的星座字段命中（权重 0.6）。
+    expect(r[0]?.object.objectUid).toBe('M42');
+    const rigel = r.find((h) => h.object.nameEn === 'Rigel');
+    expect(rigel).toBeDefined(); // 猎户座最亮恒星仍在前列
     for (const hit of r) {
       expect(hit.object.constellationZh).toBe('猎户座');
     }
@@ -176,12 +238,26 @@ describe('searchCelestial', () => {
     expect(searchCelestial('座', { limit: 3 }).length).toBeLessThanOrEqual(3);
   });
 
+  it('深空天体可搜索：M31 / 仙女座星系 / 仙女座大星云 / NGC 224 均命中 M31', () => {
+    expect(searchCelestial('M31')[0]?.object.objectUid).toBe('M31');
+    expect(searchCelestial('仙女座星系')[0]?.object.objectUid).toBe('M31');
+    expect(searchCelestial('仙女座大星云')[0]?.object.objectUid).toBe('M31');
+    expect(searchCelestial('NGC 224')[0]?.object.objectUid).toBe('M31');
+  });
+
+  it('深空天体可搜索：猎户座大星云命中 M42，「昴」命中 M45', () => {
+    expect(searchCelestial('猎户座大星云')[0]?.object.objectUid).toBe('M42');
+    expect(searchCelestial('昴')[0]?.object.objectUid).toBe('M45');
+  });
+
   it('性能：100 次查询在宽松阈值内（索引缓存生效）', () => {
     const start = Date.now();
     for (let i = 0; i < 100; i++) {
       searchCelestial('a');
     }
     const elapsed = Date.now() - start;
-    expect(elapsed).toBeLessThan(500);
+    // 阈值随目录扩容（5k → 9.5k：核心层 mag≤6.5 + 深空 574）等比放宽；
+    // 若索引缓存失效（每次查询重建），耗时会数倍于此，仍能被本测试捕获。
+    expect(elapsed).toBeLessThan(1500);
   });
 });

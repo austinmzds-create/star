@@ -1,12 +1,14 @@
 /**
- * 种子脚本：把 @star/astro-data 的 CELESTIAL_CATALOG 灌入
+ * 种子脚本：把 @star/astro-data 的 FULL_CATALOG（恒星 + 深空天体）灌入
  * celestial_object + celestial_name_alias，为 Phase 3 的 pg_trgm DB 化搜索铺路。
+ * 深空天体（Messier/NGC/IC）坐标真实固定、isNamable 恒为 false（合规红线）。
  *
  * 运行方式（仅在有真实 Postgres 的环境）：pnpm --filter @star/api db:seed
  * 本地无 DB 的容器不要运行。
  */
 import { PrismaClient, type CelestialType } from '@prisma/client';
-import { CELESTIAL_CATALOG, type CelestialObject } from '@star/astro-data';
+import { FULL_CATALOG, type CelestialObject } from '@star/astro-data';
+import { listEphemerisBodies, toCelestialObject } from '@star/astro-ephem';
 
 const prisma = new PrismaClient();
 
@@ -62,7 +64,7 @@ async function main(): Promise<void> {
   let starCount = 0;
   let aliasCount = 0;
 
-  for (const obj of CELESTIAL_CATALOG) {
+  for (const obj of FULL_CATALOG) {
     const data = {
       type: obj.type.toUpperCase() as CelestialType,
       nameEn: obj.nameEn,
@@ -85,7 +87,8 @@ async function main(): Promise<void> {
       /** 精选星体搜索加权 */
       searchPriority: obj.isFeatured ? 100 : 0,
       dataQualityScore: dataQualityScore(obj),
-      sourceCatalog: 'astro-data-seed-v1',
+      // 数据出处（handwritten / hyg-v41 / openngc），DSO 的 CC-BY-SA-4.0 署名义务可据此追溯
+      sourceCatalog: obj.sourceCatalog ?? 'astro-data-seed-v1',
     };
 
     await prisma.celestialObject.upsert({
@@ -111,7 +114,61 @@ async function main(): Promise<void> {
     aliasCount += created.count;
   }
 
-  console.log(`种子完成：celestial_object ${starCount} 条，celestial_name_alias ${aliasCount} 条`);
+  // —— 星历天体元数据行（太阳/月亮/行星）——
+  // 坐标不落库（raDeg/decDeg=null + isEphemeris=true），任何直接读表的旁路都不会拿到会过期的行星坐标；
+  // 读取时由 @star/astro-ephem 按请求时刻实时计算。合规：isNamable 恒为 false。
+  let ephCount = 0;
+  for (const meta of listEphemerisBodies()) {
+    const data = {
+      type: meta.kind.toUpperCase() as CelestialType, // SUN / MOON / PLANET
+      nameEn: meta.nameEn,
+      nameZh: meta.nameZh,
+      aliases: meta.aliases,
+      bayer: null,
+      constellation: 'Solar System',
+      constellationZh: '太阳系',
+      raDeg: null,
+      decDeg: null,
+      isEphemeris: true,
+      magnitude: meta.typicalMagnitude,
+      distanceLy: null,
+      spectralType: null,
+      catalogIds: {},
+      isNamable: false,
+      isFeatured: true,
+      descriptionZh: meta.descriptionZh,
+      renderPriority: 100,
+      searchPriority: 120,
+      dataQualityScore: 80,
+      sourceCatalog: 'astronomy-engine',
+    };
+    await prisma.celestialObject.upsert({
+      where: { objectUid: meta.objectUid },
+      create: { objectUid: meta.objectUid, ...data },
+      update: data,
+    });
+    ephCount++;
+
+    // 别名表复用 collectAliases 流程：借 toCelestialObject 快照收集（坐标与别名无关）
+    const snapshot = toCelestialObject(meta.bodyId, new Date());
+    await prisma.celestialNameAlias.deleteMany({ where: { objectUid: meta.objectUid } });
+    const rows = collectAliases(snapshot).map((r) => ({
+      objectUid: meta.objectUid,
+      alias: r.alias,
+      aliasNorm: normalize(r.alias),
+      lang: r.lang,
+      source: r.source,
+    }));
+    const created = await prisma.celestialNameAlias.createMany({
+      data: rows,
+      skipDuplicates: true,
+    });
+    aliasCount += created.count;
+  }
+
+  console.log(
+    `种子完成：celestial_object ${starCount} 条 + 星历天体 ${ephCount} 条，celestial_name_alias ${aliasCount} 条`,
+  );
 }
 
 main()

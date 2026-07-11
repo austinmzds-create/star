@@ -48,6 +48,9 @@ importers:
       '@star/astro-data':
         specifier: workspace:*
         version: link:../../packages/astro-data
+      '@star/astro-ephem':
+        specifier: workspace:*
+        version: link:../../packages/astro-ephem
       framer-motion:
         specifier: ^12.4.7
         version: 12.42.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -110,6 +113,22 @@ importers:
         specifier: ^3.0.5
         version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.0)
 
+  packages/astro-ephem:
+    dependencies:
+      '@star/astro-data':
+        specifier: workspace:*
+        version: link:../astro-data
+      astronomy-engine:
+        specifier: ^2.1.19
+        version: 2.1.19
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.5
+        version: 3.2.7(@types/node@22.20.1)(jiti@2.7.0)(terser@5.49.0)(tsx@4.23.0)
+
   services/api:
     dependencies:
       '@anthropic-ai/sdk':
@@ -136,6 +155,9 @@ importers:
       '@star/astro-data':
         specifier: workspace:*
         version: link:../../packages/astro-data
+      '@star/astro-ephem':
+        specifier: workspace:*
+        version: link:../../packages/astro-ephem
       bullmq:
         specifier: ^5.34.0
         version: 5.80.1
@@ -1831,6 +1853,9 @@ packages:
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
+
+  astronomy-engine@2.1.19:
+    resolution: {integrity: sha512-8yWKNf7UeNbH458h3sAJ6ZgAjE5jTXp/mNNRFoC20j2SHwZIjAQeEsBB2Q3uCFRaTCCJRv33K2XhkhZQMXoX6w==}
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
@@ -5878,6 +5903,8 @@ snapshots:
   array-timsort@1.0.3: {}
 
   assertion-error@2.0.1: {}
+
+  astronomy-engine@2.1.19: {}
 
   asynckit@0.4.0: {}
 

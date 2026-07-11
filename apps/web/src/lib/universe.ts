@@ -46,9 +46,17 @@ export interface CatalogRenderData extends StarAttributes {
   objects: CelestialObject[];
 }
 
-/** 由精选真实星表构建可渲染属性 + 拾取用坐标。 */
+/**
+ * 由精选真实星表构建可渲染属性 + 拾取用坐标。
+ *
+ * 过滤规则（宇宙 V2）：只渲染静态恒星——
+ *  - type !== 'star'（深空天体）由 DeepSkyLayer 分层渲染；
+ *  - isEphemeris === true（行星/日月元数据行）没有静态坐标，由 PlanetsLayer
+ *    按 observeTime 实时摆位。
+ * CELESTIAL_CATALOG 当前即纯恒星表，此过滤为防御性契约。
+ */
 export function buildCatalogRenderData(): CatalogRenderData {
-  const objects = CELESTIAL_CATALOG;
+  const objects = CELESTIAL_CATALOG.filter((o) => o.type === 'star' && !o.isEphemeris);
   const count = objects.length;
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
@@ -92,18 +100,17 @@ function randomDirection(): THREE.Vector3 {
  * 程序化环境星场：暗弱背景星 + 一条模拟银河的密集亮带。
  * 只为营造「铺满宇宙」的观感，不含真实数据。
  *
- * 数量取值与星表扩容联动（见 docs/data-model.md §8）：
- * astro-data 渲染层扩容后 CELESTIAL_CATALOG 将从 60 颗升到 ~5058 颗真实肉眼可见亮星
- * （mag ≤ 6.0），由 buildCatalogRenderData 铺满可见星层。为避免与真实星「过密/重复」，
- * 此处程序化星数量整体下调：
- *  - 均匀背景星与真实星层空间重叠最大，降幅最大（16000 → 6000），仅作最暗一档的填充；
- *  - 银河带是真实亮星目录不覆盖的弥散辉光，保留观感但适度收敛（9000 → 6000）。
- * 合计 12000 程序化 + ~5058 真实 ≈ 1.7 万点，较原 2.5 万更稀疏，且视觉重心落在真实数据上。
- * 当前 astro-data 仍为 60 颗时，此值观感依旧成立（背景本就是极暗填充）。
+ * 数量取值与星表扩容联动（宇宙 V2）：
+ * 核心真实星表已扩到 mag ≤ 6.5（≈9000 颗），另有扩展层（6.5–7.5，≈1.7 万点）
+ * 空闲时懒加载。真实点位大幅增多后，程序化星进一步收敛：
+ *  - 均匀背景星与真实星层空间重叠最大，降到 3000，仅作最暗一档的填充；
+ *  - 银河带是真实亮星目录不覆盖的弥散辉光，收敛到 5000。
+ * 合计 8000 程序化 + ~9000 核心真实 + （懒加载后）1.7 万扩展 ≈ 3.4 万点，
+ * 视觉重心完全落在真实数据上。低端设备由调用方再减半（deviceTier）。
  */
 export function generateAmbientField(
-  backgroundCount = 6000,
-  milkyWayCount = 6000,
+  backgroundCount = 3000,
+  milkyWayCount = 5000,
 ): StarAttributes {
   const count = backgroundCount + milkyWayCount;
   const positions = new Float32Array(count * 3);

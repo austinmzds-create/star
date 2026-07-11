@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。天鹅座：沿银河俯冲的天鹅，天津四161,123 为尾、辇道增七423,440 为喙、双翼掠过 δ 343,126 与 ε 126,330。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 颈与躯干：尾（天津四）→胸（天津一）→喙（辇道增七） -->
+      <path d="M 161 123 C 190 160 206 190 221 215 C 262 276 332 360 400 425"/>
+      <!-- 头与喙 -->
+      <path d="M 400 425 C 410 434 419 439 429 443"/>
+      <circle cx="399" cy="419" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <!-- 右翼（上）掠过 δ Cyg -->
+      <path d="M 222 213 C 270 175 310 148 348 122 C 366 110 381 104 396 102"/>
+      <path d="M 348 124 C 330 150 310 172 288 191" stroke="#8fb8e0"/>
+      <path d="M 372 112 C 352 145 330 175 305 201" stroke="#8fb8e0"/>
+      <path d="M 395 104 C 378 140 355 180 325 215" stroke="#8fb8e0"/>
+      <!-- 左翼（下）掠过 ε Cyg -->
+      <path d="M 218 218 C 185 255 155 292 128 328 C 115 345 105 360 98 372"/>
+      <path d="M 128 330 C 148 310 170 292 194 278" stroke="#8fb8e0"/>
+      <path d="M 110 352 C 135 330 162 310 192 293" stroke="#8fb8e0"/>
+      <path d="M 98 372 C 128 352 160 332 196 310" stroke="#8fb8e0"/>
+      <!-- 尾羽小扇 -->
+      <path d="M 161 123 C 150 105 143 92 139 78"/>
+      <path d="M 161 123 C 172 103 178 90 182 76"/>
+      <!-- 星芒：天津四（尾）与辇道增七（喙，金蓝双星） -->
+      <path d="M 161 109 L 161 137 M 147 123 L 175 123 M 423 430 L 423 450 M 413 440 L 433 440"/>
+      <path d="M 415 432 L 431 448 M 431 432 L 415 448" stroke="#8fb8e0"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

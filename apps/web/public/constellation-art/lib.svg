@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。天秤座：极简天平，梁顶在氐宿增七217,44，两梁分指氐宿一418,257 / 氐宿三74,217，全图最简。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 顶环 -->
+      <circle cx="217" cy="44" r="10"/>
+      <!-- 双梁 -->
+      <path d="M 224 51 C 290 115 360 185 414 251"/>
+      <path d="M 210 52 C 165 106 112 160 79 211"/>
+      <!-- 右盘吊线与浅盘 -->
+      <path d="M 416 256 L 391 320 M 416 256 L 442 320" stroke="#8fb8e0"/>
+      <path d="M 381 322 C 393 348 433 348 451 322"/>
+      <!-- 左盘吊线与浅盘 -->
+      <path d="M 76 216 L 53 280 M 76 216 L 102 280" stroke="#8fb8e0"/>
+      <path d="M 43 282 C 55 308 95 308 113 282"/>
+      <!-- 三星星芒 -->
+      <path d="M 217 27 L 217 39 M 211 33 L 223 33 M 418 248 L 418 266 M 409 257 L 427 257 M 74 208 L 74 226 M 65 217 L 83 217"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

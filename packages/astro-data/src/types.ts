@@ -1,6 +1,13 @@
 /** 星体数据公共类型。与后端 celestial_object 主表字段保持一致，便于多端与库表对齐。 */
 
-export type CelestialObjectType = 'star' | 'galaxy' | 'nebula' | 'cluster';
+export type CelestialObjectType =
+  | 'star'
+  | 'galaxy'
+  | 'nebula'
+  | 'cluster'
+  | 'planet'
+  | 'moon'
+  | 'sun';
 
 /**
  * 一个天体的主数据。
@@ -42,6 +49,11 @@ export interface CelestialObject {
   /** 中文简介。 */
   descriptionZh?: string;
   /**
+   * 中文俗名（如 M31「仙女座大星云」、M45「七姊妹星团」），用于展示与搜索。
+   * 可选，向后兼容。
+   */
+  commonNameZh?: string;
+  /**
    * 渲染优先级分档，0 最高（首屏必载），数值越小越优先。
    * 供前端渐进/分档加载（LOD）参考。可选，向后兼容。
    */
@@ -53,9 +65,15 @@ export interface CelestialObject {
   searchPriority?: number;
   /**
    * 数据来源标记，如 'handwritten'（手写精选）、'hyg-v41'（HYG 生成）、
-   * 'handwritten-fallback'（HYG 不可用时的手写回退批次）。可选，向后兼容。
+   * 'handwritten-fallback'（HYG 不可用时的手写回退批次）、'openngc'（OpenNGC 深空天体）、
+   * 'ephemeris'（历表天体）。可选，向后兼容。
    */
   sourceCatalog?: string;
+  /**
+   * 是否为星历天体（行星/太阳/月亮）：坐标不落库、由 @star/astro-ephem
+   * 按观测时刻实时计算；raDeg/decDeg 仅为某一时刻的快照。可选，向后兼容。
+   */
+  isEphemeris?: boolean;
 }
 
 /** 搜索命中结果。 */

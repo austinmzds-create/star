@@ -2,25 +2,70 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { useMemo, useRef, useState } from 'react';
-import { searchCelestial } from '@star/astro-data';
+import { CONSTELLATION_ABBR, searchCelestial, type StarSearchResult } from '@star/astro-data';
+import { constellationToAbbr, searchTypeBadgeZh } from '@/lib/objectPresenter';
+import { SEARCH_CATALOG } from '@/lib/solarSystem';
 import { useUniverse } from '@/lib/store';
 
-const EXAMPLES = ['天狼星', '织女星', '北极星', '参宿四', '猎户座'];
+/** 示例词覆盖各类目标：恒星 / 行星 / 深空 / 星座。 */
+const EXAMPLES = ['天狼星', '火星', '仙女座星系', '猎户座', '织女星', '北极星'];
+
+/** 星座条目（搜索结果顶部）：88 条线性扫 en/zh/缩写 includes 匹配。 */
+interface ConstellationMatch {
+  abbr: string;
+  en: string;
+  zh: string;
+}
+
+function matchConstellations(query: string): ConstellationMatch[] {
+  const raw = query.trim();
+  const q = raw.toLowerCase();
+  if (!q) return [];
+  const out: ConstellationMatch[] = [];
+  for (const [abbr, v] of Object.entries(CONSTELLATION_ABBR)) {
+    if (v.zh.includes(raw) || v.en.toLowerCase().includes(q) || abbr.toLowerCase() === q) {
+      out.push({ abbr, en: v.en, zh: v.zh });
+    }
+  }
+  return out.slice(0, 2);
+}
 
 export function SearchPanel() {
   const focusStar = useUniverse((s) => s.focusStar);
+  const activateConstellation = useUniverse((s) => s.activateConstellation);
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => {
     if (!query.trim()) return [];
-    return searchCelestial(query, { limit: 7 });
+    // 全站目录：恒星 + 深空 + 行星日月（行星坐标由星历层实时提供，列表星等取典型值）
+    return searchCelestial(query, { limit: 7, catalog: SEARCH_CATALOG });
   }, [query]);
 
-  const choose = (uid: string, label: string) => {
+  // 星座直达条目：置于结果列表顶部，选中即点亮连线 + 镜头飞向星座全貌。
+  const conMatches = useMemo(() => matchConstellations(query), [query]);
+
+  const chooseConstellation = (c: ConstellationMatch) => {
+    activateConstellation(c.abbr, 'search');
+    setQuery(c.zh);
+    setOpen(false);
+    inputRef.current?.blur();
+  };
+
+  const choose = (r: StarSearchResult) => {
+    const uid = r.object.objectUid;
+    // 星历天体（EPH-）不在 astro-data 目录内，仍可正常飞行：
+    // CameraRig 经 resolveObjectPosition 取星历实时坐标。
     focusStar(uid);
-    setQuery(label);
+    // 命中星座（查询即星座名）→ 同时点亮星座连线动画
+    if (r.matchedOn === 'constellation') {
+      const abbr =
+        constellationToAbbr(r.object.constellation) ??
+        constellationToAbbr(r.object.constellationZh);
+      if (abbr) activateConstellation(abbr, 'search');
+    }
+    setQuery(r.object.nameZh);
     setOpen(false);
     inputRef.current?.blur();
   };
@@ -39,15 +84,17 @@ export function SearchPanel() {
           onFocus={() => setOpen(true)}
           onBlur={() => window.setTimeout(() => setOpen(false), 150)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && results[0]) {
-              choose(results[0].object.objectUid, results[0].object.nameZh);
+            if (e.key === 'Enter') {
+              // 顶部条目优先：星座直达 > 首个天体结果。
+              if (conMatches[0]) chooseConstellation(conMatches[0]);
+              else if (results[0]) choose(results[0]);
             }
             if (e.key === 'Escape') {
               setQuery('');
               setOpen(false);
             }
           }}
-          placeholder="搜索星星、星座 — 天狼星 / Vega / 北极星"
+          placeholder="搜索星星、行星、星云、星座 — 天狼星 / 火星 / M31"
           className="w-full bg-transparent text-[15px] text-white placeholder:text-nebula-200/40 focus:outline-none"
         />
         {query && (
@@ -65,7 +112,7 @@ export function SearchPanel() {
       </div>
 
       <AnimatePresence>
-        {open && (query ? results.length > 0 : true) && (
+        {open && (query ? results.length > 0 || conMatches.length > 0 : true) && (
           <motion.div
             initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
@@ -98,29 +145,64 @@ export function SearchPanel() {
             )}
 
             {query &&
-              results.map((r) => (
+              conMatches.map((c) => (
                 <button
-                  key={r.object.objectUid}
+                  key={`con-${c.abbr}`}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => choose(r.object.objectUid, r.object.nameZh)}
+                  onClick={() => chooseConstellation(c)}
                   className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]"
                 >
                   <div className="min-w-0">
                     <div className="truncate text-[15px] font-medium text-white">
-                      {r.object.nameZh}
+                      ⌘ {c.zh}
                       <span className="ml-2 text-[12px] font-normal text-nebula-200/60">
-                        {r.object.nameEn}
+                        {c.en}
                       </span>
                     </div>
                     <div className="truncate text-[12px] text-nebula-200/50">
-                      {r.object.constellationZh} · {r.object.bayer ?? r.object.objectUid}
+                      飞向星座 · 点亮连线
                     </div>
                   </div>
-                  <span className="shrink-0 rounded-full border border-nebula-400/20 px-2 py-0.5 text-[11px] text-gold">
-                    {r.object.magnitude.toFixed(2)}
+                  <span className="shrink-0 rounded-full border border-nebula-400/25 bg-nebula-500/15 px-2 py-0.5 text-[11px] text-nebula-100">
+                    星座
                   </span>
                 </button>
               ))}
+
+            {query &&
+              results.map((r) => {
+                const typeBadge = searchTypeBadgeZh(r.object);
+                return (
+                  <button
+                    key={r.object.objectUid}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => choose(r)}
+                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-white/[0.06]"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-[15px] font-medium text-white">
+                        {r.object.nameZh}
+                        <span className="ml-2 text-[12px] font-normal text-nebula-200/60">
+                          {r.object.nameEn}
+                        </span>
+                      </div>
+                      <div className="truncate text-[12px] text-nebula-200/50">
+                        {r.object.constellationZh} · {r.object.bayer ?? r.object.objectUid}
+                      </div>
+                    </div>
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      {typeBadge && (
+                        <span className="rounded-full border border-nebula-400/25 bg-nebula-500/15 px-2 py-0.5 text-[11px] text-nebula-100">
+                          {typeBadge}
+                        </span>
+                      )}
+                      <span className="rounded-full border border-nebula-400/20 px-2 py-0.5 text-[11px] text-gold">
+                        {r.object.magnitude.toFixed(2)}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
           </motion.div>
         )}
       </AnimatePresence>

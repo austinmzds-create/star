@@ -16,6 +16,9 @@ enum CelestialType {
   GALAXY
   NEBULA
   CLUSTER
+  PLANET // 行星（星历天体，坐标运行时计算）
+  MOON // 月亮（星历天体）
+  SUN // 太阳（星历天体）
 }
 
 /// 纪念登记状态
@@ -81,10 +84,12 @@ model CelestialObject {
   bayer            String?
   constellation    String
   constellationZh  String
-  /// J2000 赤经（度，0-360）
-  raDeg            Float
-  /// J2000 赤纬（度，-90-90）
-  decDeg           Float
+  /// J2000 赤经（度，0-360）。星历天体（isEphemeris=true）为 null，坐标运行时计算
+  raDeg            Float?
+  /// J2000 赤纬（度，-90-90）。同上
+  decDeg           Float?
+  /// 是否星历天体（行星/日月）：坐标不落库，读取时由 @star/astro-ephem 实时计算
+  isEphemeris      Boolean       @default(false)
   magnitude        Float
   distanceLy       Float?
   spectralType     String?

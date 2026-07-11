@@ -2,7 +2,8 @@ import { CONSTELLATION_ABBR, CONSTELLATION_ZH } from './constellations';
 // 注：不用 import 属性（with { type: 'json' }），以兼容各消费端 tsconfig 的 module 设置；
 // resolveJsonModule 已在 tsconfig.base.json 开启，普通 JSON import 三端（vitest/Next/Nest webpack）均可。
 import brightStars from './generated/bright-stars.json';
-import type { CelestialObject } from './types';
+import deepSky from './generated/deep-sky.json';
+import type { CelestialObject, CelestialObjectType } from './types';
 
 /**
  * 精选星表原始数据（真实 J2000 天文数据）。
@@ -65,7 +66,8 @@ const RAW_STARS: RawStar[] = [
   { uid: 'HIP41037', en: 'Avior', zh: '海石二', bayer: 'ε Car', con: 'Carina', ra: 125.628, dec: -59.509, mag: 1.86, dist: 630, spec: 'K3III', hip: '41037', hd: '71129', aliases: ['Epsilon Carinae'], desc: '船底座的橙色亮星。' },
   { uid: 'HIP67301', en: 'Alkaid', zh: '摇光', bayer: 'η UMa', con: 'Ursa Major', ra: 206.885, dec: 49.313, mag: 1.86, dist: 104, spec: 'B3V', hip: '67301', hd: '120315', aliases: ['Eta Ursae Majoris', '北斗七'], desc: '北斗七星斗柄末端。' },
   { uid: 'HIP28360', en: 'Menkalinan', zh: '五车三', bayer: 'β Aur', con: 'Auriga', ra: 89.882, dec: 44.947, mag: 1.9, dist: 82, spec: 'A2IV', hip: '28360', hd: '40183', aliases: ['Beta Aurigae'], desc: '御夫座第二亮星，一对食双星。' },
-  { uid: 'HIP31681', en: 'Alhena', zh: '井宿三', bayer: 'γ Gem', con: 'Gemini', ra: 99.428, dec: 16.399, mag: 1.9, dist: 109, spec: 'A0IV', hip: '31681', hd: '56537', aliases: ['Gamma Geminorum'], desc: '双子座脚部的亮星。' },
+  // 注：Alhena 的 HD 号为 47105（56537 是 λ Gem 的，早期笔误会把 λ Gem 从目录错误去重掉）。
+  { uid: 'HIP31681', en: 'Alhena', zh: '井宿三', bayer: 'γ Gem', con: 'Gemini', ra: 99.428, dec: 16.399, mag: 1.9, dist: 109, spec: 'A0IV', hip: '31681', hd: '47105', aliases: ['Gamma Geminorum'], desc: '双子座脚部的亮星。' },
   { uid: 'HIP11767', en: 'Polaris', zh: '北极星', bayer: 'α UMi', con: 'Ursa Minor', ra: 37.955, dec: 89.264, mag: 1.98, dist: 433, spec: 'F7Ib', hip: '11767', hd: '8890', aliases: ['勾陈一', '北辰', 'Alpha Ursae Minoris', 'North Star'], desc: '当前的北极星，几乎正对天球北极，指示正北方向。' },
   { uid: 'HIP30324', en: 'Mirzam', zh: '军市一', bayer: 'β CMa', con: 'Canis Major', ra: 95.675, dec: -17.956, mag: 1.98, dist: 500, spec: 'B1II', hip: '30324', hd: '44743', aliases: ['Beta Canis Majoris'], desc: '大犬座蓝色亮星，天狼星旁的报信者。' },
   { uid: 'HIP46390', en: 'Alphard', zh: '星宿一', bayer: 'α Hya', con: 'Hydra', ra: 141.897, dec: -8.659, mag: 1.98, dist: 177, spec: 'K3III', hip: '46390', hd: '81797', aliases: ['Alpha Hydrae'], desc: '长蛇座之心，孤悬一方的橙色亮星。' },
@@ -275,17 +277,103 @@ for (const star of [...featured, ...generatedStars.filter((g) => !isDup(g))]) {
   merged.push(star);
 }
 
-/** 统一真实星表：手写精选 + HYG 亮星，按视星等从亮到暗排序。 */
+/** 统一真实星表（纯恒星）：手写精选 + HYG 亮星，按视星等从亮到暗排序。 */
 export const CELESTIAL_CATALOG: CelestialObject[] = merged.sort(
   (a, b) => a.magnitude - b.magnitude,
 );
 
-/** 按 objectUid 建立索引，便于快速取用。 */
+// —— 深空天体（OpenNGC 生成：Messier 110 全量 + 亮 NGC/IC）——
+
+/** generated/deep-sky.json 中单条深空天体的形状。 */
+interface GeneratedDso {
+  u: string;
+  t: string;
+  ra: number;
+  dec: number;
+  mag?: number;
+  con?: string;
+  m?: number;
+  ngc?: string;
+  ic?: string;
+  names?: string[];
+  zh?: string;
+  commonZh?: string;
+  desc?: string;
+  majAx?: number;
+}
+
+/** 深空类型合法集合（deep-sky.json 的 t 字段；脚本自检已保证，此处兜底过滤）。 */
+const DSO_TYPES = new Set<CelestialObjectType>(['galaxy', 'nebula', 'cluster', 'star']);
+
+/** 由 generated 深空行构造 CelestialObject。合规红线：DSO 一律 isNamable=false。 */
+function buildDso(r: GeneratedDso): CelestialObject {
+  const meta = r.con ? CONSTELLATION_ABBR[r.con] : undefined;
+  const isMessier = r.m !== undefined;
+  const nameEn = r.names?.[0] ?? r.u;
+  // 无中文映射的 NGC/IC：'NGC224' → 'NGC 224' 原样展示。
+  const nameZh = r.zh ?? r.u.replace(/^(M|NGC|IC)/, '$1 ');
+  const mag = r.mag ?? 12; // 无星等按暗处理，仅影响排序。
+
+  const catalogIds: Record<string, string> = {};
+  if (isMessier) catalogIds.m = String(r.m);
+  if (r.ngc) catalogIds.ngc = r.ngc;
+  if (r.ic) catalogIds.ic = r.ic;
+
+  const aliases = dedupe([
+    r.u,
+    isMessier && `M ${r.m}`,
+    r.ngc && `NGC ${r.ngc}`,
+    r.ngc && `NGC${r.ngc}`,
+    r.ic && `IC ${r.ic}`,
+    r.ic && `IC${r.ic}`,
+    r.commonZh,
+    ...(r.names ?? []),
+  ]).filter((a) => a !== nameEn && a !== nameZh);
+
+  return {
+    objectUid: r.u,
+    type: (DSO_TYPES.has(r.t as CelestialObjectType) ? r.t : 'nebula') as CelestialObjectType,
+    nameEn,
+    nameZh,
+    commonNameZh: r.commonZh,
+    aliases,
+    constellation: meta?.en ?? r.con ?? '',
+    constellationZh: meta?.zh ?? r.con ?? '',
+    raDeg: r.ra,
+    decDeg: r.dec,
+    magnitude: mag,
+    distanceLy: null,
+    catalogIds,
+    isNamable: false, // 合规红线：深空天体一律不可命名。
+    isFeatured: isMessier, // Messier 全著名。
+    descriptionZh: r.desc,
+    renderPriority: isMessier ? 0 : mag <= 8 ? 1 : 2,
+    searchPriority: decideSearchPriority(mag, isMessier),
+    sourceCatalog: 'openngc',
+  };
+}
+
+// generated 载入（防御：缺失或结构异常时退化为空数组，构建不崩）。
+const deepSkyRaw = ((deepSky as { objects?: GeneratedDso[] })?.objects ?? []) as GeneratedDso[];
+
+/**
+ * 深空天体表（Messier 110 全量 + 亮 NGC/IC，V/B-Mag ≤ 10）。
+ * 独立于恒星表导出：web 渲染分层（恒星 Points / DSO sprite）、拾取分层天然清晰。
+ */
+export const DEEP_SKY_CATALOG: CelestialObject[] = deepSkyRaw.map(buildDso);
+
+/**
+ * 恒星 + 深空合并目录（搜索 / API / 按 uid 取用）。
+ * CELESTIAL_CATALOG 语义不变仍为纯恒星，既有渲染消费端零回归。
+ */
+export const FULL_CATALOG: CelestialObject[] = [...CELESTIAL_CATALOG, ...DEEP_SKY_CATALOG];
+
+/** 按 objectUid 建立索引（覆盖恒星 + 深空；uid 无冲突由生成脚本断言）。 */
 export const CATALOG_BY_UID: Map<string, CelestialObject> = new Map(
-  CELESTIAL_CATALOG.map((s) => [s.objectUid, s]),
+  FULL_CATALOG.map((s) => [s.objectUid, s]),
 );
 
-/** 按 objectUid 取星体。 */
+/** 按 objectUid 取星体（恒星与深空天体均可，如 'HIP32349'、'M31'）。 */
 export function getCelestialByUid(uid: string): CelestialObject | undefined {
   return CATALOG_BY_UID.get(uid);
 }

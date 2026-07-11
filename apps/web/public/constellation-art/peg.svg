@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。飞马座：倒挂的上半身飞马，秋季四边形严格对位（室宿一366,370 / 室宿二361,117 / 壁宿一41,371 / 壁宿二82,97），颈弧下探，单翼三层羽弧。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 躯干＝四边形（有机弧线沿四星） -->
+      <path d="M 82 97 C 170 78 280 90 361 117"/>
+      <path d="M 361 117 C 371 200 372 290 366 370"/>
+      <path d="M 366 370 C 270 391 130 392 41 371"/>
+      <path d="M 41 371 C 55 280 68 185 82 97"/>
+      <!-- 颈弧下探与马首 -->
+      <path d="M 366 370 C 400 385 430 405 452 428"/>
+      <path d="M 452 428 C 468 440 480 448 492 452"/>
+      <path d="M 452 428 C 458 445 468 452 480 456"/>
+      <path d="M 445 420 C 442 410 448 404 456 408"/>
+      <circle cx="461" cy="431" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <!-- 鬃毛 -->
+      <path d="M 372 362 C 402 375 428 393 449 415" stroke="#8fb8e0"/>
+      <!-- 单侧大翼三层羽弧（自室宿二扬起） -->
+      <path d="M 358 115 C 315 60 250 30 180 32"/>
+      <path d="M 350 122 C 310 80 255 58 200 58" stroke="#8fb8e0"/>
+      <path d="M 342 130 C 308 98 262 82 218 84" stroke="#8fb8e0"/>
+      <!-- 前腿（自壁宿一侧伸出） -->
+      <path d="M 41 371 C 22 340 16 300 26 265"/>
+      <path d="M 26 265 C 29 252 37 246 47 249"/>
+      <path d="M 70 381 C 50 415 42 450 50 480" stroke="#8fb8e0"/>
+      <!-- 四边形四星星芒 -->
+      <path d="M 366 361 L 366 379 M 357 370 L 375 370 M 361 108 L 361 126 M 352 117 L 370 117 M 41 362 L 41 380 M 32 371 L 50 371 M 82 88 L 82 106 M 73 97 L 91 97"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

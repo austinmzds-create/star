@@ -15,7 +15,8 @@
     "baseUrl": ".",
     "paths": {
       "@star/astro-data": ["../../packages/astro-data/src/index.ts"],
-      "@star/astro-core": ["../../packages/astro-core/src/index.ts"]
+      "@star/astro-core": ["../../packages/astro-core/src/index.ts"],
+      "@star/astro-ephem": ["../../packages/astro-ephem/src/index.ts"]
     },
     "types": ["node", "jest"]
   },

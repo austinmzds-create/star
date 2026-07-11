@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。南十字座：纯几何圣物，不拟人。四星严格对位（十字架一249,133 / 十字架二272,388 / 十字架三161,243 / δ 338,309），外围细光环。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 十字长短轴 -->
+      <path d="M 249 133 L 272 388"/>
+      <path d="M 338 309 L 161 243"/>
+      <!-- 四星放射星芒（十字架二最盛） -->
+      <path d="M 272 360 L 272 416 M 244 388 L 300 388"/>
+      <path d="M 252 368 L 292 408 M 292 368 L 252 408" stroke="#8fb8e0"/>
+      <path d="M 249 111 L 249 155 M 227 133 L 271 133"/>
+      <path d="M 161 225 L 161 261 M 143 243 L 179 243"/>
+      <path d="M 338 291 L 338 327 M 320 309 L 356 309"/>
+      <!-- 每星细晕圈 -->
+      <path d="M 249 133 m -13 0 a 13 13 0 1 0 26 0 a 13 13 0 1 0 -26 0 M 272 388 m -16 0 a 16 16 0 1 0 32 0 a 16 16 0 1 0 -32 0 M 161 243 m -12 0 a 12 12 0 1 0 24 0 a 12 12 0 1 0 -24 0 M 338 309 m -12 0 a 12 12 0 1 0 24 0 a 12 12 0 1 0 -24 0" stroke="#8fb8e0"/>
+      <!-- 外围光环（虚线细圈） -->
+      <circle cx="255" cy="266" r="180" stroke="#8fb8e0" stroke-dasharray="2 14"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

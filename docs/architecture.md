@@ -321,6 +321,43 @@ sequenceDiagram
 一律优雅回退**演示模式**（本地生成同格式编号，UI 恒定走向成功态，绝不向用户抛错）。
 扩容后 5000 星的分层加载策略见 [data-model.md §8](./data-model.md)。
 
+### 5.3 宇宙 V2：分层渲染与星座/星历（Phase 5）
+
+场景按 renderOrder 严格分层，各层独立 draw call、互不重建几何：
+
+| renderOrder | 层 | 实现要点 |
+| --- | --- | --- |
+| 0 | 天穹渐变 + 假星云氛围 / 程序化环境星场 | 真实 DSO 上线后假星云下调为极淡氛围 |
+| 1 | 核心真实星场（mag≤6.5，≈9000 颗） | 单 `Points` 单 draw call（TwinkleStars 着色器） |
+| 1 | 扩展星场（mag 6.5–7.5） | `public/data/stars-extended.json` 空闲懒加载，纯渲染层不参与拾取 |
+| 1.5 | **星座艺术图**（20 幅自绘 SVG） | 切平面 Mesh 锚死天球姿态（非 billboard），懒加载 + LRU 纹理缓存 |
+| 2 | **星座连线**（88 座全量） | 单 `LineSegments` 单 draw call，见下 |
+| 2 | 深空天体（Messier + 亮 NGC/IC） | 按类型分组 Points |
+| 4 | **星座中文名** | CanvasTexture Sprite（≤2 个），固定角尺寸随 FOV 缩放 |
+| 8 | 行星日月 | 星历注册表（ephemRegistry）按 observeTime 实时驱动 |
+| 9 | 选中高亮 | — |
+
+**星座系统（Star Walk 式，`components/universe/Constellation*`）**：
+
+- **数据**：`@star/astro-data` 的 `CONSTELLATION_LINES`（d3-celestial 连线，BSD-3；端点已吸附为
+  objectUid，`CATALOG_BY_UID` 直查坐标零转换）。web 侧 `lib/constellation-render.ts` 构建期
+  一次算出合并几何 + 每座质心（端点单位向量平均，规避 RA 绕圈）/外接角半径。
+- **依次点亮**：每段的点亮时序在构建期折进顶点属性 `aT0/aT1`（单段 0.6s、逐段 stagger 0.08s），
+  运行期 CPU 只把该座进度 `uProgress[i]` 从 0 匀速推到 1，shader 内一个 `smoothstep`
+  即产生逐段亮起 + 呼吸（±12%）；失活 0.4s 整体淡出。88 float uniform 数组每帧上传 <0.4KB。
+- **激活判定**（优先级 select > search > gaze）：注视判定 150ms 节流（移动 250ms）+ 88 次点积 +
+  阈值 `clamp(rad×0.6, 8°, 20°)` + 3° 滞回 + 250ms 驻留确认；点选恒星联动其所属座（钉住）；
+  搜索星座条目 → `constellationFocusNonce` 触发 CameraRig 飞向质心并把 FOV 缓回 60°；
+  用户拖拽即解除钉住。状态在 `useUniverse`（`activeConstellation` / `activeConstellationSource`），
+  帧内进度全部走 ref，零 React 抖动。
+- **艺术图**：12 黄道 + 8 著名座的自绘 SVG 发光线稿（双描边法，CC0 原创，无第三方版权图像；
+  猎户七星/北斗/仙后 W/秋季四边形/南十字四星等与真实星点像素级对位），透明度上限 0.35
+  （移动 0.28），加色混合下永远压不过星点；其余 68 座连线 + 名称兜底。
+- **降级**：`prefers-reduced-motion` 统一 0.2s 且冻结呼吸；coarse pointer 单艺术图 + 512² 纹理；
+  「星座」开关（ControlBar）关闭即整层 unmount 并释放几何/纹理。
+- **信息卡**：`ConstellationInfoCard`（左下角 DOM），88 条原创中文神话/看点简介
+  （`lib/constellation-lore.ts`），最亮星可点击飞往；星座不可命名，卡内无购买入口。
+
 ## 6. 关键流程时序
 
 ### 6.1 搜索选星 → 可见性计算（纯前端）

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。金牛座：低头冲刺的前半身，V 形牛脸沿毕星团（毕宿五207,243 为左眼），双角直指双子方向，右上角缀昴星团493,48。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- V 形牛脸（沿毕星团两臂） -->
+      <path d="M 252 178 C 272 215 296 250 313 272"/>
+      <path d="M 210 246 C 246 260 286 270 313 275"/>
+      <!-- 吻部 -->
+      <path d="M 313 272 C 322 278 322 288 314 292 C 306 295 300 290 302 283"/>
+      <circle cx="309" cy="284" r="2" fill="#bfe3ff" stroke="none"/>
+      <!-- 左眼＝毕宿五星芒（橙红调） -->
+      <path d="M 207 229 L 207 257 M 193 243 L 221 243" stroke="#ffb08a"/>
+      <path d="M 197 233 L 217 253 M 217 233 L 197 253" stroke="#8fb8e0"/>
+      <!-- 右眼微芒（ε Tau） -->
+      <path d="M 252 168 L 252 182 M 245 175 L 259 175"/>
+      <!-- 双长角开叉直指双子方向 -->
+      <path d="M 250 172 C 210 130 165 95 122 66 C 114 59 110 51 109 42"/>
+      <path d="M 214 240 C 164 216 115 196 63 186 C 53 184 46 180 41 175"/>
+      <!-- 颈肩隆峰 -->
+      <path d="M 315 275 C 355 268 396 281 421 311"/>
+      <!-- 胸与扬起的前蹄 -->
+      <path d="M 421 311 C 436 346 431 381 411 406"/>
+      <path d="M 381 331 C 396 366 391 406 366 430"/>
+      <path d="M 366 430 C 358 442 362 452 375 452"/>
+      <path d="M 411 406 C 419 431 417 456 405 473" stroke="#8fb8e0"/>
+      <!-- 昴星团（七姊妹）微点 -->
+      <circle cx="486" cy="44" r="2.6" fill="#bfe3ff" stroke="none"/>
+      <circle cx="497" cy="52" r="2.2" fill="#bfe3ff" stroke="none"/>
+      <circle cx="479" cy="57" r="2.2" fill="#bfe3ff" stroke="none"/>
+      <circle cx="490" cy="63" r="2" fill="#bfe3ff" stroke="none"/>
+      <circle cx="501" cy="40" r="1.8" fill="#bfe3ff" stroke="none"/>
+      <circle cx="472" cy="46" r="1.8" fill="#bfe3ff" stroke="none"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>
