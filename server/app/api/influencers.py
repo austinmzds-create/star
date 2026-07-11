@@ -60,6 +60,9 @@ class CreateIn(BaseModel):
     category_tags: list[str] | None = None
     shoot_type: str | None = None
     raw_intro: str | None = None
+    cooperation_code: str | None = None
+    default_address: str | None = None
+    homepage_raw: str | None = None
     level: str = "L1"
     source: str = "bd"
 
@@ -155,6 +158,8 @@ def detail(influencer_id: int, user: User = Depends(current_user), db: Session =
         "level": inf.level, "commission_tier": float(inf.commission_tier),
         "promo_mode": inf.promo_mode, "tags": inf.tags, "source": inf.source,
         "raw_intro": inf.raw_intro, "owner_bd_id": inf.owner_bd_id,
+        "cooperation_code": inf.cooperation_code, "default_address": inf.default_address,
+        "homepage_raw": inf.homepage_raw,
         "cooperations": [{"id": c.id, "round_no": c.round_no, "status": c.status,
                           "level_snapshot": c.level_snapshot,
                           "commission_tier_snapshot": float(c.commission_tier_snapshot),

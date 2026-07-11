@@ -13,7 +13,12 @@
             <el-descriptions-item label="拍摄">{{ d.shoot_type || '未知' }}</el-descriptions-item>
             <el-descriptions-item label="主页">
               <el-link v-if="d.homepage_url" :href="d.homepage_url" target="_blank" type="primary">打开</el-link>
+              <span v-else-if="d.homepage_raw" style="color: #909399">{{ d.homepage_raw }}</span>
             </el-descriptions-item>
+            <el-descriptions-item label="合作码">{{ d.cooperation_code }}</el-descriptions-item>
+            <el-descriptions-item label="收件人">{{ d.real_name }}</el-descriptions-item>
+            <el-descriptions-item label="收件电话">{{ d.phone }}</el-descriptions-item>
+            <el-descriptions-item label="收件地址" :span="2">{{ d.default_address }}</el-descriptions-item>
             <el-descriptions-item label="来源">{{ d.source }}</el-descriptions-item>
           </el-descriptions>
           <el-divider>定级与待遇(调整会留痕,历史合作记录不回溯)</el-divider>

@@ -64,6 +64,9 @@ class Influencer(Base, TimestampMixin):
     owner_bd_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     owner_bd: Mapped[User | None] = relationship()
     tags: Mapped[list | None] = mapped_column(JSON)                 # 自定义标签
+    cooperation_code: Mapped[str | None] = mapped_column(String(64), index=True)  # 合作码(百应/团长绑定用)
+    default_address: Mapped[str | None] = mapped_column(String(255))              # 默认收货地址(敏感,同 real_name/phone 权限)
+    homepage_raw: Mapped[str | None] = mapped_column(String(512))                 # 主页分享原文(无真实 http 链接时存原文备查)
 
     cooperations: Mapped[list["Cooperation"]] = relationship(back_populates="influencer")
 

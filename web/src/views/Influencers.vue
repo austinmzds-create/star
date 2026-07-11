@@ -67,6 +67,9 @@ const FIELDS = [
   { key: 'douyin_uid', label: 'UID' },
   { key: 'homepage_url', label: '主页链接' },
   { key: 'phone', label: '手机号' },
+  { key: 'cooperation_code', label: '合作码' },
+  { key: 'real_name', label: '收件人' },
+  { key: 'default_address', label: '收件地址' },
   { key: 'fans_count', label: '粉丝数' },
 ]
 
