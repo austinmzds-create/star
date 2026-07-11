@@ -98,7 +98,8 @@ def audit(order_id: int, body: AuditIn,
 
 class ShipIn(BaseModel):
     tracking_no: str
-    phone: str | None = None  # 顺丰等需要收件人手机后四位
+    courier: str | None = None  # 快递公司 code(商务下拉选;留空则尝试自动识别)
+    phone: str | None = None    # 顺丰等需要收件人手机后四位
 
 
 @router.post("/{order_id}/ship")
@@ -108,13 +109,40 @@ async def ship(order_id: int, body: ShipIn,
     if not order or order.status != "approved":
         raise HTTPException(400, "只有已通过的寄样单才能发货")
     provider = get_provider()
-    courier = await provider.identify_courier(body.tracking_no)
-    subscribed = await provider.subscribe(body.tracking_no, courier or "auto", body.phone)
+    courier = body.courier or await provider.identify_courier(body.tracking_no)
+    if not courier:
+        raise HTTPException(400, "无法识别快递公司,请手动选择")
+    ok, msg = await provider.subscribe(body.tracking_no, courier, body.phone)
     order.tracking_no = body.tracking_no
     order.courier_company = courier
     order.status = "shipped"
     db.commit()
-    return {"ok": True, "courier": courier, "subscribed": subscribed}
+    return {"ok": True, "courier": courier, "subscribed": ok, "message": msg}
+
+
+@router.post("/{order_id}/track")
+async def track(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """实时查询最新物流轨迹并回写(手动刷新;订阅回调未到时的兜底)"""
+    from datetime import datetime
+    order = db.get(SampleOrder, order_id)
+    if not order or not order.tracking_no or not order.courier_company:
+        raise HTTPException(400, "该寄样单尚未发货或缺快递公司")
+    phone = (order.address_snapshot or {}).get("tel")
+    result = await get_provider().query_realtime(order.tracking_no, order.courier_company, phone)
+    order.logistics_status = result
+    if result.get("signed") and not order.signed_at:
+        order.signed_at = datetime.now()
+        order.status = "signed"
+    elif order.status == "shipped" and result.get("status"):
+        order.status = result["status"]
+    db.commit()
+    return result
+
+
+@router.get("/couriers")
+def couriers(user: User = Depends(current_user)):
+    from ..services.logistics import COURIERS
+    return COURIERS
 
 
 @router.get("/reject-reasons")

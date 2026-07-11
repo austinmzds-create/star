@@ -18,7 +18,7 @@
         </template>
       </el-table-column>
       <el-table-column prop="reject_reason" label="拒绝原因" show-overflow-tooltip />
-      <el-table-column label="操作" width="220">
+      <el-table-column label="操作" width="260">
         <template #default="{ row }">
           <template v-if="row.status === 'pending'">
             <el-button size="small" type="success" @click="pass(row)">通过</el-button>
@@ -27,6 +27,7 @@
           <el-button v-else-if="row.status === 'approved'" size="small" type="primary" @click="openShip(row)">
             填单号发货
           </el-button>
+          <el-button v-else-if="row.tracking_no" size="small" @click="refreshTrack(row)">刷新物流</el-button>
           <span v-else style="color: #909399">{{ tabLabel(row.status) }}</span>
         </template>
       </el-table-column>
@@ -43,12 +44,15 @@
       </template>
     </el-dialog>
 
-    <!-- 发货(单号→快递100识别+订阅) -->
+    <!-- 发货(选快递公司 + 单号 → 快递100 订阅) -->
     <el-dialog v-model="shipVisible" title="填单号发货" width="480px">
-      <el-input v-model="trackingNo" placeholder="快递单号" />
+      <el-select v-model="courier" placeholder="选择快递公司" style="width: 100%" filterable>
+        <el-option v-for="c in couriers" :key="c.code" :label="c.name" :value="c.code" />
+      </el-select>
+      <el-input v-model="trackingNo" placeholder="快递单号" style="margin-top: 8px" />
       <el-input v-model="shipPhone" placeholder="收件人手机号(顺丰等需要)" style="margin-top: 8px" />
       <p style="color: #909399; font-size: 12px">
-        提交后自动识别快递公司并订阅轨迹(快递100);签收后进入催拍计时。
+        提交后订阅轨迹推送(快递100);也可在列表点「刷新物流」实时查询。签收后进入催拍计时。
       </p>
       <template #footer>
         <el-button @click="shipVisible = false">取消</el-button>
@@ -83,6 +87,8 @@ const rejectReason = ref('')
 const shipVisible = ref(false)
 const trackingNo = ref('')
 const shipPhone = ref('')
+const courier = ref('')
+const couriers = ref([])
 let current = null
 
 const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
@@ -119,23 +125,40 @@ function openShip(row) {
   current = row
   trackingNo.value = ''
   shipPhone.value = ''
+  courier.value = ''
   shipVisible.value = true
 }
 async function doShip() {
+  if (!courier.value || !trackingNo.value) {
+    ElMessage.warning('请选择快递公司并填写单号')
+    return
+  }
   try {
     const r = await api.post(`/api/samples/${current.id}/ship`, {
-      tracking_no: trackingNo.value, phone: shipPhone.value || undefined,
+      tracking_no: trackingNo.value, courier: courier.value, phone: shipPhone.value || undefined,
     })
     shipVisible.value = false
-    ElMessage.success(r.subscribed ? `已发货,识别为 ${r.courier},已订阅轨迹` : '已发货(轨迹订阅待快递100配置)')
+    ElMessage.success(r.subscribed ? '已发货并订阅轨迹' : `已发货(订阅未成功:${r.message || ''})`)
     load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发货失败')
   }
 }
 
+async function refreshTrack(row) {
+  try {
+    const r = await api.post(`/api/samples/${row.id}/track`)
+    if (r.ok) ElMessage.success(`最新:${r.last_event?.context || r.status || '已更新'}`)
+    else ElMessage.info(r.message || '暂无轨迹')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '查询失败')
+  }
+}
+
 onMounted(async () => {
   reasons.value = await api.get('/api/samples/reject-reasons')
+  couriers.value = await api.get('/api/samples/couriers')
   load()
 })
 </script>

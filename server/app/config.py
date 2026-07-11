@@ -28,9 +28,11 @@ class Settings(BaseSettings):
     sms_sign_name: str = ""
     sms_template_code: str = ""
 
-    # 快递100(已拍板:订阅式轨迹 + 单号识别)
+    # 快递100(已拍板:订阅式轨迹 + 实时查询)
     kd100_key: str = ""
     kd100_customer: str = ""
+    kd100_secret: str = ""
+    kd100_userid: str = ""
     kd100_callback_url: str = ""  # 例如 https://task.jisheng.yun/api/webhooks/kd100
 
     # 客户现有智能体平台(已拍板:达人信息 LLM 解析走这里,OpenAI 兼容 /v1)
