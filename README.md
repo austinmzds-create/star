@@ -141,7 +141,7 @@ pnpm --filter @star/web build   # 生产构建
 ```bash
 docker compose -f infra/docker-compose.yml up -d   # 起 Postgres 16 + Redis 7
 cp services/api/.env.example services/api/.env      # 按需修改（默认值即指向 compose）
-pnpm --filter @star/api db:migrate                  # prisma migrate deploy（首次先 migrate dev --name init）
+pnpm --filter @star/api db:migrate                  # prisma migrate deploy（应用已提交的 0_init 基线迁移，全新库直接建全部表）
 pnpm --filter @star/api db:seed                     # 灌入 60 颗精选星（登记接口的前置）
 pnpm --filter @star/api dev                         # http://localhost:3001/api/health
 # 前端连上后端：设置 NEXT_PUBLIC_API_BASE_URL=http://localhost:3001 再启动 web
