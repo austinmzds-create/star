@@ -8,19 +8,26 @@
 
     <h3>素材</h3>
     <el-card v-for="m in d.materials" :key="m.id" class="mat">
-      <div>
+      <div class="mat-head">
         <el-tag size="small">{{ TYPE_LABEL[m.type] || m.type }}</el-tag>
-        {{ m.title }}
-        <span v-if="m.report_id" style="color: #999">报告ID: {{ m.report_id }}(发布视频时挂在下方)</span>
+        <span v-if="m.title">{{ m.title }}</span>
       </div>
-      <el-button v-if="m.downloadable" size="small" style="margin-top: 8px" @click="download(m)">
-        下载
-      </el-button>
+      <div v-if="m.parsed_text" class="copy-block">
+        <div class="txt">{{ m.parsed_text }}</div>
+        <el-button size="small" @click="copy(m.parsed_text)">复制文案</el-button>
+      </div>
+      <div v-if="m.report_id" class="muted" style="font-size:12px;margin-top:6px">报告ID: {{ m.report_id }}(发布视频时挂在下方)</div>
+      <div style="margin-top:8px">
+        <el-link v-if="m.source_link" :href="m.source_link" target="_blank" type="primary">查看爆款</el-link>
+        <el-button v-else-if="m.downloadable && m.url" size="small" @click="download(m)">下载/查看</el-button>
+      </div>
     </el-card>
+    <el-empty v-if="!d.materials.length" description="暂无素材" :image-size="60" />
   </div>
 </template>
 
 <script setup>
+import { ElMessage } from 'element-plus'
 import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
@@ -33,6 +40,9 @@ const TYPE_LABEL = {
 const route = useRoute()
 const d = ref(null)
 
+async function copy(t) {
+  try { await navigator.clipboard.writeText(t); ElMessage.success('已复制') } catch { ElMessage.info('请长按复制') }
+}
 async function download(m) {
   const { url } = await api.post(`/api/h5/materials/${m.id}/download`)
   window.open(url, '_blank')
@@ -46,4 +56,8 @@ onMounted(async () => {
 <style scoped>
 .h5-wrap { max-width: 480px; margin: 0 auto; padding: 24px 16px; }
 .mat { margin-top: 8px; }
+.mat-head { display: flex; align-items: center; gap: 8px; }
+.copy-block { margin-top: 8px; background: #f8f9fc; border-radius: 8px; padding: 10px; }
+.txt { color: #5a6072; font-size: 14px; margin-bottom: 8px; white-space: pre-wrap; }
+.muted { color: #8a93a6; }
 </style>
