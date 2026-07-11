@@ -7,7 +7,7 @@ from sqlalchemy import select
 from .api import (admin_config, auth, block_records, dashboard, followups, h5,
                   influencers, products, samples, uploads, videos)
 from .config import settings
-from .db import Base, SessionLocal, engine
+from .db import Base, SessionLocal, engine, ensure_columns
 from .models import RejectReason, User
 from .security import hash_password
 from .services import levels
@@ -49,6 +49,7 @@ def startup():
         raise RuntimeError("生产环境必须设置 SECRET_KEY(当前仍为默认值)")
     # 骨架阶段用 create_all;上生产前切 alembic 迁移
     Base.metadata.create_all(engine)
+    ensure_columns()  # 自动补齐已存在表的新增列(create_all 不会 ALTER)
     with SessionLocal() as db:
         levels.seed_defaults(db)  # L1/L2/L3 → 5/6/7(可在配置中心改)
         if not db.scalars(select(User).where(User.role == "admin")).first():

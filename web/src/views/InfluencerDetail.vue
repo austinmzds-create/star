@@ -16,17 +16,19 @@
       <!-- 左:档案 + 定级 + 标签 -->
       <el-col :span="10">
         <el-card header="档案">
-          <div class="kv"><span class="k">抖音号</span><CopyText :value="d.douyin_id" /></div>
-          <div class="kv"><span class="k">UID</span><CopyText :value="d.douyin_uid" /></div>
-          <div class="kv"><span class="k">合作码</span><CopyText :value="d.cooperation_code" /></div>
-          <div class="kv"><span class="k">收件人</span><span>{{ d.real_name || '—' }}</span></div>
-          <div class="kv"><span class="k">手机</span><CopyText :value="d.phone" /></div>
-          <div class="kv"><span class="k">收件地址</span><span>{{ d.default_address || '—' }}</span></div>
-          <div class="kv"><span class="k">品类</span><span>{{ (d.category_tags || []).join(' / ') || '—' }}</span></div>
-          <div class="kv"><span class="k">拍摄</span><span>{{ d.shoot_type || '未知' }}</span></div>
-          <div class="kv"><span class="k">主页</span>
-            <el-link v-if="d.homepage_url" :href="d.homepage_url" target="_blank" type="primary">打开</el-link>
-            <span v-else>{{ d.homepage_raw || '—' }}</span>
+          <div class="kv-grid">
+            <div class="kv"><span class="k">抖音号</span><CopyText :value="d.douyin_id" /></div>
+            <div class="kv"><span class="k">UID</span><CopyText :value="d.douyin_uid" /></div>
+            <div class="kv"><span class="k">合作码</span><CopyText :value="d.cooperation_code" /></div>
+            <div class="kv"><span class="k">手机</span><CopyText :value="d.phone" /></div>
+            <div class="kv"><span class="k">收件人</span><span>{{ d.real_name || '—' }}</span></div>
+            <div class="kv"><span class="k">拍摄</span><span>{{ d.shoot_type || '未知' }}</span></div>
+            <div class="kv"><span class="k">品类</span><span>{{ (d.category_tags || []).join(' / ') || '—' }}</span></div>
+            <div class="kv"><span class="k">主页</span>
+              <el-link v-if="d.homepage_url" :href="d.homepage_url" target="_blank" type="primary">打开</el-link>
+              <span v-else>{{ d.homepage_raw || '—' }}</span>
+            </div>
+            <div class="kv full"><span class="k">收件地址</span><span>{{ d.default_address || '—' }}</span></div>
           </div>
 
           <el-divider>定级与待遇 <span class="muted" style="font-size:12px">(调整留痕,历史不回溯)</span></el-divider>
@@ -68,11 +70,16 @@
         <el-card>
           <el-tabs v-model="tab">
             <el-tab-pane :label="`寄样 ${act.samples.length}`" name="samples">
+              <div v-if="isStaff" class="tab-toolbar">
+                <el-button size="small" type="primary" @click="openQuick('sample')">+ 新建寄样</el-button>
+              </div>
               <el-empty v-if="!act.samples.length" description="暂无寄样" :image-size="60" />
               <div v-for="s in act.samples" :key="s.id" class="row-card">
                 <div class="rc-main">
                   <span class="rc-title">{{ s.product_name }}</span>
                   <el-tag size="small" :type="sampleTag(s.status).type">{{ sampleTag(s.status).label }}</el-tag>
+                  <el-button v-if="isStaff && (s.status === 'pending' || s.status === 'rejected')"
+                    size="small" link type="danger" style="margin-left:auto" @click="delSample(s)">删除</el-button>
                 </div>
                 <div class="rc-sub muted">
                   <span v-if="s.tracking_no">{{ s.courier_company }} {{ s.tracking_no }}</span>
@@ -85,12 +92,17 @@
             </el-tab-pane>
 
             <el-tab-pane :label="`视频 ${act.videos.length}`" name="videos">
+              <div v-if="isStaff" class="tab-toolbar">
+                <el-button size="small" type="primary" @click="openQuick('video')">+ 登记视频</el-button>
+              </div>
               <el-empty v-if="!act.videos.length" description="暂无视频" :image-size="60" />
               <div v-for="v in act.videos" :key="v.id" class="row-card">
                 <div class="rc-main">
                   <span class="rc-title">{{ v.product_name }}</span>
                   <el-tag size="small" :type="videoTag(v.status).type">{{ videoTag(v.status).label }}</el-tag>
                   <el-link v-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" style="margin-left:auto">查看</el-link>
+                  <el-button v-if="isStaff" size="small" link type="danger"
+                    :style="v.dy_url ? '' : 'margin-left:auto'" @click="delVideo(v)">删除</el-button>
                 </div>
                 <div class="rc-sub muted">{{ ft(v.created_at) }}</div>
               </div>
@@ -128,11 +140,30 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 快捷建单(达人已锁定为当前档案) -->
+    <el-dialog v-model="quickVisible" :title="quickType === 'sample' ? '新建寄样' : '登记视频'" width="440px">
+      <el-form label-width="72px">
+        <el-form-item label="达人"><el-input :model-value="d.nickname" disabled /></el-form-item>
+        <el-form-item label="产品">
+          <el-select v-model="quickForm.product_id" placeholder="选择产品" filterable style="width:100%">
+            <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="quickType === 'video'" label="抖音链接">
+          <el-input v-model="quickForm.dy_url" placeholder="视频链接(可选)" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="quickVisible = false">取消</el-button>
+        <el-button type="primary" @click="doQuick">{{ quickType === 'sample' ? '创建' : '登记' }}</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
@@ -150,6 +181,10 @@ const tags = ref([])
 const tagInput = ref(null)
 const bds = ref([])
 const tab = ref('samples')
+const products = ref([])
+const quickVisible = ref(false)
+const quickType = ref('sample')
+const quickForm = reactive({ product_id: null, dy_url: '' })
 
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
@@ -179,9 +214,50 @@ function addTag() {
 }
 function removeTag(t) { tags.value = tags.value.filter((x) => x !== t); saveTags() }
 
+function openQuick(type) {
+  quickType.value = type
+  quickForm.product_id = null
+  quickForm.dy_url = ''
+  quickVisible.value = true
+}
+async function doQuick() {
+  if (!quickForm.product_id) return ElMessage.warning('请选择产品')
+  try {
+    if (quickType.value === 'sample') {
+      await api.post('/api/samples', { influencer_id: d.value.id, product_id: quickForm.product_id })
+      ElMessage.success('已创建寄样单(待审批)')
+    } else {
+      await api.post('/api/videos', {
+        influencer_id: d.value.id, product_id: quickForm.product_id,
+        dy_url: quickForm.dy_url || undefined,
+      })
+      ElMessage.success('已登记视频(待审)')
+    }
+    quickVisible.value = false
+    act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
+}
+async function delSample(s) {
+  await ElMessageBox.confirm('确认删除该寄样单?', '提示', { type: 'warning' })
+  await api.delete(`/api/samples/${s.id}`)
+  ElMessage.success('已删除')
+  act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+}
+async function delVideo(v) {
+  await ElMessageBox.confirm('确认删除该视频任务?(连带其投流记录)', '提示', { type: 'warning' })
+  await api.delete(`/api/videos/${v.id}`)
+  ElMessage.success('已删除')
+  act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+}
+
 onMounted(async () => {
   await load()
-  if (isStaff) { try { bds.value = await api.get('/api/admin/bd-users') } catch (e) { /* ignore */ } }
+  if (isStaff) {
+    try { bds.value = await api.get('/api/admin/bd-users') } catch (e) { /* ignore */ }
+    try { products.value = await api.get('/api/products') } catch (e) { /* ignore */ }
+  }
 })
 </script>
 
@@ -190,8 +266,11 @@ onMounted(async () => {
 .stat { background: #fff; border-radius: 12px; padding: 14px 22px; box-shadow: 0 2px 12px rgba(20,30,60,.04); text-align: center; min-width: 96px; }
 .stat .v { font-size: 20px; font-weight: 600; color: #1f2637; }
 .stat .k { font-size: 12px; color: #8a93a6; margin-top: 4px; }
-.kv { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
-.kv .k { color: #8a93a6; font-size: 13px; min-width: 64px; }
+.kv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 20px; }
+.kv-grid .full { grid-column: 1 / -1; }
+.kv { display: flex; align-items: center; gap: 10px; padding: 6px 0; min-width: 0; }
+.kv .k { color: #8a93a6; font-size: 13px; min-width: 48px; flex-shrink: 0; }
+.tab-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 .raw { white-space: pre-wrap; margin: 0; font-size: 13px; color: #5a6072; }
 .row-card { padding: 10px 0; border-bottom: 1px solid #f2f3f7; }
 .row-card:last-child { border-bottom: none; }

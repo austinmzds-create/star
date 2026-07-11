@@ -27,6 +27,7 @@ class ProductIn(BaseModel):
     selling_points: str | None = None
     shooting_notes: str | None = None
     product_image: str | None = None
+    product_images: list[str] | None = None
     sample_remark: str | None = None
     promo_remark: str | None = None
     auto_audit_type: str | None = None
@@ -38,6 +39,9 @@ def create(body: ProductIn, admin: User = Depends(current_admin), db: Session = 
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     if data.get("default_commission") is not None:
         data["default_commission"] = Decimal(str(data["default_commission"]))
+    # 首张图集自动作封面(未单独指定封面时)
+    if data.get("product_images") and not data.get("product_image"):
+        data["product_image"] = data["product_images"][0]
     p = Product(**data)
     db.add(p)
     db.commit()
@@ -50,7 +54,10 @@ def update_product(product_id: int, body: ProductIn,
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
-    for k, v in body.model_dump().items():
+    data = body.model_dump()
+    if data.get("product_images") and not data.get("product_image"):
+        data["product_image"] = data["product_images"][0]
+    for k, v in data.items():
         if v is None:
             continue
         setattr(p, k, Decimal(str(v)) if k == "default_commission" else v)
@@ -130,6 +137,8 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
     return {"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
             "shop_product_id": p.shop_product_id, "link": p.link, "status": p.status,
             "product_image": storage.signed_url(p.product_image) if p.product_image else None,
+            "product_images": [storage.signed_url(k) for k in (p.product_images or [])],
+            "product_images_keys": list(p.product_images or []),
             "default_commission": float(p.default_commission) if p.default_commission else None,
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "sample_remark": p.sample_remark, "promo_remark": p.promo_remark,

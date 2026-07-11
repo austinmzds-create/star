@@ -7,10 +7,13 @@
 
     <!-- ===================== 视频审核 ===================== -->
     <div v-if="mainTab === 'video'" key="video-pane">
-      <el-tabs v-model="vTab" @tab-change="loadVideos">
-        <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key"
-          :label="`${s.label}${vCounts[s.key] ? ' ' + vCounts[s.key] : ''}`" />
-      </el-tabs>
+      <div class="page-toolbar">
+        <el-tabs v-model="vTab" @tab-change="loadVideos" class="flex-tabs">
+          <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key"
+            :label="`${s.label}${vCounts[s.key] ? ' ' + vCounts[s.key] : ''}`" />
+        </el-tabs>
+        <el-button type="primary" @click="openCreateVideo">+ 登记视频</el-button>
+      </div>
 
       <el-table :data="videos">
         <el-table-column prop="influencer_nickname" label="达人" />
@@ -40,9 +43,27 @@
             </template>
             <el-button v-if="row.status === 'approved'" size="small" type="primary"
               @click="startPromotion(row)">发起投流</el-button>
+            <el-button size="small" link type="danger" @click="removeVideo(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 登记视频 -->
+      <el-dialog v-model="createVideoVisible" title="登记视频" width="480px">
+        <el-form label-width="72px">
+          <el-form-item label="达人"><InfluencerSelect v-model="videoForm.influencer_id" style="width:100%" /></el-form-item>
+          <el-form-item label="产品">
+            <el-select v-model="videoForm.product_id" placeholder="选择产品" filterable style="width:100%">
+              <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="抖音链接"><el-input v-model="videoForm.dy_url" placeholder="视频链接(可选)" /></el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="createVideoVisible = false">取消</el-button>
+          <el-button type="primary" @click="doCreateVideo">登记</el-button>
+        </template>
+      </el-dialog>
 
       <!-- 拒绝(填原因 + 时间点评论) -->
       <el-dialog v-model="rejectVisible" title="拒绝视频" width="520px">
@@ -93,6 +114,7 @@
           <el-button size="small" text @click="expanded = expanded === row.id ? null : row.id">
             {{ expanded === row.id ? '收起' : '展开复制' }}
           </el-button>
+          <el-button size="small" link type="danger" style="margin-left:auto" @click="removePromo(row)">删除</el-button>
         </div>
       </div>
 
@@ -110,14 +132,53 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus'
-import { nextTick, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { nextTick, onMounted, reactive, ref } from 'vue'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
+import InfluencerSelect from '../components/InfluencerSelect.vue'
 import { formatTime as ft } from '../utils/time'
 
 const mainTab = ref('video')
 const expanded = ref(null)
+const products = ref([])
+
+// ---------- 登记视频 ----------
+const createVideoVisible = ref(false)
+const videoForm = reactive({ influencer_id: null, product_id: null, dy_url: '' })
+function openCreateVideo() {
+  videoForm.influencer_id = null
+  videoForm.product_id = null
+  videoForm.dy_url = ''
+  createVideoVisible.value = true
+}
+async function doCreateVideo() {
+  if (!videoForm.influencer_id || !videoForm.product_id) {
+    ElMessage.warning('请选择达人和产品')
+    return
+  }
+  try {
+    await api.post('/api/videos', { ...videoForm, dy_url: videoForm.dy_url || undefined })
+    createVideoVisible.value = false
+    ElMessage.success('已登记(待审)')
+    vTab.value = 'submitted'
+    loadVideos()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '登记失败')
+  }
+}
+async function removeVideo(row) {
+  await ElMessageBox.confirm('确认删除该视频任务?(连带其投流记录)', '提示', { type: 'warning' })
+  await api.delete(`/api/videos/${row.id}`)
+  ElMessage.success('已删除')
+  loadVideos()
+}
+async function removePromo(row) {
+  await ElMessageBox.confirm('确认删除该投流记录?', '提示', { type: 'warning' })
+  await api.delete(`/api/promotions/${row.id}`)
+  ElMessage.success('已删除')
+  loadPromotions()
+}
 
 // ---------- 视频审核 ----------
 const VIDEO_TABS = [
@@ -240,11 +301,7 @@ async function loadPromotions() {
   pLoading.value = true
   try {
     promotions.value = await api.get('/api/promotions', { params: { auth_status: pTab.value } })
-    // 计数:前端按各状态拉一遍全量再统计(后端未提供 promotions 计数端点)
-    const all = await api.get('/api/promotions')
-    const c = {}
-    for (const p of all) c[p.auth_status] = (c[p.auth_status] || 0) + 1
-    pCounts.value = c
+    pCounts.value = await api.get('/api/promotions/status-counts')
   } finally {
     pLoading.value = false
   }
@@ -286,10 +343,16 @@ function onMainTab(name) {
 }
 
 // 延到首帧之后再触发加载,避免 vLoading 在挂载中同步翻转导致 v-loading 指令报错
-onMounted(() => nextTick(loadVideos))
+onMounted(async () => {
+  products.value = await api.get('/api/products')
+  nextTick(loadVideos)
+})
 </script>
 
 <style scoped>
+.page-toolbar { display: flex; align-items: center; justify-content: space-between; }
+.flex-tabs { flex: 1; }
+.flex-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
 .promo-card { background: #fff; border: 1px solid #f0f1f5; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .pc-head { display: flex; align-items: center; justify-content: space-between; }
 .pc-name { font-weight: 600; }

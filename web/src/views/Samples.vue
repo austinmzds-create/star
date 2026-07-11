@@ -1,9 +1,12 @@
 <template>
   <div>
-    <el-tabs v-model="tab" @tab-change="load">
-      <el-tab-pane v-for="s in TABS" :key="s.key" :name="s.key"
-        :label="`${s.label}${counts[s.key] ? ' ' + counts[s.key] : ''}`" />
-    </el-tabs>
+    <div class="page-toolbar">
+      <el-tabs v-model="tab" @tab-change="load" class="flex-tabs">
+        <el-tab-pane v-for="s in TABS" :key="s.key" :name="s.key"
+          :label="`${s.label}${counts[s.key] ? ' ' + counts[s.key] : ''}`" />
+      </el-tabs>
+      <el-button type="primary" @click="openCreate">+ 新建寄样单</el-button>
+    </div>
 
     <el-table :data="rows" v-loading="loading">
       <el-table-column prop="influencer_nickname" label="达人" />
@@ -29,9 +32,28 @@
           </el-button>
           <el-button v-else-if="row.tracking_no" size="small" @click="refreshTrack(row)">刷新物流</el-button>
           <span v-else style="color: #909399">{{ tabLabel(row.status) }}</span>
+          <el-button v-if="row.status === 'pending' || row.status === 'rejected'"
+            size="small" link type="danger" @click="removeRow(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
+
+    <!-- 新建寄样单 -->
+    <el-dialog v-model="createVisible" title="新建寄样单" width="480px">
+      <el-form label-width="72px">
+        <el-form-item label="达人"><InfluencerSelect v-model="createForm.influencer_id" style="width:100%" /></el-form-item>
+        <el-form-item label="产品">
+          <el-select v-model="createForm.product_id" placeholder="选择产品" filterable style="width:100%">
+            <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <p class="muted" style="font-size:12px;margin:0 0 4px 72px">收件地址将自动取该达人档案的默认地址并固化到本单。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" @click="doCreate">创建</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 拒绝(拒绝理由库) -->
     <el-dialog v-model="rejectVisible" title="拒绝寄样" width="480px">
@@ -63,9 +85,10 @@
 </template>
 
 <script setup>
-import { ElMessage } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted, reactive, ref } from 'vue'
 import api from '../api'
+import InfluencerSelect from '../components/InfluencerSelect.vue'
 
 const TABS = [
   { key: 'pending', label: '待审批' },
@@ -90,6 +113,37 @@ const shipPhone = ref('')
 const courier = ref('')
 const couriers = ref([])
 let current = null
+
+const products = ref([])
+const createVisible = ref(false)
+const createForm = reactive({ influencer_id: null, product_id: null })
+
+function openCreate() {
+  createForm.influencer_id = null
+  createForm.product_id = null
+  createVisible.value = true
+}
+async function doCreate() {
+  if (!createForm.influencer_id || !createForm.product_id) {
+    ElMessage.warning('请选择达人和产品')
+    return
+  }
+  try {
+    await api.post('/api/samples', { ...createForm })
+    createVisible.value = false
+    ElMessage.success('已创建寄样单(待审批)')
+    tab.value = 'pending'
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '创建失败')
+  }
+}
+async function removeRow(row) {
+  await ElMessageBox.confirm('确认删除该寄样单?', '提示', { type: 'warning' })
+  await api.delete(`/api/samples/${row.id}`)
+  ElMessage.success('已删除')
+  load()
+}
 
 const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
 
@@ -159,6 +213,13 @@ async function refreshTrack(row) {
 onMounted(async () => {
   reasons.value = await api.get('/api/samples/reject-reasons')
   couriers.value = await api.get('/api/samples/couriers')
+  products.value = await api.get('/api/products')
   load()
 })
 </script>
+
+<style scoped>
+.page-toolbar { display: flex; align-items: center; justify-content: space-between; }
+.flex-tabs { flex: 1; }
+.flex-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+</style>

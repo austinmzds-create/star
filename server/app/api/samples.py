@@ -67,15 +67,39 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
     inf = db.get(Influencer, body.influencer_id)
     if not inf:
         raise HTTPException(404, "达人不存在")
+    if user.role != "admin" and inf.owner_bd_id != user.id:
+        raise HTTPException(403, "只能给自己名下的达人建寄样单")
+    if not db.get(Product, body.product_id):
+        raise HTTPException(404, "产品不存在")
     coop = db.scalars(select(Cooperation).where(Cooperation.influencer_id == inf.id)
                       .order_by(Cooperation.round_no.desc()).limit(1)).first()
     if not coop:
         raise HTTPException(400, "该达人没有进行中的合作轮次")
+    # 收件地址快照:优先用传入,否则用达人档案默认地址(下单即固化,后续改档案不影响本单)
+    address = body.address or {"name": inf.real_name, "tel": inf.phone,
+                               "address": inf.default_address}
     order = SampleOrder(cooperation_id=coop.id, product_id=body.product_id,
-                        address_snapshot=body.address)
+                        address_snapshot=address)
     db.add(order)
     db.commit()
     return {"id": order.id}
+
+
+@router.delete("/{order_id}")
+def delete_sample(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """删除寄样单:仅待审批/已拒绝可删(已发货有物流留证,不允许删)。"""
+    order = db.get(SampleOrder, order_id)
+    if not order:
+        raise HTTPException(404, "寄样单不存在")
+    coop = db.get(Cooperation, order.cooperation_id)
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
+        raise HTTPException(403, "无权删除")
+    if order.status not in ("pending", "rejected"):
+        raise HTTPException(400, "该寄样单已进入发货流程,不能删除")
+    db.delete(order)
+    db.commit()
+    return {"ok": True}
 
 
 class AuditIn(BaseModel):

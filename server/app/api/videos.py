@@ -18,24 +18,54 @@ router = APIRouter(prefix="/api/videos", tags=["videos"])
 
 
 class CreateVideoIn(BaseModel):
-    cooperation_id: int
     product_id: int
+    influencer_id: int | None = None   # 传达人则自动解析其最新合作轮次(前端首选)
+    cooperation_id: int | None = None  # 或直接指定合作轮次(兼容)
     dy_url: str | None = None
 
 
 @router.post("")
 def create_video(body: CreateVideoIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """登记一条视频任务(status 默认 submitted)。"""
-    coop = db.get(Cooperation, body.cooperation_id)
+    """登记一条视频任务(status 默认 submitted)。可传 influencer_id 自动取最新合作轮次。"""
+    if body.cooperation_id:
+        coop = db.get(Cooperation, body.cooperation_id)
+    elif body.influencer_id:
+        coop = db.scalars(select(Cooperation)
+                          .where(Cooperation.influencer_id == body.influencer_id)
+                          .order_by(Cooperation.round_no.desc()).limit(1)).first()
+    else:
+        raise HTTPException(400, "需指定达人或合作轮次")
     if not coop:
-        raise HTTPException(404, "合作轮次不存在")
-    task = VideoTask(cooperation_id=body.cooperation_id, product_id=body.product_id,
-                     dy_url=body.dy_url)
+        raise HTTPException(404, "合作轮次不存在(该达人可能尚未建档)")
+    if not db.get(Product, body.product_id):
+        raise HTTPException(404, "产品不存在")
+    inf = db.get(Influencer, coop.influencer_id)
+    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
+        raise HTTPException(403, "只能给自己名下的达人登记视频")
+    task = VideoTask(cooperation_id=coop.id, product_id=body.product_id, dy_url=body.dy_url)
     # TODO: 后台任务下载抖音原视频转存 OSS,回填 saved_oss_key(防链接失效/投流留证);此处不实现下载。
     db.add(task)
     db.commit()
     return {"id": task.id}
+
+
+@router.delete("/{task_id}")
+def delete_video(task_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """删除视频任务(连带其投流记录);已通过并已发起投流的需先处理投流。"""
+    task = db.get(VideoTask, task_id)
+    if not task:
+        raise HTTPException(404, "视频任务不存在")
+    coop = db.get(Cooperation, task.cooperation_id)
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
+        raise HTTPException(403, "无权删除")
+    promos = db.scalars(select(Promotion).where(Promotion.video_task_id == task.id)).all()
+    for p in promos:
+        db.delete(p)
+    db.delete(task)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("")
@@ -180,6 +210,35 @@ def transition(promo_id: int, body: TransitionIn,
         promo.fail_proof_oss_key = body.fail_proof_oss_key
     db.commit()
     return {"ok": True, "auth_status": promo.auth_status}
+
+
+@promotion_router.delete("/{promo_id}")
+def delete_promotion(promo_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """删除投流记录(投错/重复时清理)。"""
+    promo = db.get(Promotion, promo_id)
+    if not promo:
+        raise HTTPException(404, "投流记录不存在")
+    task = db.get(VideoTask, promo.video_task_id)
+    coop = db.get(Cooperation, task.cooperation_id) if task else None
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
+        raise HTTPException(403, "无权删除")
+    db.delete(promo)
+    db.commit()
+    return {"ok": True}
+
+
+@promotion_router.get("/status-counts")
+def promo_status_counts(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """按 auth_status 计数(商务只算自己达人),供前端分栏。"""
+    stmt = (select(Promotion.auth_status, func.count())
+            .join(VideoTask, Promotion.video_task_id == VideoTask.id)
+            .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
+            .join(Influencer, Cooperation.influencer_id == Influencer.id)
+            .group_by(Promotion.auth_status))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    return {status: count for status, count in db.execute(stmt).all()}
 
 
 @promotion_router.get("")

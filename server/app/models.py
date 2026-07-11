@@ -175,7 +175,8 @@ class Product(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), default="on")    # on上架 / off下架
     selling_points: Mapped[str | None] = mapped_column(Text)         # 卖点文案
     shooting_notes: Mapped[str | None] = mapped_column(Text)         # 拍摄要求
-    product_image: Mapped[str | None] = mapped_column(String(512))   # 主图 URL/oss_key
+    product_image: Mapped[str | None] = mapped_column(String(512))   # 主图(封面)URL/oss_key
+    product_images: Mapped[list | None] = mapped_column(JSON)         # 商品图集(oss_key 数组,首张即封面)
     sample_remark: Mapped[str | None] = mapped_column(Text)          # 寄样备注(借鉴样例)
     promo_remark: Mapped[str | None] = mapped_column(Text)           # 带货备注
     auto_audit_type: Mapped[str] = mapped_column(String(16), default="must")  # must必审/none不需审/auto1830 18:30自动通过

@@ -20,19 +20,22 @@
 <script setup>
 import { Close, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, reactive } from 'vue'
+import { computed, reactive, watch } from 'vue'
 import api from '../api'
 
 const props = defineProps({
   modelValue: { type: Array, default: () => [] },
   max: { type: Number, default: 9 },
   prefix: { type: String, default: 'screenshots' },
+  // 编辑已存在数据时:传入 {oss_key: 签名URL} 让旧图正常预览(OSS 场景必需)
+  initialPreviews: { type: Object, default: () => ({}) },
 })
 const emit = defineEmits(['update:modelValue'])
 
 const keys = computed(() => props.modelValue || [])
 // 上传后记录 key→预览URL(OSS 走签名URL,本地走 /api/files);未知则回退本地代理
-const previews = reactive({})
+const previews = reactive({ ...props.initialPreviews })
+watch(() => props.initialPreviews, (v) => Object.assign(previews, v))
 const urlOf = (k) => previews[k] || `/api/files/${k}`
 
 async function doUpload({ file }) {

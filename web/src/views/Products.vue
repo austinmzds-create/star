@@ -39,6 +39,10 @@
     <el-dialog v-model="createVisible" title="新建产品" width="520px">
       <el-form label-width="90px">
         <el-form-item label="名称"><el-input v-model="form.name" /></el-form-item>
+        <el-form-item label="商品图">
+          <MultiUpload v-model="form.product_images" :max="6" prefix="product" />
+          <span class="muted" style="font-size:12px">首张作封面,可传多张</span>
+        </el-form-item>
         <el-form-item label="店铺"><el-input v-model="form.shop_name" /></el-form-item>
         <el-form-item label="价格"><el-input v-model="form.price_text" placeholder="如 30起" /></el-form-item>
         <el-form-item label="抖店链接"><el-input v-model="form.link" /></el-form-item>
@@ -108,6 +112,11 @@
           <el-tab-pane label="商品信息" name="info">
             <el-form label-width="88px" style="max-width:560px">
               <el-form-item label="名称"><el-input v-model="detail.name" /></el-form-item>
+              <el-form-item label="商品图">
+                <MultiUpload v-model="detail.product_images_keys" :max="6" prefix="product"
+                  :initial-previews="imgPreviewMap" />
+                <span class="muted" style="font-size:12px">首张作封面</span>
+              </el-form-item>
               <el-form-item label="抖店链接"><el-input v-model="detail.link" /></el-form-item>
               <el-form-item label="默认佣金%"><el-input-number v-model="detail.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
               <el-form-item label="卖点"><el-input v-model="detail.selling_points" type="textarea" :rows="2" /></el-form-item>
@@ -167,10 +176,11 @@
 <script setup>
 import { Delete } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
+import MultiUpload from '../components/MultiUpload.vue'
 import { formatTime as ft } from '../utils/time'
 import { SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
@@ -200,6 +210,12 @@ const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const materialsOf = (t) => (detail.value?.materials || []).filter((m) => m.type === t)
 const countOf = (t) => materialsOf(t).length
+// 旧图预览映射:{oss_key: 签名URL},供 MultiUpload 编辑时展示已存图
+const imgPreviewMap = computed(() => {
+  const keys = detail.value?.product_images_keys || []
+  const urls = detail.value?.product_images || []
+  return Object.fromEntries(keys.map((k, i) => [k, urls[i]]))
+})
 
 async function load() { rows.value = await api.get('/api/products') }
 
@@ -245,6 +261,7 @@ async function delMaterial(m) {
 async function saveInfo() {
   await api.put(`/api/products/${detail.value.id}`, {
     name: detail.value.name, link: detail.value.link,
+    product_images: detail.value.product_images_keys || [],
     default_commission: detail.value.default_commission,
     selling_points: detail.value.selling_points, shooting_notes: detail.value.shooting_notes,
     sample_remark: detail.value.sample_remark, promo_remark: detail.value.promo_remark,
