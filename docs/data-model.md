@@ -1,9 +1,9 @@
 # 数据模型
 
 > **定位**：库表**唯一事实来源**。`services/api/prisma/schema.prisma` 的每个 model 在本文有对应章节；
-> 星表扩容规划（60 颗 → ~5000 亮星 + 命名候选池）全文在第 8 章。
+> 星表扩容（60 颗 → 5058 亮星 + 命名候选池，Phase 3 已落地）全文在第 8 章。
 > **读者**：后端工程师、数据工程师。
-> **最后更新**：2026-07-10（Phase 2）。
+> **最后更新**：2026-07-11（Phase 3 · 证书记录/agent_task 字段、星表扩容落地）。
 > **关联文档**：[系统架构](./architecture.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
 
 ---
@@ -130,26 +130,34 @@ Phase 3 落地扩容后的「独占型命名」时，按 §8.4 第 3 条补：
 `namingStatus` 字段 + `memorial_registration(starObjectUid)` 上 `WHERE status = 'ACTIVE'`
 的部分唯一索引（partial unique index），并发下重复占用由约束拒绝、API 返回业务冲突码。
 
-## 5. certificate_record 证书记录表（Phase 3 启用）
+## 5. certificate_record 证书记录表
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `id` | `String @id cuid()` | 主键 |
 | `registrationId` | FK → `memorial_registration.id`，`onDelete: Cascade` | 所属登记 |
 | `status` | `CertificateStatus @default(PENDING)` | PENDING → GENERATING → READY / FAILED，与 BullMQ 任务状态机对齐 |
-| `ossObjectKey` | `String?` | 阿里云 OSS 对象 key，如 `certificates/2026/07/STAR-20260710-K7PX-v1.pdf` |
+| `certObjectKey` | `String?` | 证书主图 object key，如 `certificates/2026/07/STAR-20260710-K7PX-v1.svg` |
+| `starMapObjectKey` | `String?` | 星图 object key，如 `starmaps/2026/07/STAR-20260710-K7PX-v1.svg` |
+| `assetFormat` | `String @default("svg")` | `svg`（权威）\| `png`（sharp 可用时增强） |
 | `templateVersion` | `String @default("v1")` | 模板版本，证书模板迭代后可重出 |
 | `error` | `String?` | 失败原因 |
 
-索引：`@@index([registrationId, status])`。本期只建表不消费；worker 由 Phase 3 的 BullMQ 补齐。
+索引：`@@unique([registrationId, templateVersion])`（幂等锚点）、`@@index([registrationId, status])`。
+存 **object key** 而非 URL——OSS 签名 URL 短时效读时现算，Local URL 由 key 派生。
+> 变更（Phase 3）：由原单列 `ossObjectKey` 改为 `certObjectKey`/`starMapObjectKey`/`assetFormat`
+> 并加 `@@unique([registrationId, templateVersion])`。本地只 `prisma generate`；真实环境需一条
+> migration（drop `ossObjectKey`、add 三列 + 唯一约束）。
 
 ### 5.1 其余占位表
 
 - **`app_user`**：用户占位（微信 openid/unionid、email、phone 均可空且唯一；`role` 存字符串不做 RBAC）。
   本期不做鉴权，只保证外键落点存在。
 - **`order`**：订单占位（`orderNo` 唯一、`amountFen` 以**分**计避免浮点、`skuCode`、支付渠道预留）。
-- **`agent_task`**：AI 技能任务持久化载体（`skillCode` 如 `certificate.copywriting`、
-  `inputJson/outputJson`、`attempts` 与 BullMQ 重试对齐）。
+- **`agent_task`**：AI 技能任务持久化载体（`skillCode` 如 `cosmic-letter`、`inputJson/outputJson`、
+  `status` QUEUED/RUNNING/SUCCEEDED/FAILED、`attempts` 与 BullMQ 重试对齐）。
+  Phase 3 新增 `modelName String?`（实际模型名，llm 模式 `claude-sonnet-5`/模板模式 `template`）
+  与 `durationMs Int?`（端到端耗时，成本/性能观测）——真实环境需 migration 加这两列。
 
 ## 6. 搜索的 DB 化路径
 
@@ -215,9 +223,26 @@ LIMIT $2;
   ~5000 颗由第 8 章的 ETL 批量导入（`sourceCatalog='hyg'`），二者按 `objectUid` 合并去重、
   精选星以手工数据为准。
 
-## 8. 扩容规划（60 颗 → ~5000 亮星 + 命名候选池）
+## 8. 星表扩容（60 颗 → 5058 亮星 + 命名候选池）· 已落地
 
-> 本章为**规划**，Phase 2 不实现；ETL 落地在 Phase 3。
+> **状态：Phase 3 已落地。** astro-data 侧 ETL 已运行并产出 `src/generated/bright-stars.json`
+> （提交入库，5058 颗，前后端直接 import）。下方为**实现登记**（实际取值，与早期规划的差异以此为准）；
+> §8.1 之后的分层/优先级/isNamable 策略章节保留，作为设计依据，数值以本登记收口。
+>
+> - **数据源与规模**：**HYG Database v41**（`hyg/CURRENT/hygdata_v41.csv`，CC BY-SA 4.0），
+>   星等阈值 **mag ≤ 6.0**，实测生成 **5058 颗**。早期草案的 v3 URL 已 404、阈值 6.5 均已收口。
+>   v41 无 Gaia 列，objectUid 优先级 **HIP > HD > HR > GL**。
+> - **ETL 位置**：`packages/astro-data/scripts/build-catalog.mjs`（`pnpm --filter @star/astro-data build:catalog`，
+>   仅用 Node 内置 `fetch`/`fs`/`zlib`，一次性人工运行、产物入库、构建/运行不联网），
+>   非早期所写的 `packages/astro-data/etl/`。合并逻辑在 `packages/astro-data/src/catalog.ts`：
+>   手写 60 颗精选优先、按 objectUid（及 HIP/HD 编号）与 generated 去重。
+> - **产物形态**：本期只产**内存目录 JSON**（compact 字段 `u/ra/dec/mag/dist/spect/con/bayer/flam/proper/hip/hd/hr`），
+>   `src/generated/README.md` 标注来源/许可/生成时间/行数。落 `celestial_object` 的 NDJSON/prisma seed 属后端后续，本期不做。
+> - **isNamable 实际策略**（`catalog.ts` 的 `decideNamable`）：`isFeatured → false`；无 HIP → false；
+>   否则 `4.0 ≤ mag ≤ 6.0` 为 true。据此**命名候选池 ≈ 4400 颗**（非著名 + 有 HIP + mag 4–6）。
+> - **isNamable 红线**：所有 `isFeatured=true` 的著名星（含手写 60 颗）`isNamable=false`——见 §8.4，
+>   合规要求绝不将知名星作命名售卖对象。**据此 api 侧命名相关测试夹具已从 Sirius/HIP32349 改用非著名可命名星**（如 `HIP55642`）。
+> - **renderPriority 实际取值**（`decideRenderPriority`）：`isFeatured → 0`；`mag ≤ 2.5 → 1`；`mag ≤ 4.5 → 2`；否则 `3`。
 
 ### 8.1 目标与分层
 
@@ -234,11 +259,15 @@ LIMIT $2;
 
 ### 8.2 数据源与 ETL 路径
 
-数据源定稿：**HYG Database v3**（`hygdata_v3.csv`，CC BY-SA 4.0，需在 docs 与页面
-「数据来源」处署名）。已合并 Hipparcos/HD/Gliese/Bayer/Flamsteed/常用英文名，字段齐全
-（ra/dec J2000、mag、dist(pc)、spect、proper、bayer、con、hip、hd、hr、gl）。
+> **以 §8 开头的「实现登记」为准**：实际数据源为 **HYG v41**（非下文早期草案的 v3）、阈值 **mag ≤ 6.0**、
+> 脚本在 `packages/astro-data/scripts/build-catalog.mjs`（非 `etl/`）、产物为 `src/generated/bright-stars.json`
+> 内存目录（NDJSON/DB seed 本期不做）。下文流水线为**设计参考**，字段清洗/合并/校验步骤仍与实现一致，仅版本号/阈值/路径/产物以登记收口。
 
-ETL 管道（一次性脚本，放 `packages/astro-data/etl/`，Node 22 + TS，除 DB 外零运行时服务依赖）：
+数据源（早期草案）：**HYG Database v3**（`hygdata_v3.csv`，CC BY-SA 4.0，需在 docs 与页面
+「数据来源」处署名）。已合并 Hipparcos/HD/Gliese/Bayer/Flamsteed/常用英文名，字段齐全
+（ra/dec J2000、mag、dist(pc)、spect、proper、bayer、con、hip、hd、hr、gl）。实现改用同一家族的 v41（字段兼容，无 Gaia 列）。
+
+ETL 管道（一次性脚本，实现落 `packages/astro-data/scripts/build-catalog.mjs`，Node 22，仅内置模块）：
 
 ```
 HYG v3 CSV
@@ -309,9 +338,9 @@ HYG v3 CSV
 
 ### 8.5 与现有代码的衔接
 
-- `CelestialObject` 类型（`packages/astro-data/src/types.ts`）新增
-  `renderPriority` / `searchPriority` / `namingStatus` 时一律**可选字段**，
-  保持向后兼容，前端现有 60 颗数据不破坏。
+- `CelestialObject` 类型（`packages/astro-data/src/types.ts`）**已新增 3 个可选字段**
+  `renderPriority?` / `searchPriority?` / `sourceCatalog?`（向后兼容，前端现有数据不破坏）；
+  独占语义的 `namingStatus` 属 DB 侧未来字段（见 §8.4 第 3 条），astro-data 类型暂不引入。
 - Phase 2 搜索仍走 astro-data 内存目录（5000 条内存打分毫秒级）；DB 化按 §6 路径执行，
   扩容不阻塞后端开发。
 - 前端 R3F 渲染 5000 点位需改 InstancedMesh/BufferGeometry 单 draw call——

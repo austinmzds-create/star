@@ -9,6 +9,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build:catalog": "node scripts/build-catalog.mjs",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

@@ -18,17 +18,7 @@ function normalize(input: string): string {
     .replace(/[̀-ͯ]/g, '');
 }
 
-/** 单个字段相对查询词的匹配质量：完全 > 前缀 > 包含 > 不匹配。 */
-function matchQuality(candidate: string, query: string): number {
-  const c = normalize(candidate);
-  if (!c) return 0;
-  if (c === query) return 100;
-  if (c.startsWith(query)) return 70;
-  if (c.includes(query)) return 45;
-  return 0;
-}
-
-/** 收集某星体所有可搜索字段。 */
+/** 收集某星体所有可搜索字段（构建期调用一次）。 */
 function collectFields(obj: CelestialObject): SearchField[] {
   const fields: SearchField[] = [
     { value: obj.nameEn, family: 'name', weight: 1 },
@@ -52,6 +42,51 @@ function brightnessBonus(magnitude: number): number {
   return Math.max(0, 7 - magnitude) * 0.6;
 }
 
+// —— 预构建归一化索引（5000 量级性能）——
+// 把「收集字段 + 归一化」从查询期移到构建期；查询期只做纯字符串比较。
+
+interface IndexedField {
+  /** 已归一化的字段值。 */
+  n: string;
+  family: MatchFamily;
+  weight: number;
+}
+
+interface IndexedObject {
+  obj: CelestialObject;
+  featured: boolean;
+  fields: IndexedField[];
+}
+
+// 按 catalog 引用缓存索引，避免每次查询 rebuild。
+const indexCache = new WeakMap<CelestialObject[], IndexedObject[]>();
+
+function getIndex(catalog: CelestialObject[]): IndexedObject[] {
+  let idx = indexCache.get(catalog);
+  if (!idx) {
+    idx = catalog.map((obj) => ({
+      obj,
+      featured: obj.isFeatured,
+      fields: collectFields(obj)
+        .map((f) => ({ n: normalize(f.value), family: f.family, weight: f.weight }))
+        .filter((f) => f.n.length > 0),
+    }));
+    indexCache.set(catalog, idx);
+  }
+  return idx;
+}
+
+/**
+ * 已归一化候选与已归一化查询的匹配质量：完全 > 前缀 > 包含 > 不匹配。
+ * 候选 c 已在构建期归一化，查询期零 normalize。
+ */
+function matchQualityNormalized(c: string, query: string): number {
+  if (c === query) return 100;
+  if (c.startsWith(query)) return 70;
+  if (c.includes(query)) return 45;
+  return 0;
+}
+
 export interface SearchOptions {
   /** 返回结果上限，默认 8。 */
   limit?: number;
@@ -62,6 +97,7 @@ export interface SearchOptions {
 /**
  * 在星表中按查询词搜索星体，返回按相关性排序的结果。
  * 支持中文名、英文名、别名、拜耳命名、星表编号（HIP/HD）、objectUid、星座名。
+ * 著名星在同等命中质量下置顶。
  */
 export function searchCelestial(
   query: string,
@@ -72,12 +108,13 @@ export function searchCelestial(
   const q = normalize(query);
   if (!q) return [];
 
+  const index = getIndex(catalog);
   const results: StarSearchResult[] = [];
-  for (const obj of catalog) {
+  for (const indexed of index) {
     let best = 0;
     let bestFamily: MatchFamily = 'name';
-    for (const field of collectFields(obj)) {
-      const quality = matchQuality(field.value, q);
+    for (const field of indexed.fields) {
+      const quality = matchQualityNormalized(field.n, q);
       if (quality === 0) continue;
       const score = quality * field.weight;
       if (score > best) {
@@ -87,8 +124,8 @@ export function searchCelestial(
     }
     if (best > 0) {
       results.push({
-        object: obj,
-        score: best + brightnessBonus(obj.magnitude),
+        object: indexed.obj,
+        score: best + brightnessBonus(indexed.obj.magnitude) + (indexed.featured ? 15 : 0),
         matchedOn: bestFamily,
       });
     }

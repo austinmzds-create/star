@@ -41,6 +41,21 @@ export interface CelestialObject {
   isFeatured: boolean;
   /** 中文简介。 */
   descriptionZh?: string;
+  /**
+   * 渲染优先级分档，0 最高（首屏必载），数值越小越优先。
+   * 供前端渐进/分档加载（LOD）参考。可选，向后兼容。
+   */
+  renderPriority?: number;
+  /**
+   * 搜索排序次级键，越大越优先（著名加成 + 亮度加成）。
+   * 主要为 Phase 3 落库后的 ORDER BY 预备，保证内存版与 DB 版排序一致。可选，向后兼容。
+   */
+  searchPriority?: number;
+  /**
+   * 数据来源标记，如 'handwritten'（手写精选）、'hyg-v41'（HYG 生成）、
+   * 'handwritten-fallback'（HYG 不可用时的手写回退批次）。可选，向后兼容。
+   */
+  sourceCatalog?: string;
 }
 
 /** 搜索命中结果。 */

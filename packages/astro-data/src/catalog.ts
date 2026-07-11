@@ -1,4 +1,7 @@
-import { CONSTELLATION_ZH } from './constellations';
+import { CONSTELLATION_ABBR, CONSTELLATION_ZH } from './constellations';
+// 注：不用 import 属性（with { type: 'json' }），以兼容各消费端 tsconfig 的 module 设置；
+// resolveJsonModule 已在 tsconfig.base.json 开启，普通 JSON import 三端（vitest/Next/Nest webpack）均可。
+import brightStars from './generated/bright-stars.json';
 import type { CelestialObject } from './types';
 
 /**
@@ -85,16 +88,58 @@ const RAW_STARS: RawStar[] = [
   { uid: 'HIP17702', en: 'Alcyone', zh: '昴宿六', bayer: 'η Tau', con: 'Taurus', ra: 56.871, dec: 24.105, mag: 2.87, dist: 440, spec: 'B7III', hip: '17702', hd: '23630', aliases: ['Eta Tauri', '昴星团'], desc: '昴星团（七姊妹星团）中最亮的成员。' },
 ];
 
-/** 由原始数据构造完整的星体对象。 */
+/**
+ * 渲染优先级分档：0 最高（首屏必载），数值越小越优先。
+ * 供前端渐进/分档（LOD）加载参考。
+ */
+function decideRenderPriority(mag: number, isFeatured: boolean): number {
+  if (isFeatured) return 0;
+  if (mag <= 2.5) return 1;
+  if (mag <= 4.5) return 2;
+  return 3;
+}
+
+/**
+ * 搜索排序次级键：越大越优先。= 著名加成 + 亮度加成。
+ * 镜像 search.ts 的 brightnessBonus（放大取整），为 Phase 3 落库 ORDER BY 预备。
+ */
+function decideSearchPriority(mag: number, isFeatured: boolean): number {
+  const featuredBonus = isFeatured ? 50 : 0;
+  const brightness = Math.round(Math.max(0, 7 - mag) * 10); // mag -1.46→85，mag6→10
+  return featuredBonus + brightness;
+}
+
+/**
+ * isNamable 命名候选判定（合规红线）：
+ * 1. 所有著名星（isFeatured）isNamable=false —— 绝不宣传「买断知名星」，仅作展示/讲故事素材。
+ * 2. 无 HIP（仅 HD/HR）编号稳定性稍弱，暂不入售池。
+ * 3. 命名候选池 = 非著名 + 有 HIP + 4.0 ≤ mag ≤ 6.0：肉眼/双筒可见、有真实坐标编号却尚无俗名，
+ *    正是「为 TA 命名一颗真实可指认的星」的最佳商品。
+ * 4. mag < 4.0 的非著名星更亮更稀缺，留作未来高端 SKU，本期字段占位不开放。
+ */
+function decideNamable(mag: number, isFeatured: boolean, hasHip: boolean): boolean {
+  if (isFeatured) return false;
+  if (!hasHip) return false;
+  return mag >= 4.0 && mag <= 6.0;
+}
+
+/** 由原始数据构造完整的星体对象（手写精选，isFeatured=true，isNamable=false 红线）。 */
 function buildStar(raw: RawStar): CelestialObject {
   const catalogIds: Record<string, string> = { hip: raw.hip };
   if (raw.hd) catalogIds.hd = raw.hd;
+  // 别名并入带标签的星表编号（HD/HIP），让「HD 48915」这类查询可命中。
+  const aliases = dedupe([
+    ...(raw.aliases ?? []),
+    raw.hd && 'HD ' + raw.hd,
+    raw.hd && 'HD' + raw.hd,
+    'HIP ' + raw.hip,
+  ]).filter((a) => a !== raw.en && a !== raw.zh);
   return {
     objectUid: raw.uid,
     type: 'star',
     nameEn: raw.en,
     nameZh: raw.zh,
-    aliases: raw.aliases ?? [],
+    aliases,
     bayer: raw.bayer,
     constellation: raw.con,
     constellationZh: CONSTELLATION_ZH[raw.con] ?? raw.con,
@@ -104,14 +149,134 @@ function buildStar(raw: RawStar): CelestialObject {
     distanceLy: raw.dist,
     spectralType: raw.spec,
     catalogIds,
-    isNamable: true,
+    isNamable: false, // 合规红线：著名星不作命名售卖对象。
     isFeatured: true,
     descriptionZh: raw.desc,
+    renderPriority: 0,
+    searchPriority: decideSearchPriority(raw.mag, true),
+    sourceCatalog: 'handwritten',
   };
 }
 
-/** 精选真实星表：按视星等从亮到暗排序。 */
-export const CELESTIAL_CATALOG: CelestialObject[] = RAW_STARS.map(buildStar).sort(
+/** generated JSON 中单条精简星的形状。 */
+interface GeneratedStar {
+  u: string;
+  ra: number;
+  dec: number;
+  mag: number;
+  dist?: number | null;
+  spect?: string;
+  con?: string;
+  bayer?: string;
+  flam?: string;
+  proper?: string;
+  bf?: string;
+  hip?: string;
+  hd?: string;
+  hr?: string;
+}
+
+/** 去重去空辅助。 */
+function dedupe(items: (string | undefined | false)[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const it of items) {
+    if (!it) continue;
+    if (seen.has(it)) continue;
+    seen.add(it);
+    out.push(it);
+  }
+  return out;
+}
+
+/** 由 generated 行构造 CelestialObject（HYG 生成星，isFeatured=false）。 */
+function buildFromGenerated(r: GeneratedStar): CelestialObject {
+  const meta = r.con ? CONSTELLATION_ABBR[r.con] : undefined;
+  const constellation = meta?.en ?? r.con ?? '';
+  const constellationZh = meta?.zh ?? r.con ?? '';
+
+  const catalogIds: Record<string, string> = {};
+  if (r.hip) catalogIds.hip = r.hip;
+  if (r.hd) catalogIds.hd = r.hd;
+  if (r.hr) catalogIds.hr = r.hr;
+
+  const nameEn = r.proper ?? r.bf ?? r.bayer ?? r.u;
+  const idLabel = r.hd ? 'HD ' + r.hd : r.hip ? 'HIP ' + r.hip : r.u;
+  // 非著名星无人工中文名：有 proper 暂用英文；否则「星座中文 + 编号」，如「天鹅座 HD12345」。
+  const nameZh = r.proper ? nameEn : `${constellationZh} ${idLabel}`.trim();
+
+  const aliases = dedupe([
+    r.proper,
+    r.bf,
+    r.bayer,
+    r.hd && 'HD ' + r.hd,
+    r.hd && 'HD' + r.hd,
+    r.hr && 'HR ' + r.hr,
+  ]).filter((a) => a !== nameEn);
+
+  const isFeatured = false;
+  const isNamable = decideNamable(r.mag, isFeatured, !!r.hip);
+
+  return {
+    objectUid: r.u,
+    type: 'star',
+    nameEn,
+    nameZh,
+    aliases,
+    bayer: r.bayer,
+    constellation,
+    constellationZh,
+    raDeg: r.ra,
+    decDeg: r.dec,
+    magnitude: r.mag,
+    distanceLy: r.dist ?? null,
+    spectralType: r.spect,
+    catalogIds,
+    isNamable,
+    isFeatured,
+    renderPriority: decideRenderPriority(r.mag, isFeatured),
+    searchPriority: decideSearchPriority(r.mag, isFeatured),
+    sourceCatalog: 'hyg-v41',
+  };
+}
+
+// —— 合并 —— 手写 60 颗精选 + HYG generated，手写优先、编号去重 ——
+
+const featured: CelestialObject[] = RAW_STARS.map(buildStar);
+
+// generated 载入（防御：缺失或结构异常时退化为空数组，catalog 仅剩手写 60 颗，构建不崩）。
+const generatedRaw = ((brightStars as { stars?: GeneratedStar[] })?.stars ?? []) as GeneratedStar[];
+const generatedStars: CelestialObject[] = generatedRaw.map(buildFromGenerated);
+
+/** 归一化数字编号，去前导 0，便于跨源比较。 */
+const norm = (s?: string): string => s?.replace(/^0+/, '') ?? '';
+
+// 收集手写星的编号键，用于剔除 generated 中的重复。
+const featuredKeys = new Set<string>();
+for (const f of featured) {
+  if (f.catalogIds.hip) featuredKeys.add('hip:' + norm(f.catalogIds.hip));
+  if (f.catalogIds.hd) featuredKeys.add('hd:' + norm(f.catalogIds.hd));
+  featuredKeys.add('uid:' + f.objectUid);
+}
+
+function isDup(g: CelestialObject): boolean {
+  if (featuredKeys.has('uid:' + g.objectUid)) return true;
+  if (g.catalogIds.hip && featuredKeys.has('hip:' + norm(g.catalogIds.hip))) return true;
+  if (g.catalogIds.hd && featuredKeys.has('hd:' + norm(g.catalogIds.hd))) return true;
+  return false;
+}
+
+// 手写优先；generated 去重后并入。二次 Set 兜底 objectUid 唯一。
+const mergedSeenUid = new Set<string>();
+const merged: CelestialObject[] = [];
+for (const star of [...featured, ...generatedStars.filter((g) => !isDup(g))]) {
+  if (mergedSeenUid.has(star.objectUid)) continue;
+  mergedSeenUid.add(star.objectUid);
+  merged.push(star);
+}
+
+/** 统一真实星表：手写精选 + HYG 亮星，按视星等从亮到暗排序。 */
+export const CELESTIAL_CATALOG: CelestialObject[] = merged.sort(
   (a, b) => a.magnitude - b.magnitude,
 );
 

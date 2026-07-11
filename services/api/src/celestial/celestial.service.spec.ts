@@ -45,7 +45,7 @@ describe('CelestialService', () => {
   });
 
   it('getNamableByUid 对 isNamable=false 的星体抛 CELESTIAL_NOT_NAMABLE', () => {
-    // 目录里全部可命名，测试内构造一份含不可命名星体的目录（通过可选构造参注入）
+    // 著名星（如天狼星）按合规红线 isNamable=false；再构造一份显式不可命名条目验证
     const custom = [{ ...CELESTIAL_CATALOG[0]!, objectUid: 'TEST-LOCKED', isNamable: false }];
     const customService = new CelestialService(custom);
     const err = catchAppError(() => customService.getNamableByUid('TEST-LOCKED'));
@@ -53,6 +53,9 @@ describe('CelestialService', () => {
   });
 
   it('getNamableByUid 对可命名星体正常返回', () => {
-    expect(service.getNamableByUid('HIP32349').objectUid).toBe('HIP32349');
+    // 注入一颗显式可命名星体，避免依赖真实星表的命名候选判定（合规模型可能调整著名星）
+    const custom = [{ ...CELESTIAL_CATALOG[0]!, objectUid: 'TEST-NAMABLE', isNamable: true }];
+    const customService = new CelestialService(custom);
+    expect(customService.getNamableByUid('TEST-NAMABLE').objectUid).toBe('TEST-NAMABLE');
   });
 });

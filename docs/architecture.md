@@ -2,7 +2,7 @@
 
 > **定位**：给新加入的工程师 30 分钟看懂整个系统怎么组装、请求怎么流动、为什么这么选型。
 > **读者**：全体工程师（前端 / 后端 / 数据）。
-> **最后更新**：2026-07-10（Phase 2）。
+> **最后更新**：2026-07-11（Phase 3 · 商业闭环：证书生成 / Agent Skills / 存储抽象 / 审核后台）。
 > **关联文档**：[数据模型](./data-model.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
 
 ---
@@ -36,8 +36,10 @@ flowchart LR
   B -->|"/api/* (直连或经 web 代理)"| A["services/api<br/>NestJS 11"]
   W -->|SSR fetch 公开纪念页| A
   A -->|Prisma| PG[(PostgreSQL)]
-  A -->|ioredis / BullMQ*| RD[(Redis)]
-  A -->|"OSS SDK*（Phase 3）"| OSS[(阿里云 OSS)]
+  A -->|"ioredis / BullMQ（有 REDIS_URL 时）"| RD[(Redis)]
+  A -->|"OSS SDK（STORAGE_DRIVER=oss/auto+配齐）"| OSS[(阿里云 OSS)]
+  A -->|"@anthropic-ai/sdk（有 API Key）"| AN[Anthropic Claude]
+  A -->|"本地磁盘（无 OSS 降级）→ /api/assets"| LOCAL[(本地磁盘)]
   subgraph 共享包（TS 源码消费）
     C[packages/astro-core]
     D[packages/astro-data]
@@ -46,7 +48,8 @@ flowchart LR
   A -.import.-> C & D
 ```
 
-（* 号项为 Phase 3 启用；本期只读配置、优雅降级，见 §4.3 与 [deployment.md §4.2](./deployment.md)。）
+（Redis / OSS / Anthropic 三项均**可选**，缺省各自优雅降级：无 Redis → 证书同步生成；
+无 OSS → 本地磁盘 + `/api/assets`；无 API Key → 宇宙来信模板兜底。见 §4.3 / §4.5 / §4.6。）
 
 ### 2.2 Monorepo 布局
 
@@ -58,7 +61,7 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 | `apps/web` | `@star/web` | PC 沉浸式星空前端（Next.js App Router + React Three Fiber）；公开纪念页 `/m/[slug]` |
 | `packages/astro-core` | `@star/astro-core` | 共享天文计算：儒略日、GMST/LST、赤道→地平、可见性、最佳观测摘要 |
 | `packages/astro-data` | `@star/astro-data` | 共享星体类型 `CelestialObject`、精选真实星表 `CELESTIAL_CATALOG`（60 颗）、中英文搜索 `searchCelestial` |
-| `services/api` | `@star/api` | NestJS 11 后端：天体查询、纪念登记、健康检查；Prisma（PostgreSQL）+ Redis |
+| `services/api` | `@star/api` | NestJS 11 后端：天体查询、纪念登记、证书/星图生成、Agent 技能、审核后台、健康检查；Prisma（PostgreSQL）+ Redis + OSS/本地存储 |
 | `infra/` | — | `docker-compose.yml`（Postgres + Redis，真实环境用） |
 | `docs/` | — | 本目录：架构 / 数据模型 / API 规范 / 部署运维 |
 
@@ -68,9 +71,10 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 | --- | --- | --- |
 | 主数据存储 | PostgreSQL | Prisma 数据访问，唯一事实来源 |
 | 搜索 | Phase 2：进程内存目录 → Phase 3：Postgres `pg_trgm`/全文 | 不引入 Elasticsearch，见 [data-model.md §6](./data-model.md) |
-| 队列 / 异步任务 | BullMQ（跑在 Redis 上） | 证书渲染、星图生成等；不引入 MQ 中间件 |
+| 队列 / 异步任务 | BullMQ（跑在 Redis 上） | 证书/星图生成入队；**无 Redis 时同步生成**（§4.3） |
 | 缓存 / 限流 | Redis | 未配置 `REDIS_URL` 时整体优雅降级（`RedisService` status = `skipped`） |
-| 文件（证书 PDF/PNG、星图） | 阿里云 OSS | Phase 3 启用；配置缺省时上传降级为本地 no-op + 日志 |
+| 文件（证书、星图 SVG/PNG） | 阿里云 OSS | 经 `StorageService` 抽象；缺省降级本地磁盘 + `/api/assets`，再退 data URL（§4.5） |
+| AI 文案（宇宙来信等） | Anthropic Claude | 经 `LlmProvider` 抽象；无 `ANTHROPIC_API_KEY` 降级模板生成（§4.6） |
 
 ## 3. 共享包策略
 
@@ -101,12 +105,15 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 | 模块 | 路径 | 职责 |
 | --- | --- | --- |
 | `CelestialModule` | `services/api/src/celestial/` | 天体搜索 + 详情。本期注入 `@star/astro-data` 内存目录，零 DB 依赖 |
-| `MemorialModule` | `services/api/src/memorial/` | 纪念登记创建/查询、公开纪念页数据、内容审核（关键词占位实现） |
+| `MemorialModule` | `services/api/src/memorial/` | 纪念登记创建/查询、公开纪念页数据（附带已就绪证书）、内容审核（关键词占位实现） |
+| `CertificateModule` | `services/api/src/certificate/` | 证书 + 星图（纯 SVG 拼装，可选 sharp PNG）→ `StorageService` 存储 → 落库 `certificate_record`；有 Redis 走 BullMQ、无则同步；含 `AssetController`（`/api/assets/*` 本地资产流，防路径穿越）（§4.4/§4.5） |
+| `AgentModule` | `services/api/src/agent/` | Agent 技能编排：`SkillRegistry` 分发 + `LlmProvider` 抽象（Anthropic / 模板兜底）；技能「宇宙来信」`cosmic-letter`，落 `agent_task`（§4.6） |
+| `AdminModule` | `services/api/src/admin/` | 纪念登记审核后台 API：`AdminGuard`（`x-admin-token`）+ 登记列表/approve/reject + agent 任务观测（§4.7） |
 | `HealthModule` | `services/api/src/health/` | `GET /api/health`：自身可用即 200，DB/Redis 状态放 body |
 | `PrismaModule` | `services/api/src/prisma/` | 全局 `PrismaService`：启动探测连接，失败不 crash，需 DB 的接口返回 503 `DB_UNAVAILABLE` |
 | `RedisModule` | `services/api/src/redis/` | 全局 `RedisService`：`REDIS_URL` 未配置整体降级为 noop |
-| `common/` | `services/api/src/common/` | 合规声明、业务错误码（`AppError`）、全局异常过滤器、编号/slug 生成器 |
-| `OrderModule` / `AssetModule` | （Phase 3 预留） | 订单支付、OSS 资产；库表已建（`order` / `certificate_record`），模块未启用 |
+| `common/` | `services/api/src/common/` | 合规声明、业务错误码（`AppError`，Phase 3 增 6 码）、全局异常过滤器、编号/slug 生成器 |
+| `OrderModule` | （Phase 3+ 预留） | 订单支付；库表 `order` 已建，模块未启用 |
 
 **数据源双轨（关键决策）**：
 
@@ -124,18 +131,85 @@ pnpm workspace（`apps/*`、`packages/*`、`services/*`）+ Turborepo 任务编�
 - 写入时**快照星体数据**（`starSnapshotJson`）：证书/纪念页展示以登记那一刻的星体字段为准，
   不受未来星表数据修订影响；同时保留 `starObjectUid` 外键（真实环境要求先跑 seed）。
 
-### 4.3 BullMQ 队列（Phase 3 启用）
+### 4.3 BullMQ 队列（已启用，条件挂载）
 
-- 拓扑：仅依赖 Redis。`api` 进程作为 producer 投递证书渲染 / 星图生成 / Agent 任务；
-  worker 消费后写 OSS，把 `ossObjectKey` 回填 `certificate_record`。
-- 本期落点：`RedisService` 已封装连接与降级（`up / down / skipped` 三态）；库表
-  `certificate_record` / `agent_task` 已建好状态机字段（`status` / `attempts` / `error`），
-  worker 与 SDK 依赖 Phase 3 引入。
-- worker 进程形态定稿见 [deployment.md §6.3](./deployment.md)。
+- 拓扑：仅依赖 Redis。**有 `REDIS_URL` 时** `CertificateModule` 动态挂载 BullMQ（队列名 `certificate`，
+  job `generate-certificate`），`api` 进程作 producer 投递、`certificate.processor.ts` 作 worker 消费，
+  调用 `CertificateService.generateAndPersist`。
+- **无 Redis 同步降级（关键）**：`enqueueOrRun` 检测 `RedisService.getStatus() !== 'up'`（或入队失败）
+  时**直接同步** `generateAndPersist`，POST 直接返回 `READY`——本地/CI 无 Redis 也能出证书，绝不阻塞。
+- 幂等：`certificate_record` 以 `@@unique([registrationId, templateVersion])` 为锚点；
+  `READY`/`GENERATING` 直接返回既有记录，不重复渲染。
+- worker 进程形态（同进程 / 拆独立进程）定稿见 [deployment.md §6.3](./deployment.md)。
 
-### 4.4 搜索路径演进
+### 4.4 证书 + 星图生成时序（零无头浏览器）
 
-- **Phase 2（现状）**：`@star/astro-data` 内存目录支撑（60 颗 → 扩容后 5000 颗仍是毫秒级）。
+证书主图与星图**纯 SVG 字符串拼装**（`certificate/svg/*`：模板、局部天区 gnomonic 投影、
+邻域星高亮），无 Puppeteer/Playwright 等无头浏览器；`sharp` 可用时把 SVG 栅格成 PNG，
+不可用则只出 SVG（`assetFormat` 记录实际格式）。星图邻域星取自 `@star/astro-data` 活目录（装饰性，不进快照）。
+
+```mermaid
+sequenceDiagram
+  participant U as 用户 / web
+  participant CC as CertificateController
+  participant CS as CertificateService
+  participant Q as BullMQ（有 Redis）
+  participant ST as StorageService
+  participant PG as PostgreSQL
+  U->>CC: POST …/certificate（幂等触发）
+  CC->>CS: enqueueOrRun(registrationNo)
+  CS->>PG: 查登记 + upsert certificate_record(PENDING)
+  alt 有 Redis
+    CS->>Q: 入队 generate-certificate → 返回 202 GENERATING
+    Q->>CS: worker: generateAndPersist
+  else 无 Redis / 入队失败
+    CS->>CS: 同步 generateAndPersist
+  end
+  CS->>CS: 渲染证书 SVG + 星图 SVG（可选 sharp→PNG）
+  CS->>ST: put(certKey/mapKey, buffer)
+  ST-->>CS: object key
+  CS->>PG: certificate_record ← READY + certObjectKey/starMapObjectKey/assetFormat
+  CS-->>U: { status, certUrl, starMapUrl, compliance }（读时 storage.url() 解析）
+```
+
+证书响应必带 `COMPLIANCE_NOTICE`；证书模板文案同样内嵌合规红线（不得出现官方命名/IAU/购买/产权表述）。
+
+### 4.5 存储抽象与降级（StorageService）
+
+- DI token `STORAGE_SERVICE`，接口 `put(key, buf, contentType) / url(key)`；`certificate.module.ts`
+  的 provider 工厂按 `STORAGE_DRIVER`（`auto`|`local`|`oss`|`dataurl`）选实现：
+  - `auto`（默认）：四项 `OSS_*` 配齐 → `OssStorage`，否则 `LocalStorage`。
+  - `OssStorage`：`ali-oss` **懒加载**（`eval('require')` 规避 webpack 静态分析；本期不安装，代码完备默认不激活），
+    `url()` 返回**短时签名 URL**（`ASSET_URL_TTL`）。
+  - `LocalStorage`：写磁盘（`STORAGE_LOCAL_DIR`），`url()` 派生 `STORAGE_PUBLIC_BASE_URL` + `/api/assets/<key>`；
+    由 `AssetController` 流式服务，`resolveLocalPath` 做**路径穿越防护**（越界 → `ASSET_NOT_FOUND`）。
+  - **写盘失败再降级 data URL**：极端只读环境也能返回可渲染资产，绝不 500。
+- 存 **object key** 而非成品 URL：OSS 签名短时效读时现算、本地由 key 派生（[data-model.md §5](./data-model.md)）。
+
+### 4.6 Agent Skills 与 LlmProvider 抽象
+
+- **契约层**（`agent/skill.types.ts`）：`Skill`（`code` / `parseInput` / `run`）、`SkillContext`（注入 `llm`）、
+  `SkillResult`（`output` / `mode: 'llm'|'template'` / `modelName`）；`SkillRegistry` 注册 + 按 `skillCode` 分发。
+- **LlmProvider 抽象**（DI token `LLM_PROVIDER`）：`provider.factory.ts` 按 `ANTHROPIC_API_KEY` 选
+  `AnthropicProvider`（`@anthropic-ai/sdk`，模型 `claude-sonnet-5`，`maxTokens` 受限控成本）或
+  `TemplateProvider`（无 key/调用失败时的模板兜底）——**绝不因缺 key 崩溃**。
+- **技能「宇宙来信」`cosmic-letter`**：据星体/星座/场景/纪念对象/语气生成中文来信；系统提示词内嵌合规红线。
+  `AgentService.runSkill` 落 `agent_task`（`RUNNING → SUCCEEDED/FAILED`，记 `modelName`/`durationMs`）；
+  **DB 不可用时跳过落库、`taskNo:'unpersisted'`，仍返回来信**（商业价值优先）。失败统一 `SKILL_FAILED`。
+- 速率/成本防护（Redis 令牌桶，`skipped`/`down` fail-open）为占位 TODO，见 [api-spec.md §8](./api-spec.md)。
+
+### 4.7 审核后台（AdminModule）
+
+- `AdminGuard`：请求头 `x-admin-token` 与 `ADMIN_API_TOKEN` 用 `crypto.timingSafeEqual` 定长比较。
+  **未配置 token → `503 ADMIN_NOT_ENABLED`（拒绝裸奔）**；配置但缺失/不匹配 → `401 ADMIN_UNAUTHORIZED`；
+  在 `canActivate` 内实时读 `process.env`（便于测试、不引 `@nestjs/config`）。Guard 抛 `AppError`，由既有全局过滤器转 envelope。
+- 端点：登记分页列表（可按 status 过滤，**返回含隐私/内部字段的管理员全量视图**，不带 `COMPLIANCE_NOTICE`）、
+  approve / reject（审计落 `reviewNote`）、agent 任务分页观测。状态流转矩阵与非法流转 `409 INVALID_STATE_TRANSITION` 见 [api-spec.md §9](./api-spec.md)。
+- 与登记初始状态联动：`REVIEW_ALL_FREETEXT=1` 时含自由文本的登记先进 `PENDING_REVIEW`，由后台 approve 转 `ACTIVE`。
+
+### 4.8 搜索路径演进
+
+- **Phase 2/3（现状）**：`@star/astro-data` 内存目录支撑（扩容后 5058 颗仍是毫秒级）。
 - **Phase 3**：Postgres `pg_trgm` + 全文检索，基于 `celestial_name_alias.aliasNorm`。
   切换点集中在 `CelestialService` 一个类里（接口签名不变，调用方无感）。
   打分等价性对照与切换步骤见 [data-model.md §6](./data-model.md)。
@@ -200,7 +274,7 @@ sequenceDiagram
   PG-->>A: registrationNo / publicSlug（@unique 兜底，冲突重试）
   A-->>W: { registrationNo, publicSlug, status, compliance }
   W-->>U: 成功态 + 「查看在线纪念页 →」/m/[slug]
-  Note over A,PG: Phase 3：入队 BullMQ 生成证书 → OSS → 可扫码纪念页展示证书
+  Note over A,PG: 证书触发（§4.4）：有 Redis 入队 BullMQ，无则同步生成 → StorageService → 纪念页展示证书
 ```
 
 后端不可达时 `W` 直接本地回退演示模式（编号同格式 `STAR-YYYYMMDD-XXXX`，UI 标注「演示模式」）。
@@ -232,6 +306,6 @@ sequenceDiagram
 | Phase | 边界 |
 | --- | --- |
 | **1（已完成）** | 沉浸式星空前端 + 共享天文包 + 60 颗精选星表 + 纯前端演示命名 |
-| **2（本期）** | NestJS API 地基：天体搜索/详情、纪念登记落库、公开纪念页 `/m/[slug]`、Prisma schema 全量主表、docker-compose 与部署文档；星表扩容为**规划**（[data-model.md §8](./data-model.md)），不实现 |
-| **3** | 商业闭环：BullMQ 证书/星图渲染 → OSS、订单支付、管理后台、内容安全云审核、搜索 DB 化、星表扩容 ETL 落地、Agent Skills |
-| **4** | 微信小程序扫码找星、情侣双星、纪念册、实体礼盒供应链 |
+| **2** | NestJS API 地基：天体搜索/详情、纪念登记落库、公开纪念页 `/m/[slug]`、Prisma schema 全量主表、docker-compose 与部署文档 |
+| **3（本期）** | 商业闭环：证书 + 星图生成（纯 SVG，BullMQ / 无 Redis 同步降级）→ `StorageService`（OSS / 本地磁盘 / data URL 降级）、Agent Skills（宇宙来信，`LlmProvider` Anthropic / 模板降级）、审核后台 API（`AdminGuard`）、星表扩容 ETL 落地（HYG v41 → 5058 颗）。订单支付、搜索 DB 化留待后续 |
+| **4** | 微信小程序扫码找星、情侣双星、纪念册、实体礼盒供应链；订单支付、内容安全云审核、搜索 DB 化（pg_trgm） |

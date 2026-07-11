@@ -3,7 +3,7 @@
 import { getCelestialByUid } from '@star/astro-data';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
-import { createMemorialRegistration, isApiConfigured } from '@/lib/api';
+import { createMemorialRegistration, generateCosmicLetter, isApiConfigured } from '@/lib/api';
 import { formatDec, formatRA } from '@/lib/format';
 import { useUniverse } from '@/lib/store';
 
@@ -37,11 +37,34 @@ export function MemorialModal() {
   const [blessing, setBlessing] = useState('');
   const [done, setDone] = useState<DoneState | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 宇宙来信：letter 生成后可自由编辑；letterMode 用于「由 AI/模板生成」的透明提示
+  const [letter, setLetter] = useState('');
+  const [letterMode, setLetterMode] = useState<'llm' | 'template' | 'demo' | null>(null);
+  const [letterLoading, setLetterLoading] = useState(false);
 
   const close = () => {
     if (submitting) return;
     closeMemorial();
-    window.setTimeout(() => setDone(null), 300);
+    window.setTimeout(() => {
+      setDone(null);
+      setLetter('');
+      setLetterMode(null);
+    }, 300);
+  };
+
+  // generateCosmicLetter 永不 reject：失败一律回退本地模板，按钮恒定给得出结果
+  const genLetter = async () => {
+    if (!star || letterLoading) return;
+    setLetterLoading(true);
+    const res = await generateCosmicLetter({
+      starNameZh: star.nameZh,
+      constellationZh: star.constellationZh,
+      occasion,
+      memorialName: memorialName.trim() || `${star.nameZh}的纪念星`,
+    });
+    setLetter(res.letter);
+    setLetterMode(res.mode);
+    setLetterLoading(false);
   };
 
   // createMemorialRegistration 永不 reject：失败一律以 mode='demo' 回退，UI 恒定走向成功态
@@ -146,6 +169,37 @@ export function MemorialModal() {
                       className="w-full resize-none rounded-xl border border-white/10 bg-void/50 px-4 py-3 text-[15px] leading-relaxed text-white placeholder:text-nebula-200/35 focus:border-nebula-400/40 focus:outline-none"
                     />
                   </Field>
+
+                  <Field label="宇宙来信（可选）">
+                    <button
+                      type="button"
+                      onClick={genLetter}
+                      disabled={letterLoading}
+                      className="w-full rounded-xl border border-nebula-400/30 bg-nebula-500/10 py-2.5 text-[14px] text-nebula-100/90 transition hover:bg-nebula-500/20 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {letterLoading
+                        ? '星光正在书写……'
+                        : letter
+                          ? '✦ 重新生成一封'
+                          : '✦ 生成一封宇宙来信'}
+                    </button>
+                    {letter && (
+                      <>
+                        <textarea
+                          value={letter}
+                          onChange={(e) => setLetter(e.target.value)}
+                          rows={6}
+                          className="mt-3 w-full resize-none rounded-xl border border-white/10 bg-void/50 px-4 py-3 text-[14px] leading-relaxed text-white focus:border-nebula-400/40 focus:outline-none"
+                        />
+                        <p className="mt-2 text-[11px] leading-relaxed text-nebula-200/40">
+                          {letterMode === 'llm'
+                            ? '由 AI 依据你填写的信息生成，可自由编辑。'
+                            : '由本地模板生成，可自由编辑。'}
+                          这只是一封写给星空的私人纪念文字，不代表任何官方命名。
+                        </p>
+                      </>
+                    )}
+                  </Field>
                 </div>
 
                 <div className="mt-7 flex gap-3">
@@ -198,6 +252,17 @@ export function MemorialModal() {
                     <p className="mt-5 text-[14px] italic leading-relaxed text-nebula-100/90">
                       “{blessing.trim()}”
                     </p>
+                  )}
+
+                  {letter.trim() && (
+                    <div className="mt-5 rounded-xl border border-nebula-400/15 bg-white/[0.03] p-4 text-left">
+                      <div className="mb-2 text-[10.5px] uppercase tracking-[0.24em] text-gold/70">
+                        宇宙来信
+                      </div>
+                      <p className="whitespace-pre-line text-[13.5px] leading-relaxed text-nebula-100/90">
+                        {letter.trim()}
+                      </p>
+                    </div>
                   )}
 
                   <div className="mt-5 text-[12px] tracking-wider text-nebula-200/60">

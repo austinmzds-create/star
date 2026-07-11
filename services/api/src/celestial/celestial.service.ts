@@ -37,6 +37,11 @@ export class CelestialService {
     return searchCelestial(q, { limit, catalog: this.catalog });
   }
 
+  /** 全量只读目录（星图邻域筛选用；DB 化时改为分页/空间查询，签名保持只读数组）。 */
+  listAll(): readonly CelestialObject[] {
+    return this.catalog;
+  }
+
   /** 按 objectUid 取星体，不存在抛 CELESTIAL_NOT_FOUND。 */
   getByUid(objectUid: string): CelestialObject {
     const obj = this.byUid.get(objectUid);

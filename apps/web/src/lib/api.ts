@@ -91,6 +91,19 @@ export interface MemorialRegistrationResult {
   createdAt: string;
 }
 
+/**
+ * 证书 / 星图资产（UI 形状）。仅当后端证书已「就绪」时才出现，否则整体为 null。
+ * URL 由后端存储层给出且为浏览器可直接加载的绝对地址：
+ * 本地存储 = `http(s)://<host>/api/assets/...`；阿里云 OSS = 短时签名直链。
+ * 因此前端无需再拼接 API 基址，直接用于 <img src> 与下载链接。
+ */
+export interface CertificateAssets {
+  /** 纪念证书图（SVG 或 PNG，取决于后端是否有 sharp 栅格化环境） */
+  certUrl: string;
+  /** 局部天区星图 */
+  starMapUrl: string;
+}
+
 /** 公开纪念页视图（UI 形状）。star 为登记时刻的目录快照（后端持久化，避免目录变更影响历史页面）。 */
 export interface PublicMemorialView {
   registrationNo: string;
@@ -101,6 +114,8 @@ export interface PublicMemorialView {
   memorialDate: string | null;
   blessing: string | null;
   createdAt: string;
+  /** 证书/星图资产；未生成或未就绪时为 null（页面据此决定是否展示证书区块） */
+  certificate: CertificateAssets | null;
   /** 登记时刻的星体快照子集 */
   star: {
     objectUid: string;
@@ -151,6 +166,13 @@ interface WireCreateResponse {
   compliance: string;
 }
 
+/** 公开视图内嵌的证书资产（CertificateService.getPublicAssets 的镜像）。未就绪时后端返回 null。 */
+interface WirePublicCertificate {
+  status: 'READY';
+  certUrl: string;
+  starMapUrl: string;
+}
+
 /** GET /api/memorial/public/:slug 成功 body。 */
 interface WirePublicResponse {
   memorial: {
@@ -162,6 +184,8 @@ interface WirePublicResponse {
     storyText: string | null;
     createdAt: string;
     star: WireStarSnapshot;
+    /** 已就绪的证书/星图；未生成或未就绪为 null（或旧后端不返回此字段 → undefined） */
+    certificate?: WirePublicCertificate | null;
   };
   compliance: string;
 }
@@ -319,6 +343,125 @@ export async function createMemorialRegistration(
   }
 }
 
+// ─────────────────────────── 宇宙来信（Agent Skill: cosmic-letter） ───────────────────────────
+
+/** 生成宇宙来信的输入（UI 形状）。occasion 传中文标签，发送前映射为 OccasionType 枚举码。 */
+export interface CosmicLetterInput {
+  /** 星体中文名（CelestialObject.nameZh），1-40 字 */
+  starNameZh: string;
+  /** 星座中文名（CelestialObject.constellationZh） */
+  constellationZh: string;
+  /** 纪念场景中文标签（与 MemorialModal 的 OCCASIONS 一致） */
+  occasion: string;
+  /** 星星纪念名 / 命名，1-60 字 */
+  memorialName: string;
+  /** 纪念对象称呼，可选（如「亲爱的阿离」的「阿离」） */
+  relationTo?: string;
+  /** 期望语气，可选 */
+  tone?: 'gentle' | 'warm' | 'solemn' | 'hopeful';
+}
+
+/** 宇宙来信结果。mode：llm=真实模型；template=后端模板降级；demo=前端本地模板（后端不可达）。 */
+export interface CosmicLetterResult {
+  letter: string;
+  mode: 'llm' | 'template' | 'demo';
+}
+
+/** POST /api/agent/skills/cosmic-letter/run 成功 body。 */
+interface WireCosmicLetterResponse {
+  letter: string;
+  mode: 'llm' | 'template';
+  taskNo?: string;
+}
+
+/**
+ * 前端本地来信模板（演示模式/后端不可达时回退）。
+ * 与 services/api 的 cosmic-letter.skill.ts 分场景模板同构，措辞保持「登记/安放/纪念」，
+ * 绝不出现「官方命名/IAU/购买星星/永久产权」。120–200 字，克制温柔。
+ */
+function renderCosmicLetterTemplate(input: CosmicLetterInput): string {
+  const code = occasionLabelToCode(input.occasion);
+  const star = input.starNameZh;
+  const con = input.constellationZh;
+  const name = input.memorialName;
+  const to = input.relationTo?.trim();
+  const templates: Record<OccasionCode, () => string> = {
+    LOVE: () =>
+      `致${to || '我心爱的人'}：\n` +
+      `今夜，我在${con}为你寻到一颗星，把它以「${name}」的名义郑重登记、悄悄安放。` +
+      `${star}离我们很远，却年复一年地亮着，像我从不曾说出口、却始终为你留着的那份心意。` +
+      `往后每个想你的夜里，抬头就能找到它——那是属于我们的坐标，也是我愿意守望一生的方向。`,
+    BIRTHDAY: () =>
+      `亲爱的${to || '寿星'}：\n` +
+      `生日快乐。我在${con}挑了${star}这颗星，以「${name}」的名义为你纪念这一天。` +
+      `愿你如它一般，在属于自己的夜空里安静而坚定地发光。新的一岁，愿你所求皆有回响，所行皆有星光引路。`,
+    WEDDING: () =>
+      `致${name}：\n` +
+      `在${con}，${star}被我们共同登记、安放为今日的见证。星辰不语，却把此刻的相守记进了漫长的时间里。` +
+      `愿这段婚姻如星轨般恒久，纵有岁月流转，你们始终并肩、彼此照亮。`,
+    GRADUATION: () =>
+      `致${to || '即将启程的你'}：\n` +
+      `以「${name}」的名义，我把${con}的${star}为你郑重纪念。四季寒暑终有尽，而你眼里的光才刚刚开始。` +
+      `愿你带着这颗星前行，无论走多远，都记得自己曾如此闪耀，也终将抵达更辽阔的夜空。`,
+    NEWBORN: () =>
+      `致${name}：\n` +
+      `你来到这个世界的时候，我们在${con}为你安放了${star}，把这份初见郑重登记下来。` +
+      `它会一直亮着，像我们对你从不熄灭的祝福。愿你慢慢长大，眼里有光，心里有暖，一生被温柔以待。`,
+    PET_MEMORIAL: () =>
+      `致${to || '最想念的小家伙'}：\n` +
+      `我在${con}为你留了一颗星，以「${name}」的名义静静安放、纪念。${star}会替我继续守着你曾撒欢的那片夜空。` +
+      `谢谢你陪过我的那段时光，往后每次抬头，我都知道你在那里，安稳而快乐。`,
+    IN_MEMORIAM: () =>
+      `致${to || '深深怀念的你'}：\n` +
+      `我把${con}的${star}以「${name}」的名义郑重纪念、安放。它离得很远，却始终亮着，像你从未真正离开，只是换了一种方式陪着我们。` +
+      `想你的时候，我便抬头找它——那里有我说不完的话，和永远的思念。`,
+    OTHER: () =>
+      `致${name}：\n` +
+      `我在${con}为这段心意寻到${star}，郑重登记、静静安放。星光穿越漫长的距离抵达此刻，也把这份纪念留在了时间里。` +
+      `愿每次抬头，都能想起此刻的珍重与温柔。`,
+  };
+  return (templates[code] ?? templates.OTHER)();
+}
+
+/**
+ * 生成一封「宇宙来信」。
+ * 未配置 API 基址、或请求失败（网络/超时/校验/服务端异常），一律优雅回退本地模板（mode='demo'），
+ * 绝不 throw——纪念场景，按钮永远给得出一段温柔的文字。
+ */
+export async function generateCosmicLetter(
+  input: CosmicLetterInput,
+): Promise<CosmicLetterResult> {
+  if (!isApiConfigured()) {
+    return { letter: renderCosmicLetterTemplate(input), mode: 'demo' };
+  }
+  try {
+    const body = {
+      starNameZh: input.starNameZh.slice(0, 40),
+      constellationZh: input.constellationZh.slice(0, 40),
+      occasion: occasionLabelToCode(input.occasion),
+      memorialName: input.memorialName.slice(0, 60),
+      ...(input.relationTo?.trim() ? { relationTo: input.relationTo.trim().slice(0, 40) } : {}),
+      ...(input.tone ? { tone: input.tone } : {}),
+    };
+    const res = await request<WireCosmicLetterResponse>('/api/agent/skills/cosmic-letter/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const letter = res.letter?.trim();
+    if (!letter) {
+      // 后端返回空文本（异常）→ 本地模板兜底，仍不打断体验
+      return { letter: renderCosmicLetterTemplate(input), mode: 'demo' };
+    }
+    return { letter, mode: res.mode === 'llm' ? 'llm' : 'template' };
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] 生成宇宙来信失败，已回退本地模板：', err);
+    }
+    return { letter: renderCosmicLetterTemplate(input), mode: 'demo' };
+  }
+}
+
 /** 按编号查登记（预留给后续订单/证书页）。失败返回 null。 */
 export async function getRegistration(
   registrationNo: string,
@@ -356,6 +499,12 @@ export async function getPublicMemorial(slug: string): Promise<PublicMemorialVie
     // 快照不含 distanceLy：从共享目录按 uid 补充（仅展示用，找不到则显示「未知」）
     const { getCelestialByUid } = await import('@star/astro-data');
     const catalogStar = getCelestialByUid(m.star.objectUid);
+    // 证书仅在后端明确 READY 且两 URL 齐备时展示；缺任一字段一律降级为不展示（维持现状）
+    const cert = m.certificate;
+    const certificate: CertificateAssets | null =
+      cert && cert.status === 'READY' && cert.certUrl && cert.starMapUrl
+        ? { certUrl: cert.certUrl, starMapUrl: cert.starMapUrl }
+        : null;
     return {
       registrationNo: m.registrationNo,
       publicSlug: slug,
@@ -364,6 +513,7 @@ export async function getPublicMemorial(slug: string): Promise<PublicMemorialVie
       memorialDate: m.memorialDate,
       blessing: m.blessingText,
       createdAt: m.createdAt,
+      certificate,
       star: {
         objectUid: m.star.objectUid,
         nameZh: m.star.nameZh,

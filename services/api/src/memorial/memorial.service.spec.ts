@@ -1,3 +1,4 @@
+import { CELESTIAL_CATALOG } from '@star/astro-data';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { COMPLIANCE_NOTICE } from '../common/compliance';
@@ -7,6 +8,15 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { CreateRegistrationDto } from './dto/create-registration.dto';
 import { KeywordModeration } from './moderation/keyword-moderation';
 import { MemorialService } from './memorial.service';
+
+/**
+ * 测试星表：把天狼星（HIP32349）强制置为可命名。
+ * 真实星表按合规红线将著名星标为 isNamable=false，本 spec 用固定 fixture 保证确定性，
+ * 与星表命名候选判定的演进解耦（既有断言仍校验 nameZh/raDeg 等快照字段）。
+ */
+const NAMABLE_TEST_CATALOG = CELESTIAL_CATALOG.map((o) =>
+  o.objectUid === 'HIP32349' ? { ...o, isNamable: true } : o,
+);
 
 /** Prisma mock 工厂：只 mock 本服务触达的表方法。 */
 function createPrismaMock() {
@@ -48,6 +58,13 @@ function makeDto(overrides: Partial<CreateRegistrationDto> = {}): CreateRegistra
   });
 }
 
+/** 证书服务 mock：公开页仅需 getPublicAssets（默认无就绪资产）。 */
+function createCertMock() {
+  return {
+    getPublicAssets: jest.fn().mockResolvedValue(null),
+  } as unknown as import('../certificate/certificate.service').CertificateService;
+}
+
 describe('MemorialService', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
   let celestial: CelestialService;
@@ -55,8 +72,8 @@ describe('MemorialService', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    celestial = new CelestialService();
-    service = new MemorialService(prisma, celestial, new KeywordModeration());
+    celestial = new CelestialService(NAMABLE_TEST_CATALOG);
+    service = new MemorialService(prisma, celestial, new KeywordModeration(), createCertMock());
   });
 
   describe('create', () => {
@@ -95,6 +112,7 @@ describe('MemorialService', () => {
         prisma,
         new CelestialService(locked),
         new KeywordModeration(),
+        createCertMock(),
       );
       await expect(svc.create(makeDto({ starObjectUid: 'TEST-LOCKED' }))).rejects.toMatchObject({
         code: ErrorCodes.CELESTIAL_NOT_NAMABLE,

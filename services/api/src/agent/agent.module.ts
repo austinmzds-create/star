@@ -1,9 +1,13 @@
 import { Module } from '@nestjs/common';
+import { AgentController } from './agent.controller';
 import { AgentService } from './agent.service';
+import { llmProviderFactory } from './llm/provider.factory';
+import { SkillRegistry } from './skill.registry';
 
-/** Agent 模块（占位）：本期无 controller，仅提供 AgentService 供内部编排调用。 */
+/** Agent 模块：技能注册表 + LLM provider（工厂按 ANTHROPIC_API_KEY 选真调/模板）。 */
 @Module({
-  providers: [AgentService],
+  controllers: [AgentController],
+  providers: [AgentService, SkillRegistry, llmProviderFactory],
   exports: [AgentService],
 })
 export class AgentModule {}

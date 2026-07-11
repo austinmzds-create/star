@@ -2,7 +2,7 @@
 
 > **定位**：从零把真实环境跑起来的 runbook；兼说明本地无 Docker 容器时的降级验证方式。
 > **读者**：后端工程师、运维。
-> **最后更新**：2026-07-10（Phase 2）。
+> **最后更新**：2026-07-11（Phase 3 · 证书/存储/Agent/后台环境变量与运维）。
 > **关联文档**：[系统架构](./architecture.md) · [数据模型](./data-model.md) · [API 规范](./api-spec.md)
 
 ---
@@ -11,9 +11,9 @@
 
 | 环境 | Postgres/Redis | docker | 能做什么 |
 | --- | --- | --- | --- |
-| 本地开发容器（当前 CI 同款） | ❌ 无 | ❌ 无 | `prisma generate` + typecheck + build + 单测（mock/内存实现）；`celestial`/`health` 接口可真跑，登记接口返回 503 |
-| 真实开发机 | `infra/docker-compose.yml` 起 | ✅ | 全功能：migrate + seed + api + web 联调 |
-| 生产 | 托管 PG / Redis + 阿里云 OSS | 视托管形态 | 全功能 + OSS 证书（Phase 3） |
+| 本地开发容器（当前 CI 同款） | ❌ 无 | ❌ 无 | `prisma generate` + typecheck + build + 单测（mock/内存实现）；`celestial`/`health`/`agent`（模板兜底）接口可真跑，登记/证书/后台接口返回 503 |
+| 真实开发机 | `infra/docker-compose.yml` 起 | ✅ | 全功能：migrate + seed + api + web 联调；无 OSS 时证书走本地磁盘 `/api/assets`、无 Anthropic key 时来信走模板 |
+| 生产 | 托管 PG / Redis + 阿里云 OSS + Anthropic Key | 视托管形态 | 全功能：BullMQ 异步证书 → OSS 签名 URL、宇宙来信真调 Claude、审核后台 |
 
 ## 2. 前置要求
 
@@ -55,20 +55,38 @@ docker compose -f infra/docker-compose.yml down -v
 | `PORT` | api | HTTP 端口，默认 `3001`（web 占 3000） |
 | `WEB_ORIGIN` | api | CORS 允许来源，逗号分隔，如 `http://localhost:3000`；未配置则放开（仅限开发） |
 | `DATABASE_URL` | api | Postgres 连接串，如 `postgresql://star:star_password@localhost:5432/star_memorial?schema=public` |
-| `REDIS_URL` | api | 可选。**未配置时 Redis 能力整体优雅降级**（health 上报 `skipped`），api 照常启动 |
-| `OSS_REGION` / `OSS_BUCKET` / `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` | api | 见 §4.2 |
+| `REDIS_URL` | api | 可选。**未配置时 Redis 能力整体优雅降级**（health 上报 `skipped`），api 照常启动；证书改**同步生成** |
+| `OSS_REGION` / `OSS_BUCKET` / `OSS_ACCESS_KEY_ID` / `OSS_ACCESS_KEY_SECRET` | api | 阿里云 OSS 四项，见 §4.2 |
+| `OSS_ENDPOINT` | api | 可选，自定义域名/内网 endpoint |
+| `STORAGE_DRIVER` | api | `auto`（默认：配齐 OSS 用 OSS，否则本地）\| `local` \| `oss` \| `dataurl`。见 §4.2 |
+| `STORAGE_LOCAL_DIR` | api | 本地存储根目录（相对 api 运行目录），默认 `.local-storage` |
+| `STORAGE_PUBLIC_BASE_URL` | api | 本地资产对外基址（拼 `GET /api/assets/*`），如 `http://localhost:3001` |
+| `ASSET_URL_TTL` | api | OSS 签名 URL 有效期（秒），默认 `900`（15 分钟） |
+| `ANTHROPIC_API_KEY` | api | 可选。**缺省 → 宇宙来信降级 `TemplateProvider` 模板生成**（绝不崩） |
+| `ANTHROPIC_MODEL` | api | 文档占位（代码内硬编码 `claude-sonnet-5`）；创意文案模型名 |
+| `ADMIN_API_TOKEN` | api | 后台共享令牌（`x-admin-token` 比对）。**未配置 → 所有 `/api/admin/*` 返回 503 `ADMIN_NOT_ENABLED`** |
+| `REVIEW_ALL_FREETEXT` | api | 置 `1` → 含祝福语/故事文本的登记先进 `PENDING_REVIEW` 人工复审；默认 `0`=干净内容自动 `ACTIVE` |
 | `NEXT_PUBLIC_API_BASE_URL` | web（会内联进客户端 bundle） | api 基址。**留空 = 纯前端演示模式**（命名弹窗本地出编号、`/m/[slug]` 渲染降级页） |
 | `API_BASE_URL` | web（仅 SSR） | 可选，服务端组件专用内网基址（容器编排里如 `http://api:3001`），优先于上者 |
 
 > **基址书写规则**：web 客户端（`apps/web/src/lib/api.ts`）请求路径自带 `/api/` 前缀，
 > 因此基址**只写到主机端口**（如 `http://localhost:3001`），不要带 `/api` 后缀，否则会拼出 `/api/api/…`。
 
-### 4.2 OSS 四项 = 占位配置
+### 4.2 存储驱动与 OSS（StorageService）
 
-- 本期代码**只读取配置、不强依赖**：四项缺省时，证书上传路径降级为本地 no-op + 日志，
-  api 正常启动、全部现有接口不受影响。
-- Phase 3 接入证书渲染 worker 后，真实环境填入即启用（bucket 建议私有读 + 签名 URL 下发，
-  见 [api-spec.md §3.4](./api-spec.md)）。
+证书/星图资产经 `StorageService` 抽象存取，`STORAGE_DRIVER` 选实现（[architecture.md §4.5](./architecture.md)）：
+
+| 驱动 | 触发 | 行为 | `url()` 返回 |
+| --- | --- | --- | --- |
+| `auto`（默认） | 四项 `OSS_*` 均为有效值 → OSS，否则本地 | 自适应 | 视命中实现而定 |
+| `oss` | 显式 | `ali-oss` 懒加载上传（本期不安装依赖，配置激活前不加载） | **短时签名 URL**（`ASSET_URL_TTL`） |
+| `local` | 显式 / auto 未配 OSS | 写 `STORAGE_LOCAL_DIR`，由 `AssetController` 经 `/api/assets/*` 流式服务 | `STORAGE_PUBLIC_BASE_URL` + `/api/assets/<key>` |
+| `dataurl` | 显式 / 本地写盘失败兜底 | 不落盘，内联 base64 | `data:` URI |
+
+- 生产建议 OSS bucket **私有读 + 签名 URL 下发**；RAM 子账号最小权限（仅目标 bucket 读写），见 §4.3。
+- 本地/真实开发机无 OSS 时用 `local`（或 `auto` 自动落本地），证书功能完整可用，仅 URL 为 `/api/assets` 直链。
+- `ali-oss` 为**可选运行时依赖**（`eval('require')` 懒加载，规避 webpack 静态分析）：本期未安装，
+  仅当真实启用 OSS 时按需 `pnpm add ali-oss`。
 
 ### 4.3 密钥管理红线
 
@@ -130,9 +148,25 @@ pnpm --filter @star/web build && pnpm --filter @star/web start
 
 ### 6.3 BullMQ worker 形态（定稿）
 
-**Phase 3 初期与 api 同进程**（NestJS 内注册 BullMQ processor）：部署面最小、
+**与 api 同进程**（有 `REDIS_URL` 时 `CertificateModule` 条件挂载 BullMQ processor）：部署面最小、
 共享 Prisma/配置，证书渲染量级（每单一次）远够。当渲染耗时开始影响 API 延迟或需独立伸缩时，
 拆为**同一镜像、不同启动命令**（`node dist/main.js --worker`）的独立进程——代码不动，只改编排。
+**无 `REDIS_URL` 时无 worker**：证书由 API 请求线程同步生成（见 [architecture.md §4.3](./architecture.md)）。
+
+### 6.4 证书 / 队列 / Agent / 后台运维
+
+- **证书生成**：`POST /api/memorial/registrations/:no/certificate` 触发（幂等），`GET` 同路径查状态。
+  有 Redis → 返回 `202 GENERATING`、worker 异步出图；无 Redis → 请求内同步出图、直接 `READY`。
+  资产 key 形如 `certificates/YYYY/MM/<regNo>-v1.{svg|png}`、`starmaps/...`。`sharp` 不可用则只出 SVG（`assetFormat=svg`）。
+- **依赖安装**：Phase 3 新增 `@nestjs/bullmq` + `bullmq`（队列）、`@anthropic-ai/sdk`（宇宙来信）；
+  `sharp` 为**可选**（`optionalDependencies` / `onlyBuiltDependencies`，缺失自动降级 SVG）；
+  `ali-oss` 仅启用 OSS 时按需装（§4.2）。这些依赖由后端在 `pnpm install` 时落地，其余环节不新增依赖。
+- **Agent 宇宙来信**：`POST /api/agent/skills/cosmic-letter/run`。配 `ANTHROPIC_API_KEY` → 真调 `claude-sonnet-5`；
+  缺省或调用失败 → 模板兜底（`mode:'template'`）。DB 可用则落 `agent_task`（含 `modelName`/`durationMs`），
+  DB 不可用仍返回来信（`taskNo:'unpersisted'`）。成本以 `maxTokens` + 无 key 零成本兜底约束。
+- **审核后台**：所有 `/api/admin/*` 需请求头 `x-admin-token`。**生产必须配 `ADMIN_API_TOKEN`**（否则整段 503），
+  用足够长的随机串、走 secret 注入。日常审核：`GET /api/admin/registrations?status=PENDING_REVIEW` → `approve`/`reject`。
+  可选 `REVIEW_ALL_FREETEXT=1` 令所有含自由文本的登记先进人工复审队列。
 
 ## 7. 无 DB 环境的验证策略（本地容器 / CI 同策略）
 
@@ -157,6 +191,13 @@ pnpm --filter @star/web build
 | 登记接口 404 `CELESTIAL_NOT_FOUND`（uid 明明存在） | 忘了 seed | 跑 §5.2 ③ |
 | health 里 `redis: "down"` | `REDIS_URL` 通不了 | 本期无业务影响（`skipped`/`down` 均可运行）；Phase 3 前修复 |
 | OSS 上传 403 | AK 权限/Bucket 策略 | RAM 子账号需目标 bucket `PutObject`；核对 `OSS_REGION` 与 bucket 所在地域一致 |
+| 证书 URL 打不开 / `404 ASSET_NOT_FOUND` | 本地驱动下资产未生成或 key 越界 | 先 `POST …/certificate` 触发；核对 `STORAGE_PUBLIC_BASE_URL`；路径穿越会被拒（预期） |
+| 证书一直 `GENERATING` 不转 `READY` | 有 Redis 但 worker 未消费 | 查 api 进程日志（同进程 processor）；确认队列 `certificate` 有消费者；无 Redis 应同步直接 `READY` |
+| 证书出图为 SVG 而非 PNG | `sharp` 未安装/加载失败 | 预期降级（`assetFormat=svg`）；需 PNG 则确保 `sharp` 可用（`onlyBuiltDependencies`） |
+| 宇宙来信 `mode` 恒为 `template` | 未配 `ANTHROPIC_API_KEY` 或调用失败 | 预期降级；配 key 后即走 `llm`；查日志确认 SDK 调用是否报错 |
+| `/api/admin/*` 全部 `503 ADMIN_NOT_ENABLED` | 未配 `ADMIN_API_TOKEN` | 生产必配（见 §4.1）；本地按需配后用 `x-admin-token` 访问 |
+| `/api/admin/*` `401 ADMIN_UNAUTHORIZED` | `x-admin-token` 缺失/不匹配 | 核对请求头与 `ADMIN_API_TOKEN` 一致 |
+| approve 报 `409 INVALID_STATE_TRANSITION` | 对已 `REJECTED` 的登记执行 approve | 非法流转（预期），见 [api-spec.md §9](./api-spec.md) 状态矩阵 |
 | `pg_trgm` 建索引报 `operator class "gin_trgm_ops" does not exist` | 扩展未启用 | 超级用户执行 `CREATE EXTENSION pg_trgm;`（Phase 3 搜索 DB 化时才需要） |
 | typecheck 报找不到 `@prisma/client` 类型 | 未 generate | `pnpm --filter @star/api prisma:generate` |
 | web 请求打到 `/api/api/…` | 基址带了 `/api` 后缀 | 按 §4.1 规则改基址 |

@@ -188,20 +188,26 @@ model MemorialRegistration {
   @@map("memorial_registration")
 }
 
-/// 证书记录（占位：Phase 3 由 BullMQ worker 生成 PDF/PNG 后写 OSS）
+/// 证书记录：BullMQ worker（无 Redis 时同步）生成证书 + 星图 SVG/PNG 后写存储（OSS 或本地磁盘）。
 model CertificateRecord {
-  id              String               @id @default(cuid())
-  registrationId  String
-  registration    MemorialRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
-  status          CertificateStatus    @default(PENDING)
-  /// 阿里云 OSS 对象 key，如 'certificates/2026/07/STAR-20260710-K7PX-v1.pdf'
-  ossObjectKey    String?
+  id               String               @id @default(cuid())
+  registrationId   String
+  registration     MemorialRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  status           CertificateStatus    @default(PENDING)
+  /// 证书主图 object key，如 'certificates/2026/07/STAR-20260710-K7PX-v1.svg'（存 key 不存 URL，读时经 storage.url() 解析）
+  certObjectKey    String?
+  /// 星图 object key，如 'starmaps/2026/07/STAR-20260710-K7PX-v1.svg'
+  starMapObjectKey String?
+  /// 资产格式：'svg' | 'png'（sharp 可用则 png，否则 svg）
+  assetFormat      String               @default("svg")
   /// 模板版本号，证书模板迭代后可重出
-  templateVersion String               @default("v1")
-  error           String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  templateVersion  String               @default("v1")
+  error            String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
+  // 幂等锚点：一个登记在一个模板版本下只有一条记录
+  @@unique([registrationId, templateVersion])
   @@index([registrationId, status])
   @@map("certificate_record")
 }
@@ -240,6 +246,10 @@ model AgentTask {
   outputJson     Json?
   status         AgentTaskStatus       @default(QUEUED)
   error          String?
+  /// 实际使用的模型名（llm 模式为 claude-sonnet-5；template 模式为 'template'）
+  modelName      String?
+  /// 端到端耗时（毫秒），用于成本/性能观测
+  durationMs     Int?
   /// 已尝试次数（BullMQ 重试对齐）
   attempts       Int                   @default(0)
   registrationId String?

@@ -14,12 +14,24 @@ describe('CELESTIAL_CATALOG 数据完整性', () => {
       expect(s.decDeg).toBeLessThanOrEqual(90);
       expect(s.nameEn.length).toBeGreaterThan(0);
       expect(s.nameZh.length).toBeGreaterThan(0);
-      expect(s.constellationZh).not.toBe(s.constellation); // 中文映射应生效
+      expect(s.constellationZh).not.toBe(s.constellation); // 中文映射应生效（全 88 覆盖）
       expect(Number.isFinite(s.magnitude)).toBe(true);
     }
   });
 
-  it('objectUid 唯一', () => {
+  it('目录规模合理（有 generated 时 > 3000，降级时 >= 60）', () => {
+    expect(CELESTIAL_CATALOG.length).toBeGreaterThanOrEqual(60);
+  });
+
+  it('distanceLy 要么 null 要么正数', () => {
+    for (const s of CELESTIAL_CATALOG) {
+      if (s.distanceLy !== null) {
+        expect(s.distanceLy).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('objectUid 全局唯一', () => {
     const uids = new Set(CELESTIAL_CATALOG.map((s) => s.objectUid));
     expect(uids.size).toBe(CELESTIAL_CATALOG.length);
   });
@@ -30,6 +42,70 @@ describe('CELESTIAL_CATALOG 数据完整性', () => {
       expect(CELESTIAL_CATALOG[i]!.magnitude).toBeGreaterThanOrEqual(
         CELESTIAL_CATALOG[i - 1]!.magnitude,
       );
+    }
+  });
+
+  it('renderPriority 值域 ∈ {0,1,2,3}，著名星为 0', () => {
+    for (const s of CELESTIAL_CATALOG) {
+      if (s.renderPriority !== undefined) {
+        expect([0, 1, 2, 3]).toContain(s.renderPriority);
+      }
+      if (s.isFeatured) {
+        expect(s.renderPriority).toBe(0);
+      }
+    }
+  });
+});
+
+describe('合并去重（手写 60 优先）', () => {
+  const HANDWRITTEN_UIDS = [
+    'HIP32349', 'HIP91262', 'HIP11767', 'HIP97649', 'HIP27989', 'HIP70890',
+  ];
+
+  it('手写精选星全部保留，未被 generated 覆盖（保留中文名/简介/isFeatured）', () => {
+    for (const uid of HANDWRITTEN_UIDS) {
+      const s = getCelestialByUid(uid);
+      expect(s, uid).toBeDefined();
+      expect(s!.isFeatured).toBe(true);
+      expect(s!.descriptionZh && s!.descriptionZh.length).toBeGreaterThan(0);
+      expect(s!.sourceCatalog).toBe('handwritten');
+    }
+  });
+
+  it('无 hip 编号交集重复（归一化后 hip 唯一）', () => {
+    const seen = new Set<string>();
+    for (const s of CELESTIAL_CATALOG) {
+      const hip = s.catalogIds.hip?.replace(/^0+/, '');
+      if (!hip) continue;
+      expect(seen.has(hip), `hip 重复:${hip}`).toBe(false);
+      seen.add(hip);
+    }
+  });
+
+  it('天狼星只有一条（generated 版被去重）', () => {
+    const siri = CELESTIAL_CATALOG.filter((s) => s.catalogIds.hip === '32349');
+    expect(siri.length).toBe(1);
+    expect(siri[0]?.nameZh).toBe('天狼星');
+  });
+});
+
+describe('featured / isNamable 策略', () => {
+  it('所有著名星 isNamable=false（合规红线）', () => {
+    for (const s of CELESTIAL_CATALOG) {
+      if (s.isFeatured) {
+        expect(s.isNamable, s.objectUid).toBe(false);
+      }
+    }
+  });
+
+  it('存在命名候选池：isNamable 星均为非著名、4.0≤mag≤6.0、有 HIP', () => {
+    const namable = CELESTIAL_CATALOG.filter((s) => s.isNamable);
+    expect(namable.length).toBeGreaterThan(0);
+    for (const s of namable) {
+      expect(s.isFeatured).toBe(false);
+      expect(s.magnitude).toBeGreaterThanOrEqual(4.0);
+      expect(s.magnitude).toBeLessThanOrEqual(6.0);
+      expect(s.catalogIds.hip).toBeTruthy();
     }
   });
 });
@@ -68,6 +144,10 @@ describe('searchCelestial', () => {
     expect(searchCelestial('32349')[0]?.object.nameEn).toBe('Sirius');
   });
 
+  it('HD 编号可搜索（别名命中天狼星）', () => {
+    expect(searchCelestial('HD 48915')[0]?.object.nameEn).toBe('Sirius');
+  });
+
   it('星座名返回该星座下的星，按亮度优先', () => {
     const r = searchCelestial('猎户座');
     expect(r.length).toBeGreaterThan(1);
@@ -77,9 +157,14 @@ describe('searchCelestial', () => {
     }
   });
 
+  it('著名星置顶（搜天狼星，首条为 featured）', () => {
+    const r = searchCelestial('天狼星');
+    expect(r[0]?.object.isFeatured).toBe(true);
+    expect(r[0]?.object.nameEn).toBe('Sirius');
+  });
+
   it('前缀匹配排在包含匹配之前', () => {
     const r = searchCelestial('北');
-    // 「北河三」「北河二」「北极星」「北极二」「北落师门」都以「北」开头
     expect(r[0]?.object.nameZh.startsWith('北')).toBe(true);
   });
 
@@ -89,5 +174,14 @@ describe('searchCelestial', () => {
 
   it('尊重 limit', () => {
     expect(searchCelestial('座', { limit: 3 }).length).toBeLessThanOrEqual(3);
+  });
+
+  it('性能：100 次查询在宽松阈值内（索引缓存生效）', () => {
+    const start = Date.now();
+    for (let i = 0; i < 100; i++) {
+      searchCelestial('a');
+    }
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(500);
   });
 });

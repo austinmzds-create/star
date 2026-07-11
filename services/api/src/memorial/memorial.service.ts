@@ -5,8 +5,13 @@ import { AppError, ErrorCodes } from '../common/errors/app-error';
 import { makePublicSlug } from '../common/ids/public-slug';
 import { makeRegistrationNo } from '../common/ids/registration-no';
 import { CelestialService } from '../celestial/celestial.service';
+import { CertificateService } from '../certificate/certificate.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { CONTENT_MODERATION, type ContentModeration } from './moderation/moderation.types';
+import {
+  CONTENT_MODERATION,
+  type ContentModeration,
+  type ModerationResult,
+} from './moderation/moderation.types';
 import type { CreateRegistrationDto } from './dto/create-registration.dto';
 
 /** 登记时刻的星体快照：证书与纪念页以此为准，不受未来星表数据修订影响。 */
@@ -45,6 +50,7 @@ export class MemorialService {
     private readonly prisma: PrismaService,
     private readonly celestial: CelestialService,
     @Inject(CONTENT_MODERATION) private readonly moderation: ContentModeration,
+    private readonly certificate: CertificateService,
   ) {}
 
   /** 创建纪念登记。校验链：DB 可用 → 星体存在且可命名 → 内容审核 → 落库（唯一冲突重试）。 */
@@ -63,8 +69,7 @@ export class MemorialService {
         reason: verdict.reason,
       });
     }
-    const status =
-      verdict.verdict === 'review' ? RegistrationStatus.PENDING_REVIEW : RegistrationStatus.ACTIVE;
+    const status = this.decideInitialStatus(dto, verdict);
 
     // 写入时快照星体关键字段，证书/纪念页展示不受未来星表修订影响
     const snapshot: StarSnapshot = {
@@ -132,7 +137,24 @@ export class MemorialService {
     if (!reg || reg.status !== RegistrationStatus.ACTIVE) {
       throw new AppError(ErrorCodes.MEMORIAL_PAGE_NOT_FOUND, '纪念页不存在');
     }
-    return { memorial: this.toPublicView(reg), compliance: COMPLIANCE_NOTICE };
+    // 已就绪的证书/星图资产挂在公开视图（未就绪 → null）；DB 抖动内部吞掉不拖垮公开页
+    const certificate = await this.certificate.getPublicAssets(reg.id);
+    return {
+      memorial: { ...this.toPublicView(reg), certificate },
+      compliance: COMPLIANCE_NOTICE,
+    };
+  }
+
+  /** 初始状态决策：复审词 → 待审；干净内容默认 ACTIVE；REVIEW_ALL_FREETEXT=1 时自由文本也走待审。 */
+  private decideInitialStatus(
+    dto: CreateRegistrationDto,
+    verdict: ModerationResult,
+  ): RegistrationStatus {
+    if (verdict.verdict === 'review') return RegistrationStatus.PENDING_REVIEW;
+    if (process.env.REVIEW_ALL_FREETEXT === '1' && (dto.blessingText || dto.storyText)) {
+      return RegistrationStatus.PENDING_REVIEW;
+    }
+    return RegistrationStatus.ACTIVE;
   }
 
   /** 登记人视图：绝不含 contactEmail / reviewNote / 内部 id / ownerUserId。 */

@@ -89,12 +89,21 @@ function randomDirection(): THREE.Vector3 {
 }
 
 /**
- * 程序化环境星场：大量暗弱背景星 + 一条模拟银河的密集亮带。
+ * 程序化环境星场：暗弱背景星 + 一条模拟银河的密集亮带。
  * 只为营造「铺满宇宙」的观感，不含真实数据。
+ *
+ * 数量取值与星表扩容联动（见 docs/data-model.md §8）：
+ * astro-data 渲染层扩容后 CELESTIAL_CATALOG 将从 60 颗升到 ~5058 颗真实肉眼可见亮星
+ * （mag ≤ 6.0），由 buildCatalogRenderData 铺满可见星层。为避免与真实星「过密/重复」，
+ * 此处程序化星数量整体下调：
+ *  - 均匀背景星与真实星层空间重叠最大，降幅最大（16000 → 6000），仅作最暗一档的填充；
+ *  - 银河带是真实亮星目录不覆盖的弥散辉光，保留观感但适度收敛（9000 → 6000）。
+ * 合计 12000 程序化 + ~5058 真实 ≈ 1.7 万点，较原 2.5 万更稀疏，且视觉重心落在真实数据上。
+ * 当前 astro-data 仍为 60 颗时，此值观感依旧成立（背景本就是极暗填充）。
  */
 export function generateAmbientField(
-  backgroundCount = 16000,
-  milkyWayCount = 9000,
+  backgroundCount = 6000,
+  milkyWayCount = 6000,
 ): StarAttributes {
   const count = backgroundCount + milkyWayCount;
   const positions = new Float32Array(count * 3);

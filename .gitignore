@@ -31,3 +31,6 @@ Thumbs.db
 
 # test / coverage
 coverage/
+
+# 本地证书资产存储（LocalStorage 落盘目录）
+services/api/.local-storage/
