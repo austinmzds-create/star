@@ -63,32 +63,38 @@
           :label="`${s.label}${pCounts[s.key] ? ' ' + pCounts[s.key] : ''}`" />
       </el-tabs>
 
-      <el-table :data="promotions">
-        <el-table-column prop="influencer_nickname" label="达人" />
-        <el-table-column prop="product_name" label="产品" />
-        <el-table-column label="投流方式" width="100">
-          <template #default="{ row }">
-            {{ row.mode_snapshot === 'self' ? '达人自投' : '商家投流' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="当前状态" width="110">
-          <template #default="{ row }">
-            <el-tag size="small" :type="PROMO_TAG[row.auth_status] || 'info'">
-              {{ promoLabel(row.auth_status) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="fail_reason" label="失败原因" show-overflow-tooltip />
-        <el-table-column label="操作" width="360">
-          <template #default="{ row }">
-            <el-button v-for="a in (PROMO_ACTIONS[row.auth_status] || [])" :key="a.action"
-              size="small" :type="a.type"
-              @click="a.action === 'mark_failed' ? openFail(row) : doTransition(row, a.action)">
-              {{ a.label }}
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-empty v-if="!promotions.length" description="暂无投流任务" />
+      <div v-for="row in promotions" :key="row.id" class="promo-card">
+        <div class="pc-head">
+          <div>
+            <span class="pc-name">{{ row.influencer_nickname }}</span>
+            <span class="muted" style="margin-left:8px">{{ row.fans_count ?? '—' }}粉丝 · {{ row.product_name }}</span>
+          </div>
+          <el-tag size="small" :type="PROMO_TAG[row.auth_status] || 'info'">{{ promoLabel(row.auth_status) }}</el-tag>
+        </div>
+        <div class="pc-sub muted">
+          {{ row.mode_snapshot === 'self' ? '达人自投' : '商家投流' }}
+          <span v-if="row.fail_reason">· 失败原因:{{ row.fail_reason }}</span>
+          · {{ ft(row.created_at) }}
+        </div>
+        <!-- 展开:逐字段复制(粘千川) -->
+        <div v-if="expanded === row.id" class="pc-copy">
+          <CopyText block label="抖音号" :value="row.douyin_id" />
+          <CopyText block label="UID" :value="row.douyin_uid" />
+          <CopyText block label="合作码" :value="row.cooperation_code" />
+          <CopyText block label="视频链接" :value="row.dy_url" />
+        </div>
+        <div class="pc-actions">
+          <el-button v-for="a in (PROMO_ACTIONS[row.auth_status] || [])" :key="a.action"
+            size="small" :type="a.type"
+            @click="a.action === 'mark_failed' ? openFail(row) : doTransition(row, a.action)">
+            {{ a.label }}
+          </el-button>
+          <el-button size="small" text @click="expanded = expanded === row.id ? null : row.id">
+            {{ expanded === row.id ? '收起' : '展开复制' }}
+          </el-button>
+        </div>
+      </div>
 
       <!-- 投流失败(填原因) -->
       <el-dialog v-model="failVisible" title="标记投流失败" width="480px">
@@ -107,8 +113,11 @@
 import { ElMessage } from 'element-plus'
 import { nextTick, onMounted, ref } from 'vue'
 import api from '../api'
+import CopyText from '../components/CopyText.vue'
+import { formatTime as ft } from '../utils/time'
 
 const mainTab = ref('video')
+const expanded = ref(null)
 
 // ---------- 视频审核 ----------
 const VIDEO_TABS = [
@@ -279,3 +288,12 @@ function onMainTab(name) {
 // 延到首帧之后再触发加载,避免 vLoading 在挂载中同步翻转导致 v-loading 指令报错
 onMounted(() => nextTick(loadVideos))
 </script>
+
+<style scoped>
+.promo-card { background: #fff; border: 1px solid #f0f1f5; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
+.pc-head { display: flex; align-items: center; justify-content: space-between; }
+.pc-name { font-weight: 600; }
+.pc-sub { font-size: 12px; margin-top: 4px; }
+.pc-copy { margin-top: 10px; padding: 10px 12px; background: #f8f9fc; border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
+.pc-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+</style>

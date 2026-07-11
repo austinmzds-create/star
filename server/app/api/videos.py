@@ -186,7 +186,7 @@ def transition(promo_id: int, body: TransitionIn,
 def list_promotions(auth_status: str | None = None,
                     user: User = Depends(current_user), db: Session = Depends(get_db)):
     """投流列表(商务只见自己达人)。auth_status 可选过滤。"""
-    stmt = (select(Promotion, Influencer, Product)
+    stmt = (select(Promotion, Influencer, Product, VideoTask)
             .join(VideoTask, Promotion.video_task_id == VideoTask.id)
             .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
             .join(Influencer, Cooperation.influencer_id == Influencer.id)
@@ -197,13 +197,16 @@ def list_promotions(auth_status: str | None = None,
     if auth_status:
         stmt = stmt.where(Promotion.auth_status == auth_status)
     out = []
-    for promo, inf, prod in db.execute(stmt.limit(300)).all():
+    for promo, inf, prod, vt in db.execute(stmt.limit(300)).all():
         out.append({
             "id": promo.id, "auth_status": promo.auth_status,
             "mode_snapshot": promo.mode_snapshot,
             "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+            "fans_count": inf.fans_count,
+            "douyin_id": inf.douyin_id, "douyin_uid": inf.douyin_uid,
+            "cooperation_code": inf.cooperation_code,
             "product_id": prod.id, "product_name": prod.name,
-            "fail_reason": promo.fail_reason,
+            "dy_url": vt.dy_url, "fail_reason": promo.fail_reason,
             "created_at": promo.created_at.isoformat(),
         })
     return out
