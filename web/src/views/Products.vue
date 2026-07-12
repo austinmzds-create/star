@@ -152,7 +152,7 @@
                   </el-button>
                 </div>
                 <!-- 列表 -->
-                <div v-for="m in materialsOf(mtype)" :key="m.id" class="material-card">
+                <div v-for="m in materialsOf(t.v)" :key="m.id" class="material-card">
                   <div class="material-card-head">
                     <strong>{{ m.title || MAT_TYPES.find((item) => item.v === m.type)?.l }}</strong>
                     <div class="mat-ops">
@@ -162,7 +162,7 @@
                   </div>
                   <MaterialPreview :material="m" />
                 </div>
-                <el-empty v-if="!materialsOf(mtype).length" :description="`暂无${MAT_TYPES.find(x=>x.v===mtype).l}`" :image-size="50" />
+                <el-empty v-if="!materialsOf(t.v).length" :description="`暂无${t.l}`" :image-size="50" />
               </el-tab-pane>
             </el-tabs>
           </el-tab-pane>
