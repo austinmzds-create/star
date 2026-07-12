@@ -58,6 +58,13 @@ main {
   background: transparent;
 }
 
+/* 卡片滚动容器：Firefox 细滚动条 + iOS 惯性 */
+.card-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 155, 255, 0.25) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
 .tracking-brand {
   letter-spacing: 0.35em;
 }

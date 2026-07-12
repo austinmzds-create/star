@@ -3,8 +3,10 @@
  *
  * 谷神星/灶神星/智神星/哈雷彗星的地心 J2000 坐标由 @star/astro-ephem 的
  * minorBodies（JPL 根数 + 开普勒求解）按 observeTime 计算。
- * 刻意【不并入 ephemRegistry/EphemDriver】：那是多 agent 热点文件，且小天体
- * 默认关、不应常驻计算——MinorBodiesLayer（懒加载）自行订阅 observeTime 驱动。
+ * 状态槽保持独立注册表（不与 ephemRegistry 合表），但重算入口有两个：
+ * MinorBodiesLayer（懒加载）订阅 observeTime 驱动 + EphemDriver 实时模式
+ * 30s 心跳直驱——astro-ephem 小天体代码已被 StarInfoCard 静态引入主包，
+ * EphemDriver 引 recomputeMinorBodies 增量≈1KB，不再有包体顾虑。
  *
  * 每个天体的 vec 是【固定引用、原地 mutate】的 THREE.Vector3：
  * pickRegistry 动态条目直接持同一引用，重算时拾取表零重建。
@@ -67,8 +69,9 @@ export const minor: MinorRegistry = createRegistry();
 
 /**
  * 整批重算 4 个小天体（开普勒 + HelioVector，<1ms）。
- * 仅在 observeTime 变化（MinorBodiesLayer effect）时调用——小天体日运动
- * 角分级，绝不逐帧计算；相同 dateMs 去重直接 return。
+ * 仅在 observeTime 变化（MinorBodiesLayer effect）或实时模式 30s 心跳
+ * （EphemDriver）时调用——小天体日运动角分级，绝不逐帧计算；
+ * 相同 dateMs 去重直接 return，两路驱动幂等无争。
  */
 export function recomputeMinorBodies(dateMs: number): void {
   if (dateMs === minor.computedAtMs && minor.version > 0) return;

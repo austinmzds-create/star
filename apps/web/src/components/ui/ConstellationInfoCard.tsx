@@ -122,9 +122,7 @@ function ConstellationRichPanel() {
     const stars = FULL_CATALOG.filter((o) => o.type === 'star' && o.constellation === meta.en);
     const brightest = [...stars].sort((a, b) => a.magnitude - b.magnitude).slice(0, 5);
     const dsos = DEEP_SKY_CATALOG.filter((o) => o.constellation === meta.en)
-      .sort(
-        (a, b) => Number(b.isFeatured) - Number(a.isFeatured) || a.magnitude - b.magnitude,
-      )
+      .sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured) || a.magnitude - b.magnitude)
       .slice(0, 4);
     return {
       brightest,
@@ -137,129 +135,139 @@ function ConstellationRichPanel() {
   // 互斥：天体卡优先（focusedConstellation 保留，关卡即回）。
   const open = show && !!abbr && !selectedUid && !!meta && !!derived;
 
+  // 定位两层化（Phase 8，与 StarInfoCard 同款修复）：panel variants 动画 x，
+  // framer-motion 会整体接管 motion 元素的 style.transform，若定位层自己带
+  // -translate-y-1/2 会被覆盖导致面板下坠半屏——定位（外层纯 CSS flex 居中、
+  // 常驻挂载）与动画（内层 motion.aside）必须分层。外层 pointer-events-none
+  // 保证空载时对 canvas 零干扰；max-h 用 dvh 修移动端地址栏抖动。
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.aside
-          key={abbr}
-          variants={panel}
-          initial="hidden"
-          animate="show"
-          exit="exit"
-          className="pointer-events-auto absolute right-5 top-1/2 z-30 w-[min(92vw,400px)] -translate-y-1/2"
-        >
-          <div className="glass-strong max-h-[82vh] overflow-y-auto rounded-3xl p-6">
-            {/* 头部 */}
-            <motion.div variants={item} className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-semibold text-white">{meta.zh}</h2>
-                <div className="mt-1 text-[13px] tracking-wide text-nebula-200/70">
-                  {meta.en} · {abbr}
-                </div>
-              </div>
-              <button
-                onClick={closePanel}
-                className="rounded-full border border-white/10 px-2 py-0.5 text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
-                aria-label="关闭星座面板"
-              >
-                ✕
-              </button>
-            </motion.div>
-
-            {/* 艺术图卡（20 幅自绘 SVG 之一才有） */}
-            {abbr && hasConstellationArt(abbr) && (
-              <motion.div variants={item} className="mt-4 overflow-hidden rounded-2xl bg-white/[0.03]">
-                <img
-                  src={constellationArtUrl(abbr)}
-                  alt={`${meta.zh}艺术形象（本项目原创绘制）`}
-                  loading="lazy"
-                  className="aspect-square w-full object-contain"
-                />
-              </motion.div>
-            )}
-
-            {/* 神话看点 */}
-            {lore && (
-              <motion.p
-                variants={item}
-                className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85"
-              >
-                {lore.loreZh}
-              </motion.p>
-            )}
-
-            {/* 最亮星（点击飞往；selectedUid 置位后天体卡自动接管） */}
-            {derived.brightest.length > 0 && (
-              <motion.div variants={item} className="mt-5">
-                <SectionTitle>最亮的星 · 点击飞往</SectionTitle>
-                <div className="mt-2 space-y-1">
-                  {derived.brightest.map((s) => (
-                    <ObjectRow
-                      key={s.objectUid}
-                      onClick={() => focusStar(s.objectUid)}
-                      name={s.nameZh}
-                      sub={s.bayer ?? s.nameEn}
-                      right={`${s.magnitude.toFixed(1)} 等`}
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* 座内深空天体（著名优先） */}
-            {derived.dsos.length > 0 && (
-              <motion.div variants={item} className="mt-5">
-                <SectionTitle>深空天体</SectionTitle>
-                <div className="mt-2 space-y-1">
-                  {derived.dsos.map((d) => (
-                    <ObjectRow
-                      key={d.objectUid}
-                      onClick={() => focusStar(d.objectUid)}
-                      name={d.commonNameZh ?? d.nameZh}
-                      sub={`${kindLabelZh(d)} · ${d.nameZh}`}
-                      right={`${d.magnitude.toFixed(1)} 等`}
-                    />
-                  ))}
-                </div>
-              </motion.div>
-            )}
-
-            {/* 最佳观测 + 面积排名 */}
-            <motion.div variants={item} className="mt-5 grid grid-cols-1 gap-2">
-              <div className="rounded-xl bg-white/[0.03] px-3 py-2.5">
-                <div className="text-[11px] text-nebula-200/50">最佳观测</div>
-                <div className="mt-0.5 text-[13.5px] text-white">
-                  每年 {derived.bestMonth} 月前后的晚上看它最合适 · {seasonOf(derived.bestMonth)}
-                  星座
-                </div>
-              </div>
-              {derived.area && (
-                <div className="rounded-xl bg-white/[0.03] px-3 py-2.5">
-                  <div className="text-[11px] text-nebula-200/50">天区面积</div>
-                  <div className="mt-0.5 text-[13.5px] text-white">
-                    全天第 {derived.area.rank} 大 · 约 {Math.round(derived.area.areaSqDeg)} 平方度
+    <div className="pointer-events-none absolute inset-y-0 right-5 z-30 flex w-[min(92vw,400px)] items-center">
+      <AnimatePresence>
+        {open && (
+          <motion.aside
+            key={abbr}
+            variants={panel}
+            initial="hidden"
+            animate="show"
+            exit="exit"
+            className="pointer-events-auto w-full"
+          >
+            <div className="glass-strong card-scroll max-h-[min(82dvh,calc(100dvh-7rem))] overflow-y-auto overscroll-contain rounded-3xl p-6">
+              {/* 头部 */}
+              <motion.div variants={item} className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold text-white">{meta.zh}</h2>
+                  <div className="mt-1 text-[13px] tracking-wide text-nebula-200/70">
+                    {meta.en} · {abbr}
                   </div>
                 </div>
-              )}
-            </motion.div>
-
-            {/* 黄道 12 座专属：占星分区（非黄道座无此分区） */}
-            {abbr && zodiac && (
-              <motion.div variants={item}>
-                <ZodiacFortuneSection abbr={abbr} zodiac={zodiac} />
+                <button
+                  onClick={closePanel}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
+                  aria-label="关闭星座面板"
+                >
+                  ✕
+                </button>
               </motion.div>
-            )}
 
-            <motion.p
-              variants={item}
-              className="mt-4 text-[10.5px] leading-relaxed text-nebula-200/40"
-            >
-              星座为国际通用天区划分，不涉及任何命名或产权含义
-            </motion.p>
-          </div>
-        </motion.aside>
-      )}
-    </AnimatePresence>
+              {/* 艺术图卡（20 幅自绘 SVG 之一才有） */}
+              {abbr && hasConstellationArt(abbr) && (
+                <motion.div
+                  variants={item}
+                  className="mt-4 overflow-hidden rounded-2xl bg-white/[0.03]"
+                >
+                  <img
+                    src={constellationArtUrl(abbr)}
+                    alt={`${meta.zh}艺术形象（本项目原创绘制）`}
+                    loading="lazy"
+                    className="aspect-square w-full object-contain"
+                  />
+                </motion.div>
+              )}
+
+              {/* 神话看点 */}
+              {lore && (
+                <motion.p
+                  variants={item}
+                  className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85"
+                >
+                  {lore.loreZh}
+                </motion.p>
+              )}
+
+              {/* 最亮星（点击飞往；selectedUid 置位后天体卡自动接管） */}
+              {derived.brightest.length > 0 && (
+                <motion.div variants={item} className="mt-5">
+                  <SectionTitle>最亮的星 · 点击飞往</SectionTitle>
+                  <div className="mt-2 space-y-1">
+                    {derived.brightest.map((s) => (
+                      <ObjectRow
+                        key={s.objectUid}
+                        onClick={() => focusStar(s.objectUid)}
+                        name={s.nameZh}
+                        sub={s.bayer ?? s.nameEn}
+                        right={`${s.magnitude.toFixed(1)} 等`}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* 座内深空天体（著名优先） */}
+              {derived.dsos.length > 0 && (
+                <motion.div variants={item} className="mt-5">
+                  <SectionTitle>深空天体</SectionTitle>
+                  <div className="mt-2 space-y-1">
+                    {derived.dsos.map((d) => (
+                      <ObjectRow
+                        key={d.objectUid}
+                        onClick={() => focusStar(d.objectUid)}
+                        name={d.commonNameZh ?? d.nameZh}
+                        sub={`${kindLabelZh(d)} · ${d.nameZh}`}
+                        right={`${d.magnitude.toFixed(1)} 等`}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* 最佳观测 + 面积排名 */}
+              <motion.div variants={item} className="mt-5 grid grid-cols-1 gap-2">
+                <div className="rounded-xl bg-white/[0.03] px-3 py-2.5">
+                  <div className="text-[11px] text-nebula-200/50">最佳观测</div>
+                  <div className="mt-0.5 text-[13.5px] text-white">
+                    每年 {derived.bestMonth} 月前后的晚上看它最合适 · {seasonOf(derived.bestMonth)}
+                    星座
+                  </div>
+                </div>
+                {derived.area && (
+                  <div className="rounded-xl bg-white/[0.03] px-3 py-2.5">
+                    <div className="text-[11px] text-nebula-200/50">天区面积</div>
+                    <div className="mt-0.5 text-[13.5px] text-white">
+                      全天第 {derived.area.rank} 大 · 约 {Math.round(derived.area.areaSqDeg)} 平方度
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+
+              {/* 黄道 12 座专属：占星分区（非黄道座无此分区） */}
+              {abbr && zodiac && (
+                <motion.div variants={item}>
+                  <ZodiacFortuneSection abbr={abbr} zodiac={zodiac} />
+                </motion.div>
+              )}
+
+              <motion.p
+                variants={item}
+                className="mt-4 text-[10.5px] leading-relaxed text-nebula-200/40"
+              >
+                星座为国际通用天区划分，不涉及任何命名或产权含义
+              </motion.p>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -318,9 +326,7 @@ function ZodiacFortuneSection({ abbr, zodiac }: { abbr: string; zodiac: ZodiacIn
   return (
     <div className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4">
       <div className="flex items-baseline justify-between">
-        <span className="text-[12px] uppercase tracking-[0.22em] text-nebula-200/60">
-          今日星运
-        </span>
+        <span className="text-[12px] uppercase tracking-[0.22em] text-nebula-200/60">今日星运</span>
         <span className="text-[11px] text-gold/80">✦ 仅供娱乐</span>
       </div>
 
@@ -367,9 +373,7 @@ function ZodiacFortuneSection({ abbr, zodiac }: { abbr: string; zodiac: ZodiacIn
                   {starsText(line.stars)}
                 </span>
               </div>
-              <p className="mt-0.5 text-[12.5px] leading-relaxed text-nebula-100/85">
-                {line.text}
-              </p>
+              <p className="mt-0.5 text-[12.5px] leading-relaxed text-nebula-100/85">{line.text}</p>
             </div>
           );
         })}
@@ -448,9 +452,7 @@ function GazeHintCard() {
                     <span className="text-nebula-100">{lore.brightest}</span>
                   )}
                 </div>
-                <p className="mt-2 text-[13px] leading-relaxed text-nebula-100/80">
-                  {lore.loreZh}
-                </p>
+                <p className="mt-2 text-[13px] leading-relaxed text-nebula-100/80">{lore.loreZh}</p>
               </>
             )}
 

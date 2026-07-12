@@ -1,6 +1,7 @@
 import { Suspense } from 'react';
 import { DeepLinkBoot } from '@/components/DeepLinkBoot';
 import { UniverseApp } from '@/components/UniverseApp';
+import { ObjectViewerHost } from '@/components/viewer/ObjectViewerHost';
 
 export default function HomePage() {
   return (
@@ -10,6 +11,8 @@ export default function HomePage() {
         <DeepLinkBoot />
       </Suspense>
       <UniverseApp />
+      {/* 全天体查看器（恒星/DSO 大窗）：轻壳挂载，重模块随打开懒加载 */}
+      <ObjectViewerHost />
     </>
   );
 }

@@ -6,6 +6,12 @@
  *   star.redLight       boolean  红光护眼
  *   star.ambientOn      boolean  环境音开关
  *   star.ambientVolume  number   环境音音量 0–1
+ *
+ * 显示类开关（showMinorBodies/showSatellites 等）刻意【不持久化】：
+ * 默认值翻转（如 Phase 8 把 showMinorBodies 改为默认开）即对全量用户生效，
+ * 无迁移。若未来要持久化某个显示开关，必须用带版本的新键
+ * （如 star.showMinorBodies.v2）且旧键弃读——否则默认值翻转会被
+ * 用户 localStorage 里的旧值压住，形同没改。
  */
 const PREFIX = 'star.';
 

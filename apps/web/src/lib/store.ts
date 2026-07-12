@@ -55,7 +55,7 @@ interface UniverseState {
   showPlanetTrails: boolean;
   /** 人造卫星层（ISS/天宫/哈勃，TLE+SGP4 演示精度）；默认关，satellite.js 懒加载。 */
   showSatellites: boolean;
-  /** 小行星与彗星层（谷神/灶神/智神/哈雷，演示级 ±0.5°）；默认关。 */
+  /** 小行星与彗星层（谷神/灶神/智神/哈雷，演示级 ±0.5°）；Phase 8 起默认开。 */
   showMinorBodies: boolean;
   /** 「显示 ⚙」设置面板开合。 */
   settingsOpen: boolean;
@@ -79,6 +79,12 @@ interface UniverseState {
   memorialOpen: boolean;
   /** 行星 3D 全屏查看器是否打开（仅选中星历天体时有意义）。 */
   planetViewerOpen: boolean;
+  /**
+   * 全天体查看器（恒星/DSO）当前展示的 objectUid；null 为关闭。
+   * 星历天体不落在此：openObjectViewer 内部转发到 planetViewerOpen
+   * （复用现有 PlanetViewerModal）。跨域契约（冻结），勿改名。
+   */
+  objectViewerUid: string | null;
   /** 每次「回到全景」自增，供相机复位 FOV/朝向。 */
   resetNonce: number;
 
@@ -154,6 +160,13 @@ interface UniverseState {
   openPlanetViewer: () => void;
   /** 关闭行星 3D 全屏查看器。 */
   closePlanetViewer: () => void;
+  /**
+   * 打开全天体查看器（跨域契约，冻结）：星历 uid 转发到行星查看器
+   * （零重写复用），其余写 objectViewerUid。
+   */
+  openObjectViewer: (uid: string) => void;
+  /** 关闭全天体查看器（顺带关行星查看器，两者互斥共用一个「大窗」心智）。 */
+  closeObjectViewer: () => void;
   resetView: () => void;
   toggleConstellations: () => void;
   /** 激活某星座的连线点亮动画（低频：搜索/点击/注视去抖后写入）。 */
@@ -203,7 +216,7 @@ export const useUniverse = create<UniverseState>((set) => ({
   showHorizon: false,
   showPlanetTrails: true, // 仅选中行星时才有几何，常驻零成本
   showSatellites: false, // 硬约束：默认关（satellite.js 只在开启时懒加载）
-  showMinorBodies: false, // 硬约束：默认关
+  showMinorBodies: true, // 默认开：4 个开普勒天体重算 <1ms/30s，Points 1 draw，懒 chunk 不进首包
   settingsOpen: false,
   creditsOpen: false,
   timePanelOpen: false,
@@ -212,6 +225,7 @@ export const useUniverse = create<UniverseState>((set) => ({
   timeFollowsNow: true,
   memorialOpen: false,
   planetViewerOpen: false,
+  objectViewerUid: null,
   resetNonce: 0,
 
   showConstellations: true,
@@ -242,6 +256,8 @@ export const useUniverse = create<UniverseState>((set) => ({
         autoRotate: uid ? false : s.autoRotate,
         // 3D 查看器只在选中星历天体时有宿主：取消选中/切到非星历天体即关闭
         planetViewerOpen: uid && isEphemerisUid(uid) ? s.planetViewerOpen : false,
+        // 全天体查看器：切换选中即关闭（与 planetViewerOpen 同一收敛纪律）
+        objectViewerUid: null,
         // 场景点选到天体 → 星座富面板让位（点空处不清，关卡后面板可回来）。
         ...(uid ? { focusedConstellation: null } : {}),
         ...(uid
@@ -262,6 +278,7 @@ export const useUniverse = create<UniverseState>((set) => ({
         focusNonce: s.focusNonce + 1,
         autoRotate: false,
         planetViewerOpen: isEphemerisUid(uid) ? s.planetViewerOpen : false,
+        objectViewerUid: null,
         ...(abbr
           ? { activeConstellation: abbr, activeConstellationSource: 'select' as const }
           : {}),
@@ -288,17 +305,21 @@ export const useUniverse = create<UniverseState>((set) => ({
     set(playing ? { timePlaying: true, timeFollowsNow: false } : { timePlaying: false }),
   setTimeSpeed: (speed) => set({ timeSpeed: speed }),
   travelTo: (ms) => set({ observeTime: ms, timeFollowsNow: false }),
-  resetToNow: () =>
-    set({ observeTime: Date.now(), timePlaying: false, timeFollowsNow: true }),
+  resetToNow: () => set({ observeTime: Date.now(), timePlaying: false, timeFollowsNow: true }),
   openMemorial: () => set({ memorialOpen: true }),
   closeMemorial: () => set({ memorialOpen: false }),
   openPlanetViewer: () => set({ planetViewerOpen: true }),
   closePlanetViewer: () => set({ planetViewerOpen: false }),
+  openObjectViewer: (uid) =>
+    // 星历天体（行星/日月）已有专属 3D 查看器：直接转发，不进 objectViewerUid
+    set(isEphemerisUid(uid) ? { planetViewerOpen: true } : { objectViewerUid: uid }),
+  closeObjectViewer: () => set({ objectViewerUid: null, planetViewerOpen: false }),
   resetView: () =>
     set((s) => ({
       selectedUid: null,
       autoRotate: true,
       planetViewerOpen: false,
+      objectViewerUid: null,
       resetNonce: s.resetNonce + 1,
       activeConstellation: null,
       activeConstellationSource: null,
@@ -344,6 +365,7 @@ export const useUniverse = create<UniverseState>((set) => ({
       focusedConstellation: abbr,
       selectedUid: null,
       planetViewerOpen: false,
+      objectViewerUid: null,
       autoRotate: false,
       // 复用钉住机制：连线立即开始 Star Walk 式描线，注视判定不抢。
       activeConstellation: abbr,
@@ -365,8 +387,7 @@ export const useUniverse = create<UniverseState>((set) => ({
       if (!s.coupleSlotB) return { coupleSlotB: uid };
       return { coupleSlotB: uid };
     }),
-  removeCoupleSlot: (slot) =>
-    set(slot === 'A' ? { coupleSlotA: null } : { coupleSlotB: null }),
+  removeCoupleSlot: (slot) => set(slot === 'A' ? { coupleSlotA: null } : { coupleSlotB: null }),
   openCoupleForm: () => set({ coupleFormOpen: true }),
   closeCoupleForm: () => set({ coupleFormOpen: false }),
 

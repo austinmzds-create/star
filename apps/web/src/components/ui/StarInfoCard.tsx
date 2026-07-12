@@ -16,6 +16,7 @@ import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import { StarArchiveSection } from './StarArchiveSection';
+import { ObjectVisualThumb } from '@/components/viewer/ObjectVisualThumb';
 import { CITIES, type City } from '@/lib/cities';
 import { isSatelliteUid } from '@/lib/satellites/tles';
 import { formatBeijingTime, formatDec, formatDistance, formatRA } from '@/lib/format';
@@ -240,243 +241,259 @@ export function StarInfoCard() {
     }
   }
 
+  // 定位两层化（Phase 8）：外层纯 CSS flex 居中容器常驻挂载、不参与动画——
+  // framer-motion 会整体接管 motion 元素的 style.transform（x/scale），若定位层
+  // 自己带 -translate-y-1/2 会被覆盖导致卡片下坠半屏，故定位与动画必须分层。
+  // 外层 pointer-events-none 保证空载时对 canvas 零干扰；max-h 用 dvh 修移动端
+  // 地址栏抖动，-7rem 给底部 ControlBar（bottom-6 + 栏高≈4.5rem）与顶部留白。
   return (
-    <AnimatePresence>
-      {obj && (
-        <motion.aside
-          key={obj.objectUid}
-          variants={cardVariants}
-          initial="hidden"
-          animate="show"
-          exit="exit"
-          className="pointer-events-auto absolute right-5 top-1/2 z-30 w-[min(92vw,360px)] -translate-y-1/2"
-        >
-          <div className="glass-strong max-h-[82vh] overflow-y-auto rounded-3xl p-6">
-            <motion.div variants={itemVariants} className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-semibold text-white">{obj.nameZh}</h2>
-                <div className="mt-1 text-[13px] tracking-wide text-nebula-200/70">
-                  {obj.commonNameZh ? `${obj.commonNameZh} · ` : ''}
-                  {obj.nameEn}
-                  {obj.bayer ? ` · ${obj.bayer}` : ''}
-                </div>
-              </div>
-              <button
-                onClick={() => selectStar(null)}
-                className="rounded-full border border-white/10 px-2 py-0.5 text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
-                aria-label="关闭"
-              >
-                ✕
-              </button>
-            </motion.div>
-
-            <motion.div variants={itemVariants} className="mt-3 flex flex-wrap gap-2">
-              {badge && <Badge>{badge}</Badge>}
-              {obj.objectUid === 'MB-HALLEY' && <Badge>远日点附近 · 示意</Badge>}
-              {minorInfo && <Badge>演示级 ±0.5°</Badge>}
-              {!eph && <Badge>{obj.constellationZh}</Badge>}
-              {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
-              {/* 卫星星等随过境几何剧烈变化，目录值仅为占位，不展示 */}
-              {!isSatellite && <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>}
-            </motion.div>
-
-            {obj.descriptionZh && (
-              <motion.p
-                variants={itemVariants}
-                className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85"
-              >
-                {obj.descriptionZh}
-              </motion.p>
-            )}
-
-            {/* 著名 Messier：科普长文「了解更多」+ 照片 lightbox（仅 16 个带 imageKey+长文的天体） */}
-            {obj.imageKey && (
-              <motion.div variants={itemVariants}>
-                <DsoLoreSection
-                  uid={obj.objectUid}
-                  nameZh={obj.nameZh}
-                  imageKey={obj.imageKey}
-                  imageCredit={obj.imageCredit}
-                />
-              </motion.div>
-            )}
-
-            {obj.isEphemeris && (
-              <motion.div variants={itemVariants}>
-                <PlanetPreviewCard uid={obj.objectUid} />
-              </motion.div>
-            )}
-
-            <motion.div variants={itemVariants} className="mt-4 grid grid-cols-2 gap-3">
-              {eph ? (
-                <Fact label="地心距离" value={formatDistanceAu(eph.eq.distanceAu)} />
-              ) : isSatellite ? (
-                <Fact
-                  label="站心距离"
-                  value={sat ? `${Math.round(sat.rangeKm).toLocaleString()} km` : '—'}
-                />
-              ) : minorInfo ? (
-                <Fact label="地心距离" value={formatDistanceAu(minorInfo.eq.distanceAu)} />
-              ) : (
-                <Fact label="距离" value={formatDistance(obj.distanceLy)} />
-              )}
-              {eph || isSatellite || minorInfo ? (
-                <Fact label="类型" value={kindLabelZh(obj)} />
-              ) : (
-                <Fact label="星座" value={obj.constellationZh} />
-              )}
-              <Fact label="赤经 RA" value={coords ? formatRA(coords.raDeg) : '—'} />
-              <Fact label="赤纬 Dec" value={coords ? formatDec(coords.decDeg) : '—'} />
-              {eph?.moon && (
-                <Fact
-                  label="月相"
-                  value={`${moonPhaseName(eph.moon.phaseAngleDeg)} · 照亮 ${Math.round(eph.moon.illumination * 100)}%`}
-                />
-              )}
-              {isSatellite && (
-                <>
-                  <Fact label="轨道高度" value={sat ? `~${Math.round(sat.heightKm)} km` : '—'} />
-                  <Fact label="速度" value={sat ? `${sat.speedKmS.toFixed(1)} km/s` : '—'} />
-                  <Fact
-                    label="TLE 历元"
-                    value={sat?.tleEpoch ? sat.tleEpoch.toISOString().slice(0, 10) : '—'}
-                  />
-                </>
-              )}
-              {minorInfo && (
-                <>
-                  <Fact label="日心距离" value={formatDistanceAu(minorInfo.eq.helioDistanceAu)} />
-                  <Fact
-                    label="轨道要素"
-                    value={`a ${minorInfo.el.aAu.toFixed(2)} AU · e ${minorInfo.el.e.toFixed(3)} · i ${minorInfo.el.iDeg.toFixed(1)}°`}
-                  />
-                  <Fact label="根数历元" value={`JD ${minorInfo.el.epochJd.toFixed(1)}`} />
-                </>
-              )}
-            </motion.div>
-
-            {/* 天体档案：仅带光谱型与距离的恒星（估算依据齐备才展示，DSO/太阳系不套用） */}
-            {isStar && obj.spectralType && obj.distanceLy != null && (
-              <StarArchiveSection obj={obj} itemVariants={itemVariants} />
-            )}
-
-            {visibility && (
-              <motion.div
-                variants={itemVariants}
-                className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4"
-              >
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-[12px] uppercase tracking-[0.22em] text-nebula-200/60">
-                    今晚怎么找
-                  </span>
-                  <select
-                    value={city.id}
-                    onChange={(e) => {
-                      const c = CITIES.find((x) => x.id === e.target.value);
-                      if (c) setCity(c);
-                    }}
-                    className="rounded-lg border border-white/10 bg-void/60 px-2 py-1 text-[13px] text-white focus:outline-none"
-                  >
-                    {CITIES.map((c) => (
-                      <option key={c.id} value={c.id} className="bg-void text-white">
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {isSatellite ? (
-                  // 卫星 90 分钟绕地一周，「过中天/永不升起」语义失效：只显此刻方位
-                  <div className="space-y-2 text-[13px] text-nebula-100/85">
-                    <VisRow
-                      label="此刻"
-                      value={
-                        visibility.snapshot.isAboveHorizon
-                          ? `地平线上 · ${visibility.snapshot.direction.zh} · 高度 ${visibility.snapshot.horizontal.altitudeDeg.toFixed(0)}°`
-                          : '在地平线以下'
-                      }
-                    />
+    <div className="pointer-events-none absolute inset-y-0 right-5 z-30 flex w-[min(92vw,360px)] items-center">
+      <AnimatePresence>
+        {obj && (
+          <motion.aside
+            key={obj.objectUid}
+            variants={cardVariants}
+            initial="hidden"
+            animate="show"
+            exit="exit"
+            className="pointer-events-auto w-full"
+          >
+            <div className="glass-strong card-scroll max-h-[min(82dvh,calc(100dvh-7rem))] overflow-y-auto overscroll-contain rounded-3xl p-6">
+              <motion.div variants={itemVariants} className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-2xl font-semibold text-white">{obj.nameZh}</h2>
+                  <div className="mt-1 text-[13px] tracking-wide text-nebula-200/70">
+                    {obj.commonNameZh ? `${obj.commonNameZh} · ` : ''}
+                    {obj.nameEn}
+                    {obj.bayer ? ` · ${obj.bayer}` : ''}
                   </div>
-                ) : visibility.summary.neverRises ? (
-                  <p className="text-[13px] text-nebula-100/80">
-                    在{city.name}，这个天体赤纬过低，几乎无法升起。
-                  </p>
+                </div>
+                <button
+                  onClick={() => selectStar(null)}
+                  className="rounded-full border border-white/10 px-2 py-0.5 text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
+                  aria-label="关闭"
+                >
+                  ✕
+                </button>
+              </motion.div>
+
+              <motion.div variants={itemVariants} className="mt-3 flex flex-wrap gap-2">
+                {badge && <Badge>{badge}</Badge>}
+                {obj.objectUid === 'MB-HALLEY' && <Badge>远日点附近 · 示意</Badge>}
+                {minorInfo && <Badge>演示级 ±0.5°</Badge>}
+                {!eph && <Badge>{obj.constellationZh}</Badge>}
+                {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
+                {/* 卫星星等随过境几何剧烈变化，目录值仅为占位，不展示 */}
+                {!isSatellite && <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>}
+              </motion.div>
+
+              {obj.descriptionZh && (
+                <motion.p
+                  variants={itemVariants}
+                  className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85"
+                >
+                  {obj.descriptionZh}
+                </motion.p>
+              )}
+
+              {/* 可视化缩略块（Phase 8）：所有天体的统一预览入口，点击进全屏查看器。
+                有 imageKey（真实照片富组件）或 isEphemeris（PlanetPreviewCard 3D）
+                的天体保留原有富组件，不再叠加缩略块，避免同卡出现两个预览。 */}
+              {!obj.imageKey && !obj.isEphemeris && (
+                <motion.div variants={itemVariants} className="mt-4">
+                  <ObjectVisualThumb uid={obj.objectUid} />
+                </motion.div>
+              )}
+
+              {/* 著名 Messier：科普长文「了解更多」+ 照片 lightbox（仅 16 个带 imageKey+长文的天体） */}
+              {obj.imageKey && (
+                <motion.div variants={itemVariants}>
+                  <DsoLoreSection
+                    uid={obj.objectUid}
+                    nameZh={obj.nameZh}
+                    imageKey={obj.imageKey}
+                    imageCredit={obj.imageCredit}
+                  />
+                </motion.div>
+              )}
+
+              {obj.isEphemeris && (
+                <motion.div variants={itemVariants}>
+                  <PlanetPreviewCard uid={obj.objectUid} />
+                </motion.div>
+              )}
+
+              <motion.div variants={itemVariants} className="mt-4 grid grid-cols-2 gap-3">
+                {eph ? (
+                  <Fact label="地心距离" value={formatDistanceAu(eph.eq.distanceAu)} />
+                ) : isSatellite ? (
+                  <Fact
+                    label="站心距离"
+                    value={sat ? `${Math.round(sat.rangeKm).toLocaleString()} km` : '—'}
+                  />
+                ) : minorInfo ? (
+                  <Fact label="地心距离" value={formatDistanceAu(minorInfo.eq.distanceAu)} />
                 ) : (
-                  <div className="space-y-2 text-[13px] text-nebula-100/85">
-                    <VisRow
-                      label="此刻"
-                      value={
-                        visibility.snapshot.isAboveHorizon
-                          ? `地平线上 · ${visibility.snapshot.direction.zh} · 高度 ${visibility.snapshot.horizontal.altitudeDeg.toFixed(0)}°`
-                          : '在地平线以下'
-                      }
+                  <Fact label="距离" value={formatDistance(obj.distanceLy)} />
+                )}
+                {eph || isSatellite || minorInfo ? (
+                  <Fact label="类型" value={kindLabelZh(obj)} />
+                ) : (
+                  <Fact label="星座" value={obj.constellationZh} />
+                )}
+                <Fact label="赤经 RA" value={coords ? formatRA(coords.raDeg) : '—'} />
+                <Fact label="赤纬 Dec" value={coords ? formatDec(coords.decDeg) : '—'} />
+                {eph?.moon && (
+                  <Fact
+                    label="月相"
+                    value={`${moonPhaseName(eph.moon.phaseAngleDeg)} · 照亮 ${Math.round(eph.moon.illumination * 100)}%`}
+                  />
+                )}
+                {isSatellite && (
+                  <>
+                    <Fact label="轨道高度" value={sat ? `~${Math.round(sat.heightKm)} km` : '—'} />
+                    <Fact label="速度" value={sat ? `${sat.speedKmS.toFixed(1)} km/s` : '—'} />
+                    <Fact
+                      label="TLE 历元"
+                      value={sat?.tleEpoch ? sat.tleEpoch.toISOString().slice(0, 10) : '—'}
                     />
-                    <VisRow
-                      label="过中天"
-                      value={`${formatBeijingTime(visibility.summary.nextTransit)} 前后 · 最高 ${visibility.summary.maxAltitudeDeg.toFixed(0)}°`}
+                  </>
+                )}
+                {minorInfo && (
+                  <>
+                    <Fact label="日心距离" value={formatDistanceAu(minorInfo.eq.helioDistanceAu)} />
+                    <Fact
+                      label="轨道要素"
+                      value={`a ${minorInfo.el.aAu.toFixed(2)} AU · e ${minorInfo.el.e.toFixed(3)} · i ${minorInfo.el.iDeg.toFixed(1)}°`}
                     />
-                    {visibility.summary.isCircumpolar && (
-                      <VisRow label="特性" value="拱极星 · 全天不落" />
-                    )}
-                  </div>
+                    <Fact label="根数历元" value={`JD ${minorInfo.el.epochJd.toFixed(1)}`} />
+                  </>
                 )}
               </motion.div>
-            )}
 
-            <motion.div variants={itemVariants}>
-              {obj.isNamable ? (
-                coupleMode ? (
-                  <button
-                    onClick={() => addStarToCouple(obj.objectUid)}
-                    className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
-                      inCouple
-                        ? 'border border-nebula-400/40 bg-nebula-500/20'
-                        : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
-                    }`}
-                  >
-                    {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
-                  </button>
-                ) : (
-                  <button
-                    onClick={openMemorial}
-                    className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
-                  >
-                    为这颗星创建纪念命名
-                  </button>
-                )
-              ) : (
-                // 不可命名（著名星 / DSO / 行星日月）：次级引导回命名池
-                <button
-                  onClick={resetView}
-                  className="mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
+              {/* 天体档案：仅带光谱型与距离的恒星（估算依据齐备才展示，DSO/太阳系不套用） */}
+              {isStar && obj.spectralType && obj.distanceLy != null && (
+                <StarArchiveSection obj={obj} itemVariants={itemVariants} />
+              )}
+
+              {visibility && (
+                <motion.div
+                  variants={itemVariants}
+                  className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4"
                 >
-                  ✦ 探索可命名的星空
+                  <div className="mb-3 flex items-center justify-between">
+                    <span className="text-[12px] uppercase tracking-[0.22em] text-nebula-200/60">
+                      今晚怎么找
+                    </span>
+                    <select
+                      value={city.id}
+                      onChange={(e) => {
+                        const c = CITIES.find((x) => x.id === e.target.value);
+                        if (c) setCity(c);
+                      }}
+                      className="rounded-lg border border-white/10 bg-void/60 px-2 py-1 text-[13px] text-white focus:outline-none"
+                    >
+                      {CITIES.map((c) => (
+                        <option key={c.id} value={c.id} className="bg-void text-white">
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {isSatellite ? (
+                    // 卫星 90 分钟绕地一周，「过中天/永不升起」语义失效：只显此刻方位
+                    <div className="space-y-2 text-[13px] text-nebula-100/85">
+                      <VisRow
+                        label="此刻"
+                        value={
+                          visibility.snapshot.isAboveHorizon
+                            ? `地平线上 · ${visibility.snapshot.direction.zh} · 高度 ${visibility.snapshot.horizontal.altitudeDeg.toFixed(0)}°`
+                            : '在地平线以下'
+                        }
+                      />
+                    </div>
+                  ) : visibility.summary.neverRises ? (
+                    <p className="text-[13px] text-nebula-100/80">
+                      在{city.name}，这个天体赤纬过低，几乎无法升起。
+                    </p>
+                  ) : (
+                    <div className="space-y-2 text-[13px] text-nebula-100/85">
+                      <VisRow
+                        label="此刻"
+                        value={
+                          visibility.snapshot.isAboveHorizon
+                            ? `地平线上 · ${visibility.snapshot.direction.zh} · 高度 ${visibility.snapshot.horizontal.altitudeDeg.toFixed(0)}°`
+                            : '在地平线以下'
+                        }
+                      />
+                      <VisRow
+                        label="过中天"
+                        value={`${formatBeijingTime(visibility.summary.nextTransit)} 前后 · 最高 ${visibility.summary.maxAltitudeDeg.toFixed(0)}°`}
+                      />
+                      {visibility.summary.isCircumpolar && (
+                        <VisRow label="特性" value="拱极星 · 全天不落" />
+                      )}
+                    </div>
+                  )}
+                </motion.div>
+              )}
+
+              <motion.div variants={itemVariants}>
+                {obj.isNamable ? (
+                  coupleMode ? (
+                    <button
+                      onClick={() => addStarToCouple(obj.objectUid)}
+                      className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
+                        inCouple
+                          ? 'border border-nebula-400/40 bg-nebula-500/20'
+                          : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
+                      }`}
+                    >
+                      {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
+                    </button>
+                  ) : (
+                    <button
+                      onClick={openMemorial}
+                      className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+                    >
+                      为这颗星创建纪念命名
+                    </button>
+                  )
+                ) : (
+                  // 不可命名（著名星 / DSO / 行星日月）：次级引导回命名池
+                  <button
+                    onClick={resetView}
+                    className="mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
+                  >
+                    ✦ 探索可命名的星空
+                  </button>
+                )}
+                {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
+                <button
+                  onClick={() => void onSharePoster()}
+                  disabled={posterBusy || !coords}
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+                >
+                  {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
                 </button>
-              )}
-              {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
-              <button
-                onClick={() => void onSharePoster()}
-                disabled={posterBusy || !coords}
-                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
-              >
-                {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
-              </button>
-              {posterError && (
-                <p className="mt-1.5 text-center text-[11px] text-red-300/80">
-                  海报生成失败，请重试
+                {posterError && (
+                  <p className="mt-1.5 text-center text-[11px] text-red-300/80">
+                    海报生成失败，请重试
+                  </p>
+                )}
+                <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
+                  {isSatellite && '人造卫星位置由 TLE 推算，为近似演示；'}
+                  {minorInfo && '小天体位置按 JPL 轨道根数以二体模型推算，演示精度约 ±0.5°；'}
+                  {!obj.isNamable && '著名天体与太阳系天体不开放纪念命名，仅供探索欣赏。'}
+                  私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
                 </p>
-              )}
-              <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
-                {isSatellite && '人造卫星位置由 TLE 推算，为近似演示；'}
-                {minorInfo && '小天体位置按 JPL 轨道根数以二体模型推算，演示精度约 ±0.5°；'}
-                {!obj.isNamable && '著名天体与太阳系天体不开放纪念命名，仅供探索欣赏。'}
-                私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
-              </p>
-            </motion.div>
-          </div>
-        </motion.aside>
-      )}
-    </AnimatePresence>
+              </motion.div>
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
