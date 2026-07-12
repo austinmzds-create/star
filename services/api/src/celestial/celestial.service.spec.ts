@@ -171,3 +171,45 @@ describe('CelestialController · ?at= 与 ephemeris 响应块', () => {
     expect(Number.isFinite(res.items[0]!.object.raDeg)).toBe(true);
   });
 });
+
+describe('CelestialController · encyclopedia 百科档案块', () => {
+  const controller = new CelestialController(new CelestialService());
+
+  it('恒星详情带 encyclopedia：天狼星主序、温度/质量在锚点区间，两次取值一致（缓存确定性）', () => {
+    const res = controller.getByUid('HIP32349', {});
+    expect(res.encyclopedia).toBeDefined();
+    const enc = res.encyclopedia!;
+    expect(enc.stage).toBe('main_sequence');
+    expect(enc.fate).toBe('white_dwarf');
+    expect(enc.tempK!).toBeGreaterThanOrEqual(9300);
+    expect(enc.tempK!).toBeLessThanOrEqual(10000);
+    expect(enc.massSolar!).toBeGreaterThanOrEqual(1.9);
+    expect(enc.massSolar!).toBeLessThanOrEqual(2.5);
+    expect(enc.funFacts.length).toBeGreaterThanOrEqual(3);
+    // 模块级惰性缓存：第二次是同一引用
+    expect(controller.getByUid('HIP32349', {}).encyclopedia).toBe(enc);
+  });
+
+  it('DSO 详情带 encyclopedia：M31 星系档案含并合命运，恒星物理量为 null', () => {
+    const res = controller.getByUid('M31', {});
+    expect(res.encyclopedia).toBeDefined();
+    expect(res.encyclopedia!.stage).toBe('galaxy');
+    expect(res.encyclopedia!.fate).toContain('并合');
+    expect(res.encyclopedia!.tempK).toBeNull();
+    expect(res.encyclopedia!.funFacts.length).toBeGreaterThan(0);
+  });
+
+  it('星历天体不带 encyclopedia（不可推导返回 null，响应省略该字段）', () => {
+    const res = controller.getByUid('EPH-MOON', { at: '2026-07-11T00:00:00Z' });
+    expect(res.encyclopedia).toBeUndefined();
+    expect(res.ephemeris).toBeDefined();
+  });
+
+  it('合规红线：档案文案不含「拥有/购买/产权/官方/认证/永久」', () => {
+    const banned = /拥有|购买|产权|官方|认证|永久/;
+    for (const uid of ['HIP32349', 'HIP27989', 'M31', 'M45']) {
+      const enc = controller.getByUid(uid, {}).encyclopedia!;
+      expect(JSON.stringify([enc.fate, enc.fateDesc, enc.colorDesc, enc.funFacts])).not.toMatch(banned);
+    }
+  });
+});

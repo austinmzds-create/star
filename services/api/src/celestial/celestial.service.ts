@@ -1,8 +1,10 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
+  derivePhysical,
   FULL_CATALOG,
   searchCelestial,
   type CelestialObject,
+  type PhysicalProfile,
   type StarSearchResult,
 } from '@star/astro-data';
 import {
@@ -18,6 +20,13 @@ import { AppError, ErrorCodes } from '../common/errors/app-error';
 
 /** 测试注入用：自定义星表目录的 DI token（生产不提供，走默认精选星表）。 */
 export const CELESTIAL_CATALOG_TOKEN = Symbol('CELESTIAL_CATALOG_TOKEN');
+
+/**
+ * 百科档案惰性缓存（模块级）：derivePhysical 是纯函数、目录是静态数据，
+ * 同一 uid 只算一次即可全进程复用。Phase 3 切 DB 后此处改读列，响应形状不变。
+ * null 也缓存（星历天体等不可推导项），避免反复推导。
+ */
+const encyclopediaCache = new Map<string, PhysicalProfile | null>();
 
 /** 星历天体的实时坐标附加块（详情接口对 isEphemeris 天体返回）。 */
 export interface EphemerisInfo {
@@ -111,6 +120,21 @@ export class CelestialService {
     };
     if (bodyId === 'moon') info.moonPhase = getMoonPhase(at);
     return info;
+  }
+
+  /**
+   * 天体百科档案：温度/质量/半径/光度/寿命/演化阶段/归宿/趣闻（科普事实，非占星断言）。
+   * 恒星与 DSO 尽量给出档案；星历天体或未知 uid 返回 null（详情响应据此决定是否带 encyclopedia 块）。
+   * 注：缓存按 uid 建键——测试注入的自定义目录若复用真实 uid，取到的是同一纯函数结果，无碍。
+   */
+  getEncyclopedia(objectUid: string): PhysicalProfile | null {
+    const obj = this.byUid.get(objectUid);
+    if (!obj) return null;
+    const cached = encyclopediaCache.get(objectUid);
+    if (cached !== undefined) return cached;
+    const profile = derivePhysical(obj);
+    encyclopediaCache.set(objectUid, profile);
+    return profile;
   }
 
   /** 取可命名星体：存在性 + isNamable 校验，供 MemorialService 调用。星历天体 isNamable 恒为 false，必拦截。 */

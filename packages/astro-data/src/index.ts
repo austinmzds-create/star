@@ -10,3 +10,5 @@ export * from './constellations';
 export * from './constellation-lines';
 export * from './catalog';
 export * from './search';
+export * from './physics';
+export * from './dso-profiles';

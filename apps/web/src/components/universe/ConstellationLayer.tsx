@@ -15,6 +15,7 @@ import { isCoarsePointer, prefersReducedMotion } from '@/lib/device';
 import { useUniverse } from '@/lib/store';
 import { ConstellationArtPlane } from './ConstellationArt';
 import { ConstellationLines } from './ConstellationLines';
+import { ConstellationMemberGlow } from './ConstellationMemberGlow';
 import { ConstellationName } from './ConstellationNames';
 
 /**
@@ -125,13 +126,24 @@ function ConstellationLayerInner() {
     }
   });
 
-  // 名称最多 2 个（新亮 + 旧淡出）；艺术图桌面 ≤2、移动 ≤1（旧图直接消失不交叉淡）。
+  // 名称/成员星光环最多 2 个（新亮 + 旧淡出）；艺术图桌面 ≤2、移动 ≤1（旧图直接消失不交叉淡）。
   const nameAbbrs = visibleAbbrs.slice(0, 2);
   const artAbbrs = visibleAbbrs.filter((a) => CONSTELLATION_ART_BY_CON.has(a)).slice(0, coarse ? 1 : 2);
 
   return (
     <>
       <ConstellationLines data={data} progressRef={progressRef} reducedMotion={reducedMotion} />
+      {nameAbbrs.map((abbr) => {
+        const info = data.byAbbr.get(abbr);
+        return info ? (
+          <ConstellationMemberGlow
+            key={abbr}
+            info={info}
+            progressRef={progressRef}
+            reducedMotion={reducedMotion}
+          />
+        ) : null;
+      })}
       {nameAbbrs.map((abbr) => {
         const info = data.byAbbr.get(abbr);
         return info ? <ConstellationName key={abbr} info={info} progressRef={progressRef} /> : null;

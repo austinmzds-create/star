@@ -94,6 +94,12 @@ interface UniverseState {
   activeConstellationSource: ConstellationSource | null;
   /** 搜索星座 → 镜头飞向星座质心的触发器（每次搜索选中自增）。 */
   constellationFocusNonce: number;
+  /**
+   * 星座富面板展示对象（点击天区就近判定命中后钉住）。
+   * 互斥规则：selectedUid 非空时 StarInfoCard 优先，本面板隐藏但状态保留
+   * （关掉天体卡即回到面板）；左下注视小卡在本值非空时降级为纯提示。
+   */
+  focusedConstellation: string | null;
 
   // ── 情侣双星（Couple）挑选流程 ──
   /** 是否处于「情侣双星」挑选模式（开启后选星改为加入双星托盘）。 */
@@ -158,6 +164,10 @@ interface UniverseState {
   activateConstellation: (abbr: string, source: 'select' | 'search') => void;
   /** 解除钉住（用户拖拽后调用），降级回注视接管；星座本身随注视自然淡出。 */
   clearPinnedConstellation: () => void;
+  /** 点击天区命中星座（就近判定）：钉住点亮 + 打开右侧星座富面板，清掉天体选中。 */
+  selectConstellation: (abbr: string) => void;
+  /** 关闭星座富面板（连线点亮态保留，随注视/拖拽自然退出）。 */
+  closeConstellationPanel: () => void;
 
   /** 进入情侣双星模式（清空槽位）。 */
   enterCoupleMode: () => void;
@@ -208,6 +218,7 @@ export const useUniverse = create<UniverseState>((set) => ({
   activeConstellation: null,
   activeConstellationSource: null,
   constellationFocusNonce: 0,
+  focusedConstellation: null,
 
   coupleMode: false,
   coupleSlotA: null,
@@ -231,6 +242,8 @@ export const useUniverse = create<UniverseState>((set) => ({
         autoRotate: uid ? false : s.autoRotate,
         // 3D 查看器只在选中星历天体时有宿主：取消选中/切到非星历天体即关闭
         planetViewerOpen: uid && isEphemerisUid(uid) ? s.planetViewerOpen : false,
+        // 场景点选到天体 → 星座富面板让位（点空处不清，关卡后面板可回来）。
+        ...(uid ? { focusedConstellation: null } : {}),
         ...(uid
           ? abbr
             ? { activeConstellation: abbr, activeConstellationSource: 'select' as const }
@@ -289,13 +302,15 @@ export const useUniverse = create<UniverseState>((set) => ({
       resetNonce: s.resetNonce + 1,
       activeConstellation: null,
       activeConstellationSource: null,
+      focusedConstellation: null,
     })),
   toggleConstellations: () =>
     set((s) => ({
       showConstellations: !s.showConstellations,
-      // 关闭星座层时同时清掉激活态，避免重开时旧星座突然亮起。
+      // 关闭星座层时同时清掉激活态与富面板，避免重开时旧星座突然亮起。
       activeConstellation: s.showConstellations ? null : s.activeConstellation,
       activeConstellationSource: s.showConstellations ? null : s.activeConstellationSource,
+      focusedConstellation: s.showConstellations ? null : s.focusedConstellation,
     })),
   setActiveConstellation: (abbr) => set({ activeConstellation: abbr }),
   setGazeConstellation: (abbr) =>
@@ -324,6 +339,17 @@ export const useUniverse = create<UniverseState>((set) => ({
         ? { activeConstellationSource: 'gaze' as const }
         : {},
     ),
+  selectConstellation: (abbr) =>
+    set({
+      focusedConstellation: abbr,
+      selectedUid: null,
+      planetViewerOpen: false,
+      autoRotate: false,
+      // 复用钉住机制：连线立即开始 Star Walk 式描线，注视判定不抢。
+      activeConstellation: abbr,
+      activeConstellationSource: 'select',
+    }),
+  closeConstellationPanel: () => set({ focusedConstellation: null }),
 
   enterCoupleMode: () =>
     set({ coupleMode: true, coupleSlotA: null, coupleSlotB: null, coupleFormOpen: false }),

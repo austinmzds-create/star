@@ -106,6 +106,32 @@ model CelestialObject {
   dataQualityScore Int           @default(0)
   /// 数据来源批次，如 'astro-data-seed-v1'、'hipparcos-import'
   sourceCatalog    String        @default("astro-data-seed-v1")
+
+  // —— 百科档案（Phase 7 encyclopedia）：derivePhysical 确定性推导落库，全部可空、向后兼容 ——
+  /// 有效表面温度（K）
+  tempK            Int?
+  /// 质量（太阳质量，质光关系反解）
+  massSolar        Float?
+  /// 半径（太阳半径）
+  radiusSolar      Float?
+  /// 光度（太阳光度）
+  luminositySolar  Float?
+  /// 已度过年龄估算（Gyr）；DSO 用星团真实年龄
+  ageGyr           Float?
+  /// 主序寿命估算（Gyr）
+  lifespanGyr      Float?
+  /// 绝对星等 Mv
+  absoluteMag      Float?
+  /// 演化阶段：恒星 main_sequence/subgiant/giant/supergiant/white_dwarf；DSO 为类别码
+  stage            String?
+  /// 归宿：恒星为枚举码（white_dwarf/supernova_*），DSO 为中文命运文案
+  fate             String?
+  /// 最佳观测月（1-12，冲日/午夜中天月）
+  bestMonth        Int?
+  /// 观测手段分级：naked_eye/binoculars/telescope/photo
+  visibility       String?
+  /// 科普趣闻（string[] JSON，同 uid 确定性生成）
+  funFacts         Json?
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 

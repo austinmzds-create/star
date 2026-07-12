@@ -7,7 +7,7 @@
  * 本地无 DB 的容器不要运行。
  */
 import { PrismaClient, type CelestialType } from '@prisma/client';
-import { FULL_CATALOG, type CelestialObject } from '@star/astro-data';
+import { derivePhysical, FULL_CATALOG, type CelestialObject } from '@star/astro-data';
 import { listEphemerisBodies, toCelestialObject } from '@star/astro-ephem';
 
 const prisma = new PrismaClient();
@@ -65,6 +65,9 @@ async function main(): Promise<void> {
   let aliasCount = 0;
 
   for (const obj of FULL_CATALOG) {
+    // 百科档案：derivePhysical 内部对 DSO 自动分派 deriveDsoProfile——
+    // DB 与内存目录永远同式（单一真源）；stage/fate 空串（未知）落库为 null
+    const p = derivePhysical(obj);
     const data = {
       type: obj.type.toUpperCase() as CelestialType,
       nameEn: obj.nameEn,
@@ -89,6 +92,19 @@ async function main(): Promise<void> {
       dataQualityScore: dataQualityScore(obj),
       // 数据出处（handwritten / hyg-v41 / openngc），DSO 的 CC-BY-SA-4.0 署名义务可据此追溯
       sourceCatalog: obj.sourceCatalog ?? 'astro-data-seed-v1',
+      // —— 百科档案列（Phase 7 encyclopedia，全部可空）——
+      tempK: p?.tempK ?? null,
+      massSolar: p?.massSolar ?? null,
+      radiusSolar: p?.radiusSolar ?? null,
+      luminositySolar: p?.luminositySolar ?? null,
+      ageGyr: p?.ageGyr ?? null,
+      lifespanGyr: p?.lifespanGyr ?? null,
+      absoluteMag: p?.absoluteMag ?? null,
+      stage: p?.stage ? p.stage : null,
+      fate: p?.fate ? p.fate : null,
+      bestMonth: p?.bestMonth ?? null,
+      visibility: p?.visibility ?? null,
+      funFacts: p?.funFacts ?? [],
     };
 
     await prisma.celestialObject.upsert({

@@ -1,9 +1,6 @@
 'use client';
 
-import {
-  computeObservationSummary,
-  computeVisibility,
-} from '@star/astro-core';
+import { computeObservationSummary, computeVisibility } from '@star/astro-core';
 import {
   getEquatorial,
   getMinorBodyElements,
@@ -15,26 +12,22 @@ import {
   moonPhaseName,
   uidToBodyId,
 } from '@star/astro-ephem';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
+import { StarArchiveSection } from './StarArchiveSection';
 import { CITIES, type City } from '@/lib/cities';
 import { isSatelliteUid } from '@/lib/satellites/tles';
-import {
-  formatBeijingTime,
-  formatDec,
-  formatDistance,
-  formatRA,
-} from '@/lib/format';
+import { formatBeijingTime, formatDec, formatDistance, formatRA } from '@/lib/format';
 import { formatDistanceAu, kindLabelZh, primaryBadgeZh } from '@/lib/objectPresenter';
 import { getObjectByUid } from '@/lib/solarSystem';
 import { useUniverse } from '@/lib/store';
 
 // 深空科普长文 + lightbox：仅选中带照片的 DSO 才拉取（16 篇长文不进主页首包）
-const DsoLoreSection = dynamic(
-  () => import('./DsoLoreSection').then((m) => m.DsoLoreSection),
-  { ssr: false, loading: () => null },
-);
+const DsoLoreSection = dynamic(() => import('./DsoLoreSection').then((m) => m.DsoLoreSection), {
+  ssr: false,
+  loading: () => null,
+});
 
 // 行星 3D 预览块：选中星历天体才拉取 three/R3F 代码块（不进主 bundle 增量）
 const PlanetPreviewCard = dynamic(
@@ -191,6 +184,41 @@ export function StarInfoCard() {
   const isStar = obj?.type === 'star';
   const badge = obj ? primaryBadgeZh(obj) : null;
 
+  // ── 入场动画（Phase 7）：卡片 spring 弹出 + 分区 stagger；系统减动效时
+  // 退化为纯透明度 0.2s、无 stagger（前庭安全）。variants 依 reduce 二选一，
+  // 帧循环外的一次性对象构造，无渲染开销。──
+  const reduceMotion = useReducedMotion();
+  const cardVariants: Variants = reduceMotion
+    ? {
+        hidden: { opacity: 0 },
+        show: { opacity: 1, transition: { duration: 0.2 } },
+        exit: { opacity: 0, transition: { duration: 0.2 } },
+      }
+    : {
+        hidden: { opacity: 0, x: 56, scale: 0.9 },
+        show: {
+          opacity: 1,
+          x: 0,
+          scale: 1,
+          transition: {
+            type: 'spring',
+            stiffness: 320,
+            damping: 26,
+            mass: 0.9,
+            when: 'beforeChildren',
+            staggerChildren: 0.055,
+            delayChildren: 0.05,
+          },
+        },
+        exit: { opacity: 0, x: 28, scale: 0.96, transition: { duration: 0.18, ease: 'easeIn' } },
+      };
+  const itemVariants: Variants = reduceMotion
+    ? { hidden: {}, show: {} }
+    : {
+        hidden: { opacity: 0, y: 14 },
+        show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 420, damping: 32 } },
+      };
+
   // ── 分享海报（Phase 6B 目标 5）：posterGenerator 动态 chunk，点击才加载 ──
   const [posterBusy, setPosterBusy] = useState(false);
   const [posterError, setPosterError] = useState(false);
@@ -217,14 +245,14 @@ export function StarInfoCard() {
       {obj && (
         <motion.aside
           key={obj.objectUid}
-          initial={{ opacity: 0, x: 32 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: 32 }}
-          transition={{ type: 'spring', stiffness: 260, damping: 30 }}
+          variants={cardVariants}
+          initial="hidden"
+          animate="show"
+          exit="exit"
           className="pointer-events-auto absolute right-5 top-1/2 z-30 w-[min(92vw,360px)] -translate-y-1/2"
         >
           <div className="glass-strong max-h-[82vh] overflow-y-auto rounded-3xl p-6">
-            <div className="flex items-start justify-between">
+            <motion.div variants={itemVariants} className="flex items-start justify-between">
               <div>
                 <h2 className="text-2xl font-semibold text-white">{obj.nameZh}</h2>
                 <div className="mt-1 text-[13px] tracking-wide text-nebula-200/70">
@@ -240,9 +268,9 @@ export function StarInfoCard() {
               >
                 ✕
               </button>
-            </div>
+            </motion.div>
 
-            <div className="mt-3 flex flex-wrap gap-2">
+            <motion.div variants={itemVariants} className="mt-3 flex flex-wrap gap-2">
               {badge && <Badge>{badge}</Badge>}
               {obj.objectUid === 'MB-HALLEY' && <Badge>远日点附近 · 示意</Badge>}
               {minorInfo && <Badge>演示级 ±0.5°</Badge>}
@@ -250,27 +278,36 @@ export function StarInfoCard() {
               {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
               {/* 卫星星等随过境几何剧烈变化，目录值仅为占位，不展示 */}
               {!isSatellite && <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>}
-            </div>
+            </motion.div>
 
             {obj.descriptionZh && (
-              <p className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85">
+              <motion.p
+                variants={itemVariants}
+                className="mt-4 text-[13.5px] leading-relaxed text-nebula-100/85"
+              >
                 {obj.descriptionZh}
-              </p>
+              </motion.p>
             )}
 
             {/* 著名 Messier：科普长文「了解更多」+ 照片 lightbox（仅 16 个带 imageKey+长文的天体） */}
             {obj.imageKey && (
-              <DsoLoreSection
-                uid={obj.objectUid}
-                nameZh={obj.nameZh}
-                imageKey={obj.imageKey}
-                imageCredit={obj.imageCredit}
-              />
+              <motion.div variants={itemVariants}>
+                <DsoLoreSection
+                  uid={obj.objectUid}
+                  nameZh={obj.nameZh}
+                  imageKey={obj.imageKey}
+                  imageCredit={obj.imageCredit}
+                />
+              </motion.div>
             )}
 
-            {obj.isEphemeris && <PlanetPreviewCard uid={obj.objectUid} />}
+            {obj.isEphemeris && (
+              <motion.div variants={itemVariants}>
+                <PlanetPreviewCard uid={obj.objectUid} />
+              </motion.div>
+            )}
 
-            <div className="mt-4 grid grid-cols-2 gap-3">
+            <motion.div variants={itemVariants} className="mt-4 grid grid-cols-2 gap-3">
               {eph ? (
                 <Fact label="地心距离" value={formatDistanceAu(eph.eq.distanceAu)} />
               ) : isSatellite ? (
@@ -298,10 +335,7 @@ export function StarInfoCard() {
               )}
               {isSatellite && (
                 <>
-                  <Fact
-                    label="轨道高度"
-                    value={sat ? `~${Math.round(sat.heightKm)} km` : '—'}
-                  />
+                  <Fact label="轨道高度" value={sat ? `~${Math.round(sat.heightKm)} km` : '—'} />
                   <Fact label="速度" value={sat ? `${sat.speedKmS.toFixed(1)} km/s` : '—'} />
                   <Fact
                     label="TLE 历元"
@@ -311,24 +345,26 @@ export function StarInfoCard() {
               )}
               {minorInfo && (
                 <>
-                  <Fact
-                    label="日心距离"
-                    value={formatDistanceAu(minorInfo.eq.helioDistanceAu)}
-                  />
+                  <Fact label="日心距离" value={formatDistanceAu(minorInfo.eq.helioDistanceAu)} />
                   <Fact
                     label="轨道要素"
                     value={`a ${minorInfo.el.aAu.toFixed(2)} AU · e ${minorInfo.el.e.toFixed(3)} · i ${minorInfo.el.iDeg.toFixed(1)}°`}
                   />
-                  <Fact
-                    label="根数历元"
-                    value={`JD ${minorInfo.el.epochJd.toFixed(1)}`}
-                  />
+                  <Fact label="根数历元" value={`JD ${minorInfo.el.epochJd.toFixed(1)}`} />
                 </>
               )}
-            </div>
+            </motion.div>
+
+            {/* 天体档案：仅带光谱型与距离的恒星（估算依据齐备才展示，DSO/太阳系不套用） */}
+            {isStar && obj.spectralType && obj.distanceLy != null && (
+              <StarArchiveSection obj={obj} itemVariants={itemVariants} />
+            )}
 
             {visibility && (
-              <div className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4">
+              <motion.div
+                variants={itemVariants}
+                className="mt-5 rounded-2xl border border-nebula-400/15 bg-white/[0.03] p-4"
+              >
                 <div className="mb-3 flex items-center justify-between">
                   <span className="text-[12px] uppercase tracking-[0.22em] text-nebula-200/60">
                     今晚怎么找
@@ -384,57 +420,59 @@ export function StarInfoCard() {
                     )}
                   </div>
                 )}
-              </div>
+              </motion.div>
             )}
 
-            {obj.isNamable ? (
-              coupleMode ? (
-                <button
-                  onClick={() => addStarToCouple(obj.objectUid)}
-                  className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
-                    inCouple
-                      ? 'border border-nebula-400/40 bg-nebula-500/20'
-                      : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
-                  }`}
-                >
-                  {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
-                </button>
+            <motion.div variants={itemVariants}>
+              {obj.isNamable ? (
+                coupleMode ? (
+                  <button
+                    onClick={() => addStarToCouple(obj.objectUid)}
+                    className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
+                      inCouple
+                        ? 'border border-nebula-400/40 bg-nebula-500/20'
+                        : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
+                    }`}
+                  >
+                    {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={openMemorial}
+                    className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+                  >
+                    为这颗星创建纪念命名
+                  </button>
+                )
               ) : (
+                // 不可命名（著名星 / DSO / 行星日月）：次级引导回命名池
                 <button
-                  onClick={openMemorial}
-                  className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+                  onClick={resetView}
+                  className="mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
                 >
-                  为这颗星创建纪念命名
+                  ✦ 探索可命名的星空
                 </button>
-              )
-            ) : (
-              // 不可命名（著名星 / DSO / 行星日月）：次级引导回命名池
+              )}
+              {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
               <button
-                onClick={resetView}
-                className="mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
+                onClick={() => void onSharePoster()}
+                disabled={posterBusy || !coords}
+                className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
               >
-                ✦ 探索可命名的星空
+                {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
               </button>
-            )}
-            {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
-            <button
-              onClick={() => void onSharePoster()}
-              disabled={posterBusy || !coords}
-              className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
-            >
-              {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
-            </button>
-            {posterError && (
-              <p className="mt-1.5 text-center text-[11px] text-red-300/80">
-                海报生成失败，请重试
+              {posterError && (
+                <p className="mt-1.5 text-center text-[11px] text-red-300/80">
+                  海报生成失败，请重试
+                </p>
+              )}
+              <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
+                {isSatellite && '人造卫星位置由 TLE 推算，为近似演示；'}
+                {minorInfo && '小天体位置按 JPL 轨道根数以二体模型推算，演示精度约 ±0.5°；'}
+                {!obj.isNamable && '著名天体与太阳系天体不开放纪念命名，仅供探索欣赏。'}
+                私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
               </p>
-            )}
-            <p className="mt-3 text-center text-[11px] leading-relaxed text-nebula-200/45">
-              {isSatellite && '人造卫星位置由 TLE 推算，为近似演示；'}
-              {minorInfo && '小天体位置按 JPL 轨道根数以二体模型推算，演示精度约 ±0.5°；'}
-              {!obj.isNamable && '著名天体与太阳系天体不开放纪念命名，仅供探索欣赏。'}
-              私人纪念命名登记，不代表 IAU 或任何官方天文机构命名
-            </p>
+            </motion.div>
           </div>
         </motion.aside>
       )}

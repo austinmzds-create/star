@@ -226,6 +226,12 @@ const GROUP_TINT: Record<DsoGroupKey, [number, number, number]> = {
 /** 点大小：featured（Messier）36–56px，普通 DSO 由星等映射 14–28px。 */
 function dsoSize(obj: CelestialObject): number {
   if (obj.isFeatured) {
+    // 【宇宙 V4 §3】featured 星团的中心柔光改按角尺寸给大小：
+    // ClusterSprinkleLayer 的星屑按真实角半径散布，柔光若仍按星等定大小，
+    // M45/双星团会出现「屑大晕小」的尺度断裂（其余类型不动）。
+    if (obj.type === 'cluster' && obj.angularSizeDeg !== undefined) {
+      return THREE.MathUtils.clamp(obj.angularSizeDeg * 40, 36, 104);
+    }
     return THREE.MathUtils.clamp(56 - obj.magnitude * 3, 36, 56);
   }
   return THREE.MathUtils.clamp(30 - obj.magnitude * 1.6, 14, 28);

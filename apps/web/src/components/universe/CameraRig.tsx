@@ -4,7 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { getExternalPose, releaseCamera } from '@/lib/cameraBus';
-import { getConstellationRenderData } from '@/lib/constellation-render';
+import { getConstellationRenderData, pickConstellationAt } from '@/lib/constellation-render';
 import { isCoarsePointer } from '@/lib/device';
 import { getHover, setHover } from '@/lib/hoverBus';
 import { ensureStaticEntries, pickEntries, resolveObjectPosition } from '@/lib/pickRegistry';
@@ -224,7 +224,22 @@ export function CameraRig() {
       pitch.current = THREE.MathUtils.clamp(pitch.current, -PITCH_LIMIT, PITCH_LIMIT);
     };
     const onUp = (e: PointerEvent) => {
-      if (dragging.current && !moved.current) selectStar(pickAt(e.clientX, e.clientY, 1));
+      if (dragging.current && !moved.current) {
+        const uid = pickAt(e.clientX, e.clientY, 1);
+        if (uid) {
+          selectStar(uid);
+        } else {
+          // 未命中任何天体 → 星座就近判定（屏幕空间点到连线段/质心距离，
+          // 见 constellation-render.pickConstellationAt；仅星座层开启时）。
+          const state = useUniverse.getState();
+          const rect = el.getBoundingClientRect();
+          const abbr = state.showConstellations
+            ? pickConstellationAt(e.clientX - rect.left, e.clientY - rect.top, cam, rect)
+            : null;
+          if (abbr) state.selectConstellation(abbr);
+          else selectStar(null); // 真点空处：沿用原语义（取消选中/解除钉住）
+        }
+      }
       dragging.current = false;
       try {
         el.releasePointerCapture(e.pointerId);

@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
-import type { CelestialObject } from '@star/astro-data';
+import type { CelestialObject, PhysicalProfile } from '@star/astro-data';
 import { CelestialService, type EphemerisInfo } from './celestial.service';
 import { parseAtParam } from './dto/at-param';
 import { GetCelestialQuery } from './dto/get-celestial.query';
@@ -18,15 +18,23 @@ export class CelestialController {
     return { query: query.q, items, count: items.length };
   }
 
-  /** GET /api/celestial/:objectUid?at= —— 星历天体响应额外带 ephemeris 实时坐标块（月亮含月相）。 */
+  /**
+   * GET /api/celestial/:objectUid?at= —— 星历天体响应额外带 ephemeris 实时坐标块（月亮含月相）；
+   * 恒星/DSO 额外带 encyclopedia 百科档案块（search/listAll 不带，省载荷）。
+   */
   @Get(':objectUid')
   getByUid(
     @Param('objectUid') objectUid: string,
     @Query() query: GetCelestialQuery,
-  ): { object: CelestialObject; ephemeris?: EphemerisInfo } {
+  ): { object: CelestialObject; ephemeris?: EphemerisInfo; encyclopedia?: PhysicalProfile } {
     const at = parseAtParam(query.at);
     const object = this.celestial.getByUid(objectUid, at);
     const ephemeris = this.celestial.getEphemerisInfo(objectUid, at);
-    return ephemeris ? { object, ephemeris } : { object };
+    const encyclopedia = this.celestial.getEncyclopedia(objectUid);
+    return {
+      object,
+      ...(ephemeris ? { ephemeris } : {}),
+      ...(encyclopedia ? { encyclopedia } : {}),
+    };
   }
 }

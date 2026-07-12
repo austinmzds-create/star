@@ -15,9 +15,10 @@ const SKY_FRAGMENT = /* glsl */ `
   varying float vY;
   void main() {
     float t = clamp(vY * 0.5 + 0.5, 0.0, 1.0);
-    vec3 top = vec3(0.006, 0.008, 0.024);
-    vec3 mid = vec3(0.018, 0.024, 0.062);
-    vec3 bottom = vec3(0.010, 0.014, 0.036);
+    // 宇宙 V4 深邃版：三档色整体下调约 1/3（结构不变），底越黑星越亮
+    vec3 top = vec3(0.004, 0.005, 0.016);
+    vec3 mid = vec3(0.012, 0.016, 0.044);
+    vec3 bottom = vec3(0.006, 0.009, 0.024);
     vec3 col = mix(bottom, mid, smoothstep(0.0, 0.5, t));
     col = mix(col, top, smoothstep(0.5, 1.0, t));
     gl_FragColor = vec4(col, 1.0);
@@ -31,14 +32,7 @@ function makeNebulaTexture(): THREE.Texture {
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
-  const grad = ctx.createRadialGradient(
-    size / 2,
-    size / 2,
-    0,
-    size / 2,
-    size / 2,
-    size / 2,
-  );
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
   grad.addColorStop(0, 'rgba(255,255,255,0.9)');
   grad.addColorStop(0.25, 'rgba(255,255,255,0.35)');
   grad.addColorStop(0.6, 'rgba(255,255,255,0.08)');

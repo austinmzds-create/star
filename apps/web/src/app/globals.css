@@ -33,8 +33,13 @@ main {
   -webkit-backdrop-filter: blur(22px) saturate(140%);
 }
 
+/*
+ * 玻璃背景纪律：暗化只允许出现在卡片自身的圆角矩形内，禁止任何
+ * fixed/absolute inset-0 的全屏暗化层压在星空上。背景 alpha 压到 0.68
+ * （blur 不变），让卡片后的星光保持通透。
+ */
 .glass-strong {
-  background: rgba(9, 12, 28, 0.78);
+  background: rgba(9, 12, 28, 0.68);
   border: 1px solid rgba(140, 155, 255, 0.18);
   backdrop-filter: blur(28px) saturate(150%);
   -webkit-backdrop-filter: blur(28px) saturate(150%);

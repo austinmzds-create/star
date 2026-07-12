@@ -78,6 +78,7 @@ interface ConstellationArtPlaneProps {
 
 export function ConstellationArtPlane({ info, meta, progressRef, coarse }: ConstellationArtPlaneProps) {
   const materialRef = useRef<THREE.MeshBasicMaterial>(null);
+  const meshRef = useRef<THREE.Mesh>(null);
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
 
   // 懒加载：本组件仅在该座激活（progress>0）时被挂载，即「首次激活才 fetch」。
@@ -115,13 +116,21 @@ export function ConstellationArtPlane({ info, meta, progressRef, coarse }: Const
     if (!mat) return;
     const p = progressRef.current[info.index] ?? 0;
     // 比连线慢半拍淡入（p>0.25 起），失活随 p 回落。
-    mat.opacity = THREE.MathUtils.smoothstep(p, 0.25, 1.0) * maxOpacity;
+    const ease = THREE.MathUtils.smoothstep(p, 0.25, 1.0);
+    mat.opacity = ease * maxOpacity;
+    // 缩放渐显：随进度从 90% 缓推到全尺寸（绕自身中心，天球锚定不变）。
+    const mesh = meshRef.current;
+    if (mesh) {
+      const s = 0.9 + 0.1 * ease;
+      mesh.scale.set(scale.x * s, scale.y * s, 1);
+    }
   });
 
   if (!texture) return null;
 
   return (
     <mesh
+      ref={meshRef}
       position={position}
       quaternion={quaternion}
       scale={scale}
