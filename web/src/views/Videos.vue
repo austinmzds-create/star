@@ -8,11 +8,15 @@
     <!-- ===================== 视频审核 ===================== -->
     <div v-if="mainTab === 'video'" key="video-pane">
       <div class="page-toolbar">
-        <el-tabs v-model="vTab" @tab-change="loadVideos" class="flex-tabs">
+        <el-tabs v-model="vTab" @tab-change="reloadVideos" class="flex-tabs">
           <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key"
             :label="`${s.label}${vCounts[s.key] ? ' ' + vCounts[s.key] : ''}`" />
         </el-tabs>
-        <el-button type="primary" @click="openCreateVideo">+ 登记视频</el-button>
+        <div style="display:flex; gap:8px; align-items:center">
+          <el-input v-model="vSearch" placeholder="搜达人/产品" clearable style="width:180px"
+            @keyup.enter="reloadVideos" @clear="reloadVideos" />
+          <el-button type="primary" @click="openCreateVideo">+ 登记视频</el-button>
+        </div>
       </div>
 
       <el-table :data="videos">
@@ -47,6 +51,9 @@
           </template>
         </el-table-column>
       </el-table>
+      <el-pagination v-if="vTotal > 50" background layout="prev, pager, next, total"
+        :total="vTotal" :page-size="50" :current-page="vPage"
+        style="margin-top:12px; justify-content:flex-end" @current-change="onVPage" />
 
       <!-- 登记视频 -->
       <el-dialog v-model="createVideoVisible" title="登记视频" width="480px">
@@ -79,10 +86,14 @@
 
     <!-- ===================== 投流管理 ===================== -->
     <div v-else key="promo-pane">
-      <el-tabs v-model="pTab" @tab-change="loadPromotions">
-        <el-tab-pane v-for="s in PROMO_TABS" :key="s.key" :name="s.key"
-          :label="`${s.label}${pCounts[s.key] ? ' ' + pCounts[s.key] : ''}`" />
-      </el-tabs>
+      <div class="page-toolbar">
+        <el-tabs v-model="pTab" @tab-change="reloadPromotions" class="flex-tabs">
+          <el-tab-pane v-for="s in PROMO_TABS" :key="s.key" :name="s.key"
+            :label="`${s.label}${pCounts[s.key] ? ' ' + pCounts[s.key] : ''}`" />
+        </el-tabs>
+        <el-input v-model="pSearch" placeholder="搜达人/产品/抖音号" clearable style="width:200px"
+          @keyup.enter="reloadPromotions" @clear="reloadPromotions" />
+      </div>
 
       <el-empty v-if="!promotions.length" description="暂无投流任务" />
       <div v-for="row in promotions" :key="row.id" class="promo-card">
@@ -117,6 +128,10 @@
           <el-button size="small" link type="danger" style="margin-left:auto" @click="removePromo(row)">删除</el-button>
         </div>
       </div>
+
+      <el-pagination v-if="pTotal > 50" background layout="prev, pager, next, total"
+        :total="pTotal" :page-size="50" :current-page="pPage"
+        style="margin-top:12px; justify-content:flex-end" @current-change="onPPage" />
 
       <!-- 投流失败(填原因) -->
       <el-dialog v-model="failVisible" title="标记投流失败" width="480px">
@@ -192,6 +207,9 @@ const vTab = ref('submitted')
 const videos = ref([])
 const vCounts = ref({})
 const vLoading = ref(false)
+const vSearch = ref('')
+const vPage = ref(1)
+const vTotal = ref(0)
 
 const rejectVisible = ref(false)
 const rejectReason = ref('')
@@ -203,12 +221,18 @@ const videoTabLabel = (k) => VIDEO_TABS.find((t) => t.key === k)?.label || k
 async function loadVideos() {
   vLoading.value = true
   try {
-    videos.value = await api.get('/api/videos', { params: { status: vTab.value } })
+    const r = await api.get('/api/videos', {
+      params: { status: vTab.value, q: vSearch.value || undefined, page: vPage.value, page_size: 50 },
+    })
+    videos.value = r.items
+    vTotal.value = r.total
     vCounts.value = await api.get('/api/videos/status-counts')
   } finally {
     vLoading.value = false
   }
 }
+function reloadVideos() { vPage.value = 1; loadVideos() }
+function onVPage(p) { vPage.value = p; loadVideos() }
 
 async function passVideo(row) {
   await api.post(`/api/videos/${row.id}/audit`, { approve: true })
@@ -289,6 +313,11 @@ const pTab = ref('pending_request')
 const promotions = ref([])
 const pCounts = ref({})
 const pLoading = ref(false)
+const pSearch = ref('')
+const pPage = ref(1)
+const pTotal = ref(0)
+function reloadPromotions() { pPage.value = 1; loadPromotions() }
+function onPPage(p) { pPage.value = p; loadPromotions() }
 
 const failVisible = ref(false)
 const failReason = ref('')
@@ -300,7 +329,11 @@ const promoLabel = (k) => PROMO_TABS.find((t) => t.key === k)?.label || k
 async function loadPromotions() {
   pLoading.value = true
   try {
-    promotions.value = await api.get('/api/promotions', { params: { auth_status: pTab.value } })
+    const r = await api.get('/api/promotions', {
+      params: { auth_status: pTab.value, q: pSearch.value || undefined, page: pPage.value, page_size: 50 },
+    })
+    promotions.value = r.items
+    pTotal.value = r.total
     pCounts.value = await api.get('/api/promotions/status-counts')
   } finally {
     pLoading.value = false

@@ -28,32 +28,40 @@ def _load_owned_order(db: Session, user: User, order_id: int) -> SampleOrder:
 
 
 @router.get("")
-def list_samples(status: str | None = None,
+def list_samples(status: str | None = None, q: str | None = None,
+                 page: int = 1, page_size: int = 50,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """寄样单列表(商务只见自己达人的单;管理员全量)。status 可选过滤。"""
+    """寄样单列表(商务只见自己达人的单;管理员全量)。status 过滤 + q 搜索(达人/产品/单号)+ 分页。"""
+    from sqlalchemy import func, or_
     stmt = (select(SampleOrder, Cooperation, Influencer, Product)
             .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
             .join(Influencer, Cooperation.influencer_id == Influencer.id)
-            .join(Product, SampleOrder.product_id == Product.id)
-            .order_by(SampleOrder.created_at.desc()))
+            .join(Product, SampleOrder.product_id == Product.id))
     if user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
     if status:
         stmt = stmt.where(SampleOrder.status == status)
-    out = []
-    for order, coop, inf, prod in db.execute(stmt.limit(300)).all():
-        out.append({
-            "id": order.id, "status": order.status,
-            "influencer_id": inf.id, "influencer_nickname": inf.nickname,
-            "product_id": prod.id, "product_name": prod.name,
-            "round_no": coop.round_no,
-            "tracking_no": order.tracking_no, "courier_company": order.courier_company,
-            "logistics_status": order.logistics_status,
-            "signed_at": order.signed_at.isoformat() if order.signed_at else None,
-            "reject_reason": order.reject_reason,
-            "created_at": order.created_at.isoformat(),
-        })
-    return out
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Influencer.nickname.like(like), Product.name.like(like),
+                              SampleOrder.tracking_no.like(like)))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    rows = db.execute(stmt.order_by(SampleOrder.created_at.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    items = [{
+        "id": order.id, "status": order.status,
+        "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+        "product_id": prod.id, "product_name": prod.name,
+        "round_no": coop.round_no,
+        "tracking_no": order.tracking_no, "courier_company": order.courier_company,
+        "logistics_status": order.logistics_status,
+        "signed_at": order.signed_at.isoformat() if order.signed_at else None,
+        "reject_reason": order.reject_reason,
+        "created_at": order.created_at.isoformat(),
+    } for order, coop, inf, prod in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/status-counts")

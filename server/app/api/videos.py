@@ -88,30 +88,37 @@ def delete_video(task_id: int, user: User = Depends(current_user), db: Session =
 
 
 @router.get("")
-def list_videos(status: str | None = None,
+def list_videos(status: str | None = None, q: str | None = None,
+                page: int = 1, page_size: int = 50,
                 user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """视频任务列表(商务只见自己达人;管理员全量)。status 可选过滤。"""
+    """视频任务列表(商务只见自己达人;管理员全量)。status 过滤 + q 搜索 + 分页。"""
+    from sqlalchemy import or_
     stmt = (select(VideoTask, Cooperation, Influencer, Product)
             .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
             .join(Influencer, Cooperation.influencer_id == Influencer.id)
-            .join(Product, VideoTask.product_id == Product.id)
-            .order_by(VideoTask.created_at.desc()))
+            .join(Product, VideoTask.product_id == Product.id))
     if user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
     if status:
         stmt = stmt.where(VideoTask.status == status)
-    out = []
-    for task, coop, inf, prod in db.execute(stmt.limit(300)).all():
-        out.append({
-            "id": task.id, "status": task.status, "blocked": task.blocked,
-            "influencer_id": inf.id, "influencer_nickname": inf.nickname,
-            "product_id": prod.id, "product_name": prod.name,
-            "round_no": coop.round_no,
-            "dy_url": task.dy_url,
-            "audit_result": task.audit_result,
-            "created_at": task.created_at.isoformat(),
-        })
-    return out
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Influencer.nickname.like(like), Product.name.like(like)))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    rows = db.execute(stmt.order_by(VideoTask.created_at.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    items = [{
+        "id": task.id, "status": task.status, "blocked": task.blocked,
+        "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+        "product_id": prod.id, "product_name": prod.name,
+        "round_no": coop.round_no,
+        "dy_url": task.dy_url,
+        "audit_result": task.audit_result,
+        "created_at": task.created_at.isoformat(),
+    } for task, coop, inf, prod in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/status-counts")
@@ -248,30 +255,38 @@ def promo_status_counts(user: User = Depends(current_user), db: Session = Depend
 
 
 @promotion_router.get("")
-def list_promotions(auth_status: str | None = None,
+def list_promotions(auth_status: str | None = None, q: str | None = None,
+                    page: int = 1, page_size: int = 50,
                     user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """投流列表(商务只见自己达人)。auth_status 可选过滤。"""
+    """投流列表(商务只见自己达人)。auth_status 过滤 + q 搜索 + 分页。"""
+    from sqlalchemy import or_
     stmt = (select(Promotion, Influencer, Product, VideoTask)
             .join(VideoTask, Promotion.video_task_id == VideoTask.id)
             .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
             .join(Influencer, Cooperation.influencer_id == Influencer.id)
-            .join(Product, VideoTask.product_id == Product.id)
-            .order_by(Promotion.created_at.desc()))
+            .join(Product, VideoTask.product_id == Product.id))
     if user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
     if auth_status:
         stmt = stmt.where(Promotion.auth_status == auth_status)
-    out = []
-    for promo, inf, prod, vt in db.execute(stmt.limit(300)).all():
-        out.append({
-            "id": promo.id, "auth_status": promo.auth_status,
-            "mode_snapshot": promo.mode_snapshot,
-            "influencer_id": inf.id, "influencer_nickname": inf.nickname,
-            "fans_count": inf.fans_count,
-            "douyin_id": inf.douyin_id, "douyin_uid": inf.douyin_uid,
-            "cooperation_code": inf.cooperation_code,
-            "product_id": prod.id, "product_name": prod.name,
-            "dy_url": vt.dy_url, "fail_reason": promo.fail_reason,
-            "created_at": promo.created_at.isoformat(),
-        })
-    return out
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Influencer.nickname.like(like), Product.name.like(like),
+                              Influencer.douyin_id.like(like)))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    rows = db.execute(stmt.order_by(Promotion.created_at.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    items = [{
+        "id": promo.id, "auth_status": promo.auth_status,
+        "mode_snapshot": promo.mode_snapshot,
+        "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+        "fans_count": inf.fans_count,
+        "douyin_id": inf.douyin_id, "douyin_uid": inf.douyin_uid,
+        "cooperation_code": inf.cooperation_code,
+        "product_id": prod.id, "product_name": prod.name,
+        "dy_url": vt.dy_url, "fail_reason": promo.fail_reason,
+        "created_at": promo.created_at.isoformat(),
+    } for promo, inf, prod, vt in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}

@@ -1,11 +1,15 @@
 <template>
   <div>
     <div class="page-toolbar">
-      <el-tabs v-model="tab" @tab-change="load" class="flex-tabs">
+      <el-tabs v-model="tab" @tab-change="reload" class="flex-tabs">
         <el-tab-pane v-for="s in TABS" :key="s.key" :name="s.key"
           :label="`${s.label}${counts[s.key] ? ' ' + counts[s.key] : ''}`" />
       </el-tabs>
-      <el-button type="primary" @click="openCreate">+ 新建寄样单</el-button>
+      <div style="display:flex; gap:8px; align-items:center">
+        <el-input v-model="search" placeholder="搜达人/产品/单号" clearable style="width:200px"
+          @keyup.enter="reload" @clear="reload" />
+        <el-button type="primary" @click="openCreate">+ 新建寄样单</el-button>
+      </div>
     </div>
 
     <el-table :data="rows" v-loading="loading">
@@ -44,6 +48,9 @@
         </template>
       </el-table-column>
     </el-table>
+    <el-pagination v-if="total > pageSize" background layout="prev, pager, next, total"
+      :total="total" :page-size="pageSize" :current-page="page"
+      style="margin-top:12px; justify-content:flex-end" @current-change="onPage" />
 
     <!-- 新建寄样单 -->
     <el-dialog v-model="createVisible" title="新建寄样单" width="480px">
@@ -111,6 +118,10 @@ const rows = ref([])
 const counts = ref({})
 const reasons = ref([])
 const loading = ref(false)
+const search = ref('')
+const page = ref(1)
+const total = ref(0)
+const pageSize = 50
 
 const rejectVisible = ref(false)
 const rejectReason = ref('')
@@ -158,12 +169,18 @@ const lastEvent = (row) => row.logistics_status?.last_event || row.logistics_sta
 async function load() {
   loading.value = true
   try {
-    rows.value = await api.get('/api/samples', { params: { status: tab.value } })
+    const r = await api.get('/api/samples', {
+      params: { status: tab.value, q: search.value || undefined, page: page.value, page_size: pageSize },
+    })
+    rows.value = r.items
+    total.value = r.total
     counts.value = await api.get('/api/samples/status-counts')
   } finally {
     loading.value = false
   }
 }
+function reload() { page.value = 1; load() }
+function onPage(p) { page.value = p; load() }
 
 async function pass(row) {
   await api.post(`/api/samples/${row.id}/audit`, { approve: true })

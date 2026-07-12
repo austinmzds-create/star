@@ -1,6 +1,8 @@
 <template>
   <div>
-    <div class="page-toolbar">
+    <div class="page-toolbar" style="display:flex; justify-content:space-between; align-items:center">
+      <el-input v-model="search" placeholder="搜产品名/店铺" clearable style="width:220px"
+        @keyup.enter="reload" @clear="reload" />
       <el-button type="primary" @click="openCreate">+ 新建产品</el-button>
     </div>
 
@@ -34,6 +36,9 @@
         <template #default="{ row }">{{ ft(row.created_at) }}</template>
       </el-table-column>
     </el-table>
+    <el-pagination v-if="total > pageSize" background layout="prev, pager, next, total"
+      :total="total" :page-size="pageSize" :current-page="page"
+      style="margin-top:12px; justify-content:flex-end" @current-change="onPage" />
 
     <!-- 新建产品 -->
     <el-dialog v-model="createVisible" title="新建产品" width="520px">
@@ -216,6 +221,10 @@ const AUDIT_TYPES = [
 ]
 
 const rows = ref([])
+const search = ref('')
+const page = ref(1)
+const total = ref(0)
+const pageSize = 50
 const createVisible = ref(false)
 const form = reactive({})
 const drawer = ref(false)
@@ -238,7 +247,15 @@ const imgPreviewMap = computed(() => {
   return Object.fromEntries(keys.map((k, i) => [k, urls[i]]))
 })
 
-async function load() { rows.value = await api.get('/api/products') }
+async function load() {
+  const r = await api.get('/api/products', {
+    params: { q: search.value || undefined, page: page.value, page_size: pageSize, paged: true },
+  })
+  rows.value = r.items
+  total.value = r.total
+}
+function reload() { page.value = 1; load() }
+function onPage(p) { page.value = p; load() }
 
 function openCreate() { Object.keys(form).forEach((k) => delete form[k]); form.default_commission = 5; createVisible.value = true }
 async function saveCreate() {

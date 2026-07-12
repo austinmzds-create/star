@@ -98,14 +98,32 @@ def _grant_count(db: Session, pid: int) -> int:
 
 
 @router.get("")
-def list_products(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.scalars(select(Product).order_by(Product.updated_at.desc())).all()
-    return [{"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
-             "product_image": storage.signed_url(p.product_image) if p.product_image else None,
-             "default_commission": float(p.default_commission) if p.default_commission else None,
-             "status": p.status, "material_count": len(p.materials),
-             "granted_count": _grant_count(db, p.id),
-             "created_at": p.created_at.isoformat()} for p in rows]
+def list_products(q: str | None = None, status: str | None = None,
+                  page: int = 1, page_size: int = 50, paged: bool = False,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """产品列表。q 搜索名称/店铺 + status 过滤 + 分页。
+    兼容:paged=False(默认)返回数组(旧调用/下拉选择器);paged=true 返回 {items,total}。"""
+    from sqlalchemy import or_
+    stmt = select(Product)
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(Product.name.like(like), Product.shop_name.like(like)))
+    if status:
+        stmt = stmt.where(Product.status == status)
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    q_stmt = stmt.order_by(Product.updated_at.desc())
+    if paged:
+        q_stmt = q_stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = db.scalars(q_stmt).all()
+    items = [{"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
+              "product_image": storage.signed_url(p.product_image) if p.product_image else None,
+              "default_commission": float(p.default_commission) if p.default_commission else None,
+              "status": p.status, "material_count": len(p.materials),
+              "granted_count": _grant_count(db, p.id),
+              "created_at": p.created_at.isoformat()} for p in rows]
+    return {"items": items, "total": total, "page": page, "page_size": page_size} if paged else items
 
 
 class MaterialIn(BaseModel):

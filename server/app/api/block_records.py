@@ -62,9 +62,11 @@ def create(body: BlockRecordIn, user: User = Depends(current_user), db: Session 
 
 @router.get("")
 def list_records(days: int | None = None, product_id: int | None = None,
-                 tag: str | None = None, starred: bool | None = None,
+                 tag: str | None = None, starred: bool | None = None, q: str | None = None,
+                 page: int = 1, page_size: int = 50,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """列表:近 N 天(happened_at)/产品/违规类型/只看加星 筛选;加星置顶再按时间倒序"""
+    """列表:近 N 天/产品/违规类型/只看加星/关键词 筛选;加星置顶再按时间倒序;分页。"""
+    from sqlalchemy import func, or_
     stmt = select(BlockRecord)
     if days is not None:
         stmt = stmt.where(BlockRecord.happened_at >= datetime.now() - timedelta(days=days))
@@ -74,8 +76,16 @@ def list_records(days: int | None = None, product_id: int | None = None,
         stmt = stmt.where(BlockRecord.tag == tag)
     if starred is not None:
         stmt = stmt.where(BlockRecord.starred == starred)
-    stmt = stmt.order_by(BlockRecord.starred.desc(), BlockRecord.happened_at.desc())
-    return [_serialize(r, db) for r in db.scalars(stmt).all()]
+    if q:
+        like = f"%{q}%"
+        stmt = stmt.where(or_(BlockRecord.text.like(like), BlockRecord.tag.like(like)))
+    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 200)
+    stmt = (stmt.order_by(BlockRecord.starred.desc(), BlockRecord.happened_at.desc())
+            .offset((page - 1) * page_size).limit(page_size))
+    items = [_serialize(r, db) for r in db.scalars(stmt).all()]
+    return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/tags")
