@@ -35,7 +35,12 @@ const emit = defineEmits(['update:modelValue'])
 const keys = computed(() => props.modelValue || [])
 // 上传后记录 key→预览URL(OSS 走签名URL,本地走 /api/files);未知则回退本地代理
 const previews = reactive({ ...props.initialPreviews })
-watch(() => props.initialPreviews, (v) => Object.assign(previews, v))
+function mergePreviews(incoming = {}) {
+  for (const [key, url] of Object.entries(incoming)) {
+    if (url) previews[key] = url
+  }
+}
+watch(() => props.initialPreviews, mergePreviews)
 const urlOf = (k) => previews[k] || `/api/files/${k}`
 
 async function doUpload({ file }) {
