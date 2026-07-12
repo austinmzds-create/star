@@ -34,8 +34,8 @@ const routes = [
       { path: 'videos', component: Videos },
       { path: 'products', component: Products },
       { path: 'block-records', component: BlockRecords },
-      { path: 'dashboard', component: Dashboard },
-      { path: 'settings', component: Settings },
+      { path: 'dashboard', component: Dashboard, meta: { adminOnly: true } },
+      { path: 'settings', component: Settings, meta: { adminOnly: true } },
     ],
   },
   // 达人 H5:发朋友圈的入口
@@ -55,6 +55,8 @@ router.beforeEach((to) => {
   // 达人不得进入内部端页面
   const user = JSON.parse(localStorage.getItem('user') || '{}')
   if (user.role === 'influencer') return '/h5'
+  // 仅管理员页面(配置中心 / 全员看板):商务不可进
+  if (to.meta?.adminOnly && user.role !== 'admin') return '/workbench'
 })
 
 export default router

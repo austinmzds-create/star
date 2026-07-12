@@ -8,9 +8,34 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_user
+from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, Promotion, User,
                       VideoTask)
+
+
+def _load_owned_task(db, user, task_id):
+    """加载视频任务并校验归属(商务只操作自己名下达人)。"""
+    task = db.get(VideoTask, task_id)
+    if not task:
+        raise HTTPException(404, "视频任务不存在")
+    coop = db.get(Cooperation, task.cooperation_id)
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if not owns_or_admin(user, inf.owner_bd_id if inf else None):
+        raise HTTPException(403, "无权操作该视频任务")
+    return task
+
+
+def _load_owned_promo(db, user, promo_id):
+    """加载投流记录并校验归属。"""
+    promo = db.get(Promotion, promo_id)
+    if not promo:
+        raise HTTPException(404, "投流记录不存在")
+    task = db.get(VideoTask, promo.video_task_id)
+    coop = db.get(Cooperation, task.cooperation_id) if task else None
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if not owns_or_admin(user, inf.owner_bd_id if inf else None):
+        raise HTTPException(403, "无权操作该投流记录")
+    return promo
 
 # ============================ 视频审核 ============================
 
@@ -53,13 +78,7 @@ def create_video(body: CreateVideoIn,
 @router.delete("/{task_id}")
 def delete_video(task_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """删除视频任务(连带其投流记录);已通过并已发起投流的需先处理投流。"""
-    task = db.get(VideoTask, task_id)
-    if not task:
-        raise HTTPException(404, "视频任务不存在")
-    coop = db.get(Cooperation, task.cooperation_id)
-    inf = db.get(Influencer, coop.influencer_id) if coop else None
-    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
-        raise HTTPException(403, "无权删除")
+    task = _load_owned_task(db, user, task_id)
     promos = db.scalars(select(Promotion).where(Promotion.video_task_id == task.id)).all()
     for p in promos:
         db.delete(p)
@@ -118,9 +137,7 @@ class AuditVideoIn(BaseModel):
 def audit_video(task_id: int, body: AuditVideoIn,
                 user: User = Depends(current_user), db: Session = Depends(get_db)):
     """审核视频:approve→approved;否则 rejected 或 blocked(卡审)。"""
-    task = db.get(VideoTask, task_id)
-    if not task:
-        raise HTTPException(404, "视频任务不存在")
+    task = _load_owned_task(db, user, task_id)
     if task.status not in ("submitted", "rejected", "blocked"):
         raise HTTPException(400, "该视频已通过,无需重复审核")
 
@@ -170,9 +187,7 @@ class CreatePromotionIn(BaseModel):
 def create_promotion(body: CreatePromotionIn,
                      user: User = Depends(current_user), db: Session = Depends(get_db)):
     """为某 video_task 发起投流。mode_snapshot 取该达人当前 promo_mode 快照进来。"""
-    task = db.get(VideoTask, body.video_task_id)
-    if not task:
-        raise HTTPException(404, "视频任务不存在")
+    task = _load_owned_task(db, user, body.video_task_id)
     coop = db.get(Cooperation, task.cooperation_id)
     if not coop:
         raise HTTPException(400, "视频任务未关联合作轮次")
@@ -197,9 +212,7 @@ class TransitionIn(BaseModel):
 def transition(promo_id: int, body: TransitionIn,
                user: User = Depends(current_user), db: Session = Depends(get_db)):
     """状态机流转,带合法流转校验(非法 action 报 400)。"""
-    promo = db.get(Promotion, promo_id)
-    if not promo:
-        raise HTTPException(404, "投流记录不存在")
+    promo = _load_owned_promo(db, user, promo_id)
     allowed = TRANSITIONS.get(promo.auth_status, {})
     if body.action not in allowed:
         raise HTTPException(400,
@@ -215,14 +228,7 @@ def transition(promo_id: int, body: TransitionIn,
 @promotion_router.delete("/{promo_id}")
 def delete_promotion(promo_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """删除投流记录(投错/重复时清理)。"""
-    promo = db.get(Promotion, promo_id)
-    if not promo:
-        raise HTTPException(404, "投流记录不存在")
-    task = db.get(VideoTask, promo.video_task_id)
-    coop = db.get(Cooperation, task.cooperation_id) if task else None
-    inf = db.get(Influencer, coop.influencer_id) if coop else None
-    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
-        raise HTTPException(403, "无权删除")
+    promo = _load_owned_promo(db, user, promo_id)
     db.delete(promo)
     db.commit()
     return {"ok": True}

@@ -7,12 +7,24 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_user
+from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, RejectReason,
                       SampleOrder, User)
 from ..services.logistics import get_provider
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
+
+
+def _load_owned_order(db: Session, user: User, order_id: int) -> SampleOrder:
+    """加载寄样单并校验归属:商务只能操作自己名下达人的单;管理员不限。"""
+    order = db.get(SampleOrder, order_id)
+    if not order:
+        raise HTTPException(404, "寄样单不存在")
+    coop = db.get(Cooperation, order.cooperation_id)
+    inf = db.get(Influencer, coop.influencer_id) if coop else None
+    if not owns_or_admin(user, inf.owner_bd_id if inf else None):
+        raise HTTPException(403, "无权操作该寄样单")
+    return order
 
 
 @router.get("")
@@ -88,13 +100,7 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
 @router.delete("/{order_id}")
 def delete_sample(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """删除寄样单:仅待审批/已拒绝可删(已发货有物流留证,不允许删)。"""
-    order = db.get(SampleOrder, order_id)
-    if not order:
-        raise HTTPException(404, "寄样单不存在")
-    coop = db.get(Cooperation, order.cooperation_id)
-    inf = db.get(Influencer, coop.influencer_id) if coop else None
-    if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
-        raise HTTPException(403, "无权删除")
+    order = _load_owned_order(db, user, order_id)
     if order.status not in ("pending", "rejected"):
         raise HTTPException(400, "该寄样单已进入发货流程,不能删除")
     db.delete(order)
@@ -110,8 +116,8 @@ class AuditIn(BaseModel):
 @router.post("/{order_id}/audit")
 def audit(order_id: int, body: AuditIn,
           user: User = Depends(current_user), db: Session = Depends(get_db)):
-    order = db.get(SampleOrder, order_id)
-    if not order or order.status != "pending":
+    order = _load_owned_order(db, user, order_id)
+    if order.status != "pending":
         raise HTTPException(404, "寄样单不存在或已处理")
     order.status = "approved" if body.approve else "rejected"
     order.reject_reason = None if body.approve else (body.reject_reason or "资质未达标,暂不寄样")
@@ -129,8 +135,8 @@ class ShipIn(BaseModel):
 @router.post("/{order_id}/ship")
 async def ship(order_id: int, body: ShipIn,
                user: User = Depends(current_user), db: Session = Depends(get_db)):
-    order = db.get(SampleOrder, order_id)
-    if not order or order.status != "approved":
+    order = _load_owned_order(db, user, order_id)
+    if order.status != "approved":
         raise HTTPException(400, "只有已通过的寄样单才能发货")
     provider = get_provider()
     courier = body.courier or await provider.identify_courier(body.tracking_no)
@@ -147,8 +153,8 @@ async def ship(order_id: int, body: ShipIn,
 @router.post("/{order_id}/track")
 async def track(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """实时查询最新物流轨迹并回写(手动刷新;订阅回调未到时的兜底)"""
-    order = db.get(SampleOrder, order_id)
-    if not order or not order.tracking_no or not order.courier_company:
+    order = _load_owned_order(db, user, order_id)
+    if not order.tracking_no or not order.courier_company:
         raise HTTPException(400, "该寄样单尚未发货或缺快递公司")
     phone = (order.address_snapshot or {}).get("tel")
     result = await get_provider().query_realtime(order.tracking_no, order.courier_company, phone)

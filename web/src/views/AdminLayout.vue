@@ -13,8 +13,8 @@
         <el-menu-item index="/videos">视频与投流</el-menu-item>
         <el-menu-item index="/products">产品中心</el-menu-item>
         <el-menu-item index="/block-records">卡审知识库</el-menu-item>
-        <el-menu-item index="/dashboard">总览看板</el-menu-item>
-        <el-menu-item index="/settings">配置中心</el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/dashboard">总览看板</el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/settings">配置中心</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>

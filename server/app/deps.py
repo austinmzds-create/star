@@ -35,10 +35,15 @@ def current_user(authorization: str = Header(""), db: Session = Depends(get_db))
 
 
 def current_admin(user: User = Depends(current_user)) -> User:
-    # 决策(2026-07):商务权限暂时 = 管理员,内部账号(admin/bd)均可
-    if user.role not in ("admin", "bd"):
-        raise HTTPException(403, "需要内部账号权限")
+    # 决策(2026-07 v0.4):商务只管自己的达人;配置中心/商务管理/全员看板 收归管理员专属
+    if user.role != "admin":
+        raise HTTPException(403, "该操作仅管理员可用")
     return user
+
+
+def owns_or_admin(user: User, owner_bd_id: int | None) -> bool:
+    """管理员看全部;商务只允许操作自己名下(owner_bd_id==本人)的数据。"""
+    return user.role == "admin" or owner_bd_id == user.id
 
 
 def current_influencer(authorization: str = Header(""), db: Session = Depends(get_db)) -> Influencer:

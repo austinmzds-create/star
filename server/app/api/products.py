@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_admin, current_user
+from ..deps import current_user, owns_or_admin
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       OrderRecord, Product, SampleOrder, User,
                       VideoTask)
@@ -35,7 +35,7 @@ class ProductIn(BaseModel):
 
 
 @router.post("")
-def create(body: ProductIn, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+def create(body: ProductIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     if data.get("default_commission") is not None:
         data["default_commission"] = Decimal(str(data["default_commission"]))
@@ -50,7 +50,7 @@ def create(body: ProductIn, admin: User = Depends(current_admin), db: Session = 
 
 @router.put("/{product_id}")
 def update_product(product_id: int, body: ProductIn,
-                   admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+                   user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
@@ -66,7 +66,7 @@ def update_product(product_id: int, body: ProductIn,
 
 
 @router.post("/{product_id}/toggle")
-def toggle_status(product_id: int, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+def toggle_status(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
@@ -103,7 +103,7 @@ class MaterialIn(BaseModel):
 
 @router.post("/{product_id}/materials")
 def add_material(product_id: int, body: MaterialIn,
-                 admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+                 user: User = Depends(current_user), db: Session = Depends(get_db)):
     if not db.get(Product, product_id):
         raise HTTPException(404, "产品不存在")
     m = Material(product_id=product_id, **body.model_dump())
@@ -114,7 +114,7 @@ def add_material(product_id: int, body: MaterialIn,
 
 
 @router.delete("/materials/{material_id}")
-def delete_material(material_id: int, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+def delete_material(material_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     m = db.get(Material, material_id)
     if m:
         db.delete(m)
@@ -152,9 +152,20 @@ class GrantIn(BaseModel):
     influencer_id: int
 
 
+def _assert_owns_influencer(db: Session, user: User, influencer_id: int) -> Influencer:
+    """商务只能对自己名下达人操作;管理员不限。"""
+    inf = db.get(Influencer, influencer_id)
+    if not inf:
+        raise HTTPException(404, "达人不存在")
+    if not owns_or_admin(user, inf.owner_bd_id):
+        raise HTTPException(403, "只能操作自己名下的达人")
+    return inf
+
+
 @router.post("/{product_id}/grant")
 def grant(product_id: int, body: GrantIn,
           user: User = Depends(current_user), db: Session = Depends(get_db)):
+    _assert_owns_influencer(db, user, body.influencer_id)
     db.merge(AccessGrant(influencer_id=body.influencer_id, product_id=product_id,
                          granted_by=user.id))
     db.commit()
@@ -163,11 +174,13 @@ def grant(product_id: int, body: GrantIn,
 
 @router.get("/{product_id}/grants")
 def list_grants(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.execute(
-        select(AccessGrant, Influencer).join(Influencer, AccessGrant.influencer_id == Influencer.id)
-        .where(AccessGrant.product_id == product_id)
-        .order_by(AccessGrant.granted_at.desc())
-    ).all()
+    stmt = (select(AccessGrant, Influencer)
+            .join(Influencer, AccessGrant.influencer_id == Influencer.id)
+            .where(AccessGrant.product_id == product_id)
+            .order_by(AccessGrant.granted_at.desc()))
+    if user.role != "admin":   # 商务只见自己名下达人的授权
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    rows = db.execute(stmt).all()
     return [{"influencer_id": inf.id, "nickname": inf.nickname, "douyin_id": inf.douyin_id,
              "granted_at": g.granted_at.isoformat()} for g, inf in rows]
 
@@ -175,6 +188,7 @@ def list_grants(product_id: int, user: User = Depends(current_user), db: Session
 @router.delete("/{product_id}/grant/{influencer_id}")
 def remove_grant(product_id: int, influencer_id: int,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    _assert_owns_influencer(db, user, influencer_id)
     row = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
                                                AccessGrant.influencer_id == influencer_id)).first()
     if row:
@@ -187,26 +201,27 @@ def remove_grant(product_id: int, influencer_id: int,
 
 @router.get("/{product_id}/activity")
 def activity(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    samples = []
-    for o, inf in db.execute(
-        select(SampleOrder, Influencer)
-        .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
-        .join(Influencer, Cooperation.influencer_id == Influencer.id)
-        .where(SampleOrder.product_id == product_id)
-        .order_by(SampleOrder.created_at.desc()).limit(100)
-    ).all():
-        samples.append({"id": o.id, "nickname": inf.nickname, "status": o.status,
-                        "created_at": o.created_at.isoformat()})
-    videos = []
-    for v, inf in db.execute(
-        select(VideoTask, Influencer)
-        .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
-        .join(Influencer, Cooperation.influencer_id == Influencer.id)
-        .where(VideoTask.product_id == product_id)
-        .order_by(VideoTask.created_at.desc()).limit(100)
-    ).all():
-        videos.append({"id": v.id, "nickname": inf.nickname, "status": v.status,
-                       "created_at": v.created_at.isoformat()})
+    scoped = user.role != "admin"   # 商务只见自己名下达人在本品的动态
+    s_stmt = (select(SampleOrder, Influencer)
+              .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
+              .join(Influencer, Cooperation.influencer_id == Influencer.id)
+              .where(SampleOrder.product_id == product_id)
+              .order_by(SampleOrder.created_at.desc()).limit(100))
+    if scoped:
+        s_stmt = s_stmt.where(Influencer.owner_bd_id == user.id)
+    samples = [{"id": o.id, "nickname": inf.nickname, "status": o.status,
+                "created_at": o.created_at.isoformat()}
+               for o, inf in db.execute(s_stmt).all()]
+    v_stmt = (select(VideoTask, Influencer)
+              .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
+              .join(Influencer, Cooperation.influencer_id == Influencer.id)
+              .where(VideoTask.product_id == product_id)
+              .order_by(VideoTask.created_at.desc()).limit(100))
+    if scoped:
+        v_stmt = v_stmt.where(Influencer.owner_bd_id == user.id)
+    videos = [{"id": v.id, "nickname": inf.nickname, "status": v.status,
+               "created_at": v.created_at.isoformat()}
+              for v, inf in db.execute(v_stmt).all()]
     return {"samples": samples, "videos": videos}
 
 
@@ -221,6 +236,7 @@ class OrderIn(BaseModel):
 def record_order(product_id: int, body: OrderIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     """出单登记(蝉妈妈接入前人工登记 GMV)"""
+    _assert_owns_influencer(db, user, body.influencer_id)
     try:
         order_date = datetime.fromisoformat(body.order_date)
     except (ValueError, TypeError):

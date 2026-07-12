@@ -23,8 +23,11 @@ async def upload(file: UploadFile, prefix: str = "materials",
 
 
 # 本地兜底静态服务(未配 OSS 时;配了 OSS 走签名 URL 不经这里)
+# 必须带 signed_url() 生成的 e/s 签名参数,否则拒绝(防止凭 key 直接拉他人文件/截图)
 @router.get("/files/{key:path}")
-def serve_local(key: str):
+def serve_local(key: str, e: str | None = None, s: str | None = None):
+    if not storage.verify_local(key, e, s):
+        raise HTTPException(403, "链接无效或已过期")
     base = os.path.abspath(storage.LOCAL_DIR)
     path = os.path.abspath(os.path.join(base, key))
     # 加分隔符防止 /uploads 前缀误配 /uploads_evil,且拦截 ../ 穿越

@@ -48,7 +48,10 @@
 
       <!-- 表单:手动模式直接显示;粘贴模式识别后显示 -->
       <template v-if="mode === 'manual' || parsed">
-        <el-alert v-if="parsed && parsed.duplicate" type="warning" :closable="false" style="margin: 12px 0"
+        <el-alert v-if="parsed && parsed.duplicate && parsed.duplicate.owned_by_other_bd"
+          type="error" :closable="false" style="margin: 12px 0"
+          :title="`该账号已被商务 ${parsed.duplicate.owner_bd_name || '其他同事'} 对接,请勿重复建档`" />
+        <el-alert v-else-if="parsed && parsed.duplicate" type="warning" :closable="false" style="margin: 12px 0"
           :title="`老达人:${parsed.duplicate.nickname},已合作 ${parsed.duplicate.round_count} 轮,将挂到已有档案`" />
         <el-form label-width="90px" style="margin-top: 12px">
           <el-row :gutter="12">

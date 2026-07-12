@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..deps import current_user
+from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, LevelChangeLog, Product,
                       Promotion, SampleOrder, User, VideoTask)
 from ..services import levels
@@ -43,9 +43,15 @@ async def parse(body: ParseIn, user: User = Depends(current_user), db: Session =
     if conds:
         existing = db.scalars(select(Influencer).where(or_(*conds))).first()
         if existing:
-            dup = {"id": existing.id, "nickname": existing.nickname,
-                   "round_count": len(existing.cooperations),
-                   "owner_bd_id": existing.owner_bd_id}
+            if owns_or_admin(user, existing.owner_bd_id):
+                dup = {"id": existing.id, "nickname": existing.nickname,
+                       "round_count": len(existing.cooperations),
+                       "owner_bd_id": existing.owner_bd_id}
+            else:
+                # 已被其他商务对接:只提示归属,不泄漏其达人档案(数据隔离)
+                owner = db.get(User, existing.owner_bd_id) if existing.owner_bd_id else None
+                dup = {"owned_by_other_bd": True,
+                       "owner_bd_name": owner.display_name if owner else None}
     return {**result, "duplicate": dup}
 
 

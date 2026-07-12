@@ -6,12 +6,33 @@
 
 未配 OSS 时存到 server/_uploads/,signed_url() 返回 /files/{key} 由本地静态路由提供。
 """
+import hashlib
+import hmac
 import os
+import time
 import uuid
 
 from ..config import settings
 
 LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "_uploads")
+
+
+def _sign_local(key: str, exp: int) -> str:
+    return hmac.new(settings.secret_key.encode(), f"{key}:{exp}".encode(),
+                    hashlib.sha256).hexdigest()[:32]
+
+
+def verify_local(key: str, e: str | None, s: str | None) -> bool:
+    """校验本地文件签名 URL(防止未授权者凭 key 直接下载)。"""
+    if not e or not s:
+        return False
+    try:
+        exp = int(e)
+    except (ValueError, TypeError):
+        return False
+    if exp < int(time.time()):
+        return False
+    return hmac.compare_digest(_sign_local(key, exp), s)
 
 _oss_bucket = None
 _oss_mode = None  # "ak" / "anonymous" / None
@@ -60,10 +81,12 @@ def save(data: bytes, filename: str, prefix: str = "materials") -> str:
     return key
 
 
-def signed_url(key: str, expires: int = 3600) -> str:
+def signed_url(key: str, expires: int = 86400) -> str:
     b = _bucket()
     if not b:
-        return f"/files/{key}"  # 本地静态路由
+        # 本地兜底:带 HMAC 签名 + 过期时间,避免凭 key 直接下载(默认 24h)
+        exp = int(time.time()) + expires
+        return f"/api/files/{key}?e={exp}&s={_sign_local(key, exp)}"
     if _oss_mode == "ak":
         return b.sign_url("GET", key, expires)
     return _public_url(key)  # 匿名/公共 bucket 直接给公共 URL
