@@ -4,19 +4,73 @@
       <div class="brand">
         <div class="logo">达</div>
         <h2>达人管理平台</h2>
-        <p class="sub">手机号验证码登录</p>
+        <p class="sub">手机号验证码或内部账号登录</p>
       </div>
-      <el-input v-model="phone" placeholder="手机号" size="large" maxlength="11" class="fld" />
-      <div class="code-row">
-        <el-input v-model="code" placeholder="验证码" size="large" maxlength="6" />
-        <el-button size="large" :disabled="cd > 0" @click="send">
-          {{ cd > 0 ? `${cd}s` : '获取验证码' }}
-        </el-button>
-      </div>
-      <el-button type="primary" size="large" class="submit" :loading="loading" @click="login">
-        登录
-      </el-button>
-      <p class="hint">管理员/商务/达人统一手机登录,身份自动识别</p>
+      <el-tabs v-model="activeMode" stretch class="login-tabs">
+        <el-tab-pane label="手机号登录" name="phone">
+          <el-input
+            v-model="phone"
+            placeholder="手机号"
+            size="large"
+            maxlength="11"
+            class="fld"
+          />
+          <div class="code-row">
+            <el-input
+              v-model="code"
+              placeholder="验证码"
+              size="large"
+              maxlength="6"
+              @keyup.enter="login"
+            />
+            <el-button size="large" :disabled="cd > 0" @click="send">
+              {{ cd > 0 ? `${cd}s` : '获取验证码' }}
+            </el-button>
+          </div>
+          <el-button
+            type="primary"
+            size="large"
+            class="submit"
+            :loading="loading"
+            @click="login"
+          >
+            登录
+          </el-button>
+          <p class="hint">管理员、商务、达人均可使用，身份自动识别</p>
+        </el-tab-pane>
+        <el-tab-pane name="password">
+          <template #label>
+            <span data-testid="password-tab">账号密码登录</span>
+          </template>
+          <el-input
+            v-model="username"
+            placeholder="账号"
+            size="large"
+            class="fld"
+            @keyup.enter="passwordLogin"
+          />
+          <el-input
+            v-model="password"
+            placeholder="密码"
+            type="password"
+            show-password
+            size="large"
+            class="fld password-field"
+            @keyup.enter="passwordLogin"
+          />
+          <el-button
+            data-testid="password-submit"
+            type="primary"
+            size="large"
+            class="submit"
+            :loading="passwordLoading"
+            @click="passwordLogin"
+          >
+            登录
+          </el-button>
+          <p class="hint">仅管理员和商务使用账号密码登录</p>
+        </el-tab-pane>
+      </el-tabs>
     </div>
   </div>
 </template>
@@ -31,6 +85,10 @@ const phone = ref('')
 const code = ref('')
 const cd = ref(0)
 const loading = ref(false)
+const activeMode = ref('phone')
+const username = ref('')
+const password = ref('')
+const passwordLoading = ref(false)
 const router = useRouter()
 
 async function send() {
@@ -64,6 +122,26 @@ async function login() {
     loading.value = false
   }
 }
+
+async function passwordLogin() {
+  if (!username.value || !password.value) {
+    return ElMessage.warning('请填写账号和密码')
+  }
+  passwordLoading.value = true
+  try {
+    const data = await api.post('/api/auth/login', {
+      username: username.value,
+      password: password.value,
+    })
+    localStorage.setItem('token', data.token)
+    localStorage.setItem('user', JSON.stringify(data.user))
+    await router.push('/workbench')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '登录失败')
+  } finally {
+    passwordLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -83,7 +161,9 @@ async function login() {
 }
 .brand h2 { margin: 0; font-size: 20px; color: #1f2637; }
 .sub { margin: 6px 0 0; color: #8a93a6; font-size: 13px; }
+.login-tabs { margin-top: -4px; }
 .fld { margin-bottom: 12px; }
+.password-field { margin-bottom: 20px; }
 .code-row { display: flex; gap: 8px; margin-bottom: 20px; }
 .submit { width: 100%; }
 .hint { margin: 16px 0 0; text-align: center; color: #a6adbd; font-size: 12px; }
