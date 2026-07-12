@@ -59,6 +59,19 @@
       </template>
     </el-dialog>
 
+    <!-- 编辑出单 -->
+    <el-dialog v-model="editOrderVisible" title="编辑出单" width="420px" append-to-body>
+      <el-form label-width="72px">
+        <el-form-item label="日期"><el-date-picker v-model="orderEdit.order_date" type="date" value-format="YYYY-MM-DD" style="width:100%" /></el-form-item>
+        <el-form-item label="金额"><el-input-number v-model="orderEdit.amount" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="orderEdit.note" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editOrderVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveOrder">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 编辑素材 -->
     <el-dialog v-model="editMatVisible" title="编辑素材" width="480px" append-to-body>
       <el-form label-width="80px">
@@ -159,6 +172,30 @@
             </el-form>
           </el-tab-pane>
 
+          <!-- 出单登记(GMV) -->
+          <el-tab-pane label="出单登记" name="orders">
+            <div class="mat-add">
+              <InfluencerSelect v-model="orderForm.influencer_id" style="flex:1" />
+              <el-date-picker v-model="orderForm.order_date" type="date" placeholder="出单日期"
+                value-format="YYYY-MM-DD" style="width:150px" />
+              <el-input-number v-model="orderForm.amount" :min="0" :precision="2" placeholder="金额" :controls="false" style="width:120px" />
+              <el-input v-model="orderForm.note" placeholder="备注(选填)" style="width:140px" />
+              <el-button type="primary" size="small" @click="addOrder">登记</el-button>
+            </div>
+            <el-table :data="orders" size="small">
+              <el-table-column prop="influencer_nickname" label="达人" />
+              <el-table-column prop="order_date" label="日期" width="120" />
+              <el-table-column label="金额" width="110"><template #default="{ row }">¥{{ row.amount }}</template></el-table-column>
+              <el-table-column prop="note" label="备注" show-overflow-tooltip />
+              <el-table-column width="110"><template #default="{ row }">
+                <el-button size="small" text @click="openEditOrder(row)">改</el-button>
+                <el-button size="small" text type="danger" @click="delOrder(row)">删</el-button>
+              </template></el-table-column>
+            </el-table>
+            <el-empty v-if="!orders.length" description="暂无出单登记" :image-size="50" />
+            <div class="muted" style="text-align:right; margin-top:8px">合计 GMV: ¥{{ orderTotal.toFixed(2) }}</div>
+          </el-tab-pane>
+
           <!-- 授权达人 -->
           <el-tab-pane label="授权达人" name="grants">
             <div class="mat-add">
@@ -235,6 +272,11 @@ const matForm = reactive({})
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
+const orders = ref([])
+const orderForm = reactive({ influencer_id: null, order_date: '', amount: null, note: '' })
+const orderTotal = computed(() => orders.value.reduce((s, o) => s + Number(o.amount || 0), 0))
+const editOrderVisible = ref(false)
+const orderEdit = reactive({})
 
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
@@ -270,6 +312,33 @@ async function open(row) {
   Object.keys(matForm).forEach((k) => delete matForm[k])
   grants.value = await api.get(`/api/products/${row.id}/grants`)
   act.value = await api.get(`/api/products/${row.id}/activity`)
+  orders.value = await api.get(`/api/products/${row.id}/orders`)
+}
+
+async function loadOrders() { orders.value = await api.get(`/api/products/${detail.value.id}/orders`) }
+async function addOrder() {
+  if (!orderForm.influencer_id || !orderForm.order_date || orderForm.amount == null) {
+    return ElMessage.warning('请填写达人、日期、金额')
+  }
+  try {
+    await api.post(`/api/products/${detail.value.id}/orders`, { ...orderForm })
+    Object.assign(orderForm, { influencer_id: null, order_date: '', amount: null, note: '' })
+    ElMessage.success('已登记'); loadOrders()
+  } catch (e) { ElMessage.error(e.response?.data?.detail || '登记失败') }
+}
+function openEditOrder(row) {
+  Object.assign(orderEdit, { id: row.id, order_date: row.order_date, amount: row.amount, note: row.note })
+  editOrderVisible.value = true
+}
+async function saveOrder() {
+  await api.patch(`/api/products/orders/${orderEdit.id}`, {
+    order_date: orderEdit.order_date, amount: orderEdit.amount, note: orderEdit.note,
+  })
+  editOrderVisible.value = false; ElMessage.success('已保存'); loadOrders()
+}
+async function delOrder(row) {
+  await ElMessageBox.confirm('确认删除该出单记录?', '提示', { type: 'warning' })
+  await api.delete(`/api/products/orders/${row.id}`); ElMessage.success('已删除'); loadOrders()
 }
 async function refreshDetail() { detail.value = await api.get(`/api/products/${detail.value.id}`) }
 

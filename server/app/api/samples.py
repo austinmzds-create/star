@@ -105,6 +105,23 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
     return {"id": order.id}
 
 
+class SampleEditIn(BaseModel):
+    address: dict | None = None   # {name, tel, address}
+
+
+@router.patch("/{order_id}")
+def edit_sample(order_id: int, body: SampleEditIn,
+                user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """编辑寄样单收件地址快照(仅待审批时可改;发货后地址已固化不可动)。"""
+    order = _load_owned_order(db, user, order_id)
+    if order.status != "pending":
+        raise HTTPException(400, "仅待审批的寄样单可修改地址")
+    if body.address is not None:
+        order.address_snapshot = body.address
+    db.commit()
+    return {"ok": True}
+
+
 @router.delete("/{order_id}")
 def delete_sample(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """删除寄样单:仅待审批/已拒绝可删(已发货有物流留证,不允许删)。"""

@@ -297,8 +297,64 @@ def record_order(product_id: int, body: OrderIn,
         order_date = datetime.fromisoformat(body.order_date)
     except (ValueError, TypeError):
         raise HTTPException(400, "出单日期格式不正确")
-    db.add(OrderRecord(influencer_id=body.influencer_id, product_id=product_id,
-                       order_date=order_date,
-                       amount=Decimal(str(body.amount)), note=body.note, recorded_by=user.id))
+    o = OrderRecord(influencer_id=body.influencer_id, product_id=product_id,
+                    order_date=order_date,
+                    amount=Decimal(str(body.amount)), note=body.note, recorded_by=user.id)
+    db.add(o)
+    db.commit()
+    return {"id": o.id}
+
+
+@router.get("/{product_id}/orders")
+def list_orders(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """本产品的出单登记(商务只见自己名下达人的登记)。"""
+    stmt = (select(OrderRecord, Influencer)
+            .join(Influencer, OrderRecord.influencer_id == Influencer.id)
+            .where(OrderRecord.product_id == product_id)
+            .order_by(OrderRecord.order_date.desc()))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    return [{"id": o.id, "influencer_id": inf.id, "influencer_nickname": inf.nickname,
+             "order_date": o.order_date.date().isoformat(), "amount": float(o.amount),
+             "note": o.note} for o, inf in db.execute(stmt).all()]
+
+
+class OrderEditIn(BaseModel):
+    order_date: str | None = None
+    amount: float | None = None
+    note: str | None = None
+
+
+def _load_owned_order_record(db: Session, user: User, order_id: int) -> OrderRecord:
+    o = db.get(OrderRecord, order_id)
+    if not o:
+        raise HTTPException(404, "出单记录不存在")
+    inf = db.get(Influencer, o.influencer_id)
+    if not owns_or_admin(user, inf.owner_bd_id if inf else None):
+        raise HTTPException(403, "只能操作自己名下达人的出单记录")
+    return o
+
+
+@router.patch("/orders/{order_id}")
+def edit_order(order_id: int, body: OrderEditIn,
+               user: User = Depends(current_user), db: Session = Depends(get_db)):
+    o = _load_owned_order_record(db, user, order_id)
+    if body.order_date is not None:
+        try:
+            o.order_date = datetime.fromisoformat(body.order_date)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "出单日期格式不正确")
+    if body.amount is not None:
+        o.amount = Decimal(str(body.amount))
+    if body.note is not None:
+        o.note = body.note
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/orders/{order_id}")
+def delete_order(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    o = _load_owned_order_record(db, user, order_id)
+    db.delete(o)
     db.commit()
     return {"ok": True}
