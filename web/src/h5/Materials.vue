@@ -55,16 +55,9 @@
             <el-tag size="small">{{ TYPE_LABEL[m.type] || m.type }}</el-tag>
             <span v-if="m.title" class="mtitle">{{ m.title }}</span>
           </div>
-          <div v-if="m.parsed_text" class="copy-block">
-            <div class="txt">{{ m.parsed_text }}</div>
-            <el-button size="small" @click="copy(m.parsed_text)">复制文案</el-button>
-          </div>
-          <div v-if="m.report_id" class="muted rid">报告ID: {{ m.report_id }}(发布视频时挂在下方)
-            <el-button size="small" text @click="copy(m.report_id)">复制</el-button>
-          </div>
-          <div v-if="m.source_link || (m.downloadable && m.url)" class="mat-actions">
-            <el-link v-if="m.source_link" :href="m.source_link" target="_blank" type="primary">查看爆款</el-link>
-            <el-button v-if="m.downloadable && m.url" size="small" type="primary" plain @click="download(m)">下载 / 查看</el-button>
+          <MaterialPreview :material="m" />
+          <div v-if="m.downloadable && m.url" class="mat-actions">
+            <el-button size="small" type="primary" plain @click="download(m)">下载素材</el-button>
           </div>
         </el-card>
       </template>
@@ -79,6 +72,7 @@ import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import MaterialPreview from '../components/MaterialPreview.vue'
 
 const TYPE_LABEL = {
   video_ai: 'AI视频', video_hot: '爆款参考', video_output: '达人成片',
@@ -116,9 +110,6 @@ const lastEvent = computed(() => d.value?.sample?.logistics_status?.last_event |
 
 function goProduct(id) {
   if (id !== Number(route.params.id)) router.push(`/h5/products/${id}`)
-}
-async function copy(t) {
-  try { await navigator.clipboard.writeText(t); ElMessage.success('已复制') } catch { ElMessage.info('请长按复制') }
 }
 async function download(m) {
   const { url } = await api.post(`/api/h5/materials/${m.id}/download`)
@@ -164,9 +155,6 @@ h3 { margin: 18px 0 8px; font-size: 15px; }
 .mat { margin-top: 8px; }
 .mat-head { display: flex; align-items: center; gap: 8px; }
 .mtitle { font-weight: 500; }
-.copy-block { margin-top: 8px; background: #f8f9fc; border-radius: 8px; padding: 10px; }
-.txt { color: #5a6072; font-size: 14px; margin-bottom: 8px; white-space: pre-wrap; }
-.rid { font-size: 12px; margin-top: 6px; }
 .mat-actions { margin-top: 8px; display: flex; gap: 10px; align-items: center; }
 .samp-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .reject { margin-top: 6px; font-size: 12px; color: #f56c6c; }
