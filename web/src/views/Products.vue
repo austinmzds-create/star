@@ -115,32 +115,52 @@
                 <!-- 添加区 -->
                 <div class="mat-add">
                   <template v-if="t.v === 'video_hot'">
+                    <el-upload
+                      :show-file-list="false"
+                      :before-upload="() => true"
+                      :http-request="uploadMat"
+                      accept="video/*"
+                    >
+                      <el-button size="small" :loading="matUploading">上传视频</el-button>
+                    </el-upload>
                     <el-input v-model="matForm.source_link" placeholder="爆款抖音链接" style="flex:1" />
-                    <el-input v-model="matForm.title" placeholder="标题(可选)" style="width:160px" />
+                    <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
                   </template>
                   <template v-else-if="t.v === 'copy'">
                     <el-input v-model="matForm.parsed_text" type="textarea" :rows="2" placeholder="文案内容" style="flex:1" />
                   </template>
                   <template v-else>
-                    <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMat">
-                      <el-button size="small">上传文件</el-button>
+                    <el-upload
+                      :show-file-list="false"
+                      :before-upload="() => true"
+                      :http-request="uploadMat"
+                      :accept="acceptOf(t.v)"
+                    >
+                      <el-button size="small" :loading="matUploading">上传文件</el-button>
                     </el-upload>
-                    <el-input v-model="matForm.title" placeholder="标题(可选)" style="width:160px" />
-                    <el-input v-if="t.v === 'pdf'" v-model="matForm.report_id" placeholder="报告ID" style="width:120px" />
-                    <span v-if="matForm.oss_key" class="muted" style="font-size:12px">已上传 ✓</span>
+                    <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
+                    <el-input v-if="t.v === 'pdf'" v-model="matForm.report_id" placeholder="报告ID(可选)" style="width:130px" />
                   </template>
-                  <el-button type="primary" size="small" @click="addMaterial">添加</el-button>
+                  <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
+                  <el-button
+                    v-if="t.v === 'video_hot' || t.v === 'copy'"
+                    type="primary"
+                    size="small"
+                    @click="addMaterial"
+                  >
+                    添加
+                  </el-button>
                 </div>
                 <!-- 列表 -->
-                <div v-for="m in materialsOf(mtype)" :key="m.id" class="mat-row">
-                  <el-link v-if="m.url" :href="m.url" target="_blank" type="primary">{{ m.title || '查看文件' }}</el-link>
-                  <el-link v-else-if="m.source_link" :href="m.source_link" target="_blank">{{ m.title || m.source_link }}</el-link>
-                  <span v-else>{{ m.title || m.parsed_text }}</span>
-                  <span v-if="m.report_id" class="muted">报告ID: {{ m.report_id }}</span>
-                  <div class="mat-ops">
-                    <el-icon class="op" @click="openEditMat(m)"><Edit /></el-icon>
-                    <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
+                <div v-for="m in materialsOf(mtype)" :key="m.id" class="material-card">
+                  <div class="material-card-head">
+                    <strong>{{ m.title || MAT_TYPES.find((item) => item.v === m.type)?.l }}</strong>
+                    <div class="mat-ops">
+                      <el-icon class="op" @click="openEditMat(m)"><Edit /></el-icon>
+                      <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
+                    </div>
                   </div>
+                  <MaterialPreview :material="m" />
                 </div>
                 <el-empty v-if="!materialsOf(mtype).length" :description="`暂无${MAT_TYPES.find(x=>x.v===mtype).l}`" :image-size="50" />
               </el-tab-pane>
@@ -243,7 +263,9 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
+import MaterialPreview from '../components/MaterialPreview.vue'
 import MultiUpload from '../components/MultiUpload.vue'
+import { uploadAndCreateMaterial } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
 import { SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
@@ -269,6 +291,8 @@ const detail = ref(null)
 const dtab = ref('materials')
 const mtype = ref('video_ai')
 const matForm = reactive({})
+const matUploading = ref(false)
+const matProgress = ref(0)
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
@@ -282,6 +306,11 @@ const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const materialsOf = (t) => (detail.value?.materials || []).filter((m) => m.type === t)
 const countOf = (t) => materialsOf(t).length
+const acceptOf = (type) => {
+  if (type === 'image') return 'image/*'
+  if (type === 'pdf') return 'application/pdf'
+  return 'video/*'
+}
 // 旧图预览映射:{oss_key: 签名URL},供 MultiUpload 编辑时展示已存图
 const imgPreviewMap = computed(() => {
   const keys = detail.value?.product_images_keys || []
@@ -347,17 +376,38 @@ async function toggle() {
   detail.value.status = r.status; load()
 }
 
-async function uploadMat({ file }) {
-  const fd = new FormData(); fd.append('file', file)
-  const r = await api.post('/api/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-  matForm.oss_key = r.key; ElMessage.success('文件已上传')
+async function uploadMat({ file, onProgress }) {
+  matUploading.value = true
+  matProgress.value = 0
+  try {
+    await uploadAndCreateMaterial(api, {
+      productId: detail.value.id,
+      type: mtype.value,
+      file,
+      title: matForm.title,
+      reportId: matForm.report_id,
+      onProgress: (percent) => {
+        matProgress.value = percent
+        onProgress?.({ percent })
+      },
+    })
+    ElMessage.success('上传成功，素材已添加')
+    Object.keys(matForm).forEach((key) => delete matForm[key])
+    await refreshDetail()
+    await load()
+  } catch (error) {
+    ElMessage.error(error.materialStage === 'create'
+      ? '文件已上传，但素材创建失败，请重试'
+      : (error.response?.data?.detail || '文件上传失败'))
+  } finally {
+    matUploading.value = false
+  }
 }
 async function addMaterial() {
   const body = { type: mtype.value, title: matForm.title }
   if (mtype.value === 'video_hot') body.source_link = matForm.source_link
   else if (mtype.value === 'copy') body.parsed_text = matForm.parsed_text
-  else { body.oss_key = matForm.oss_key; if (mtype.value === 'pdf') body.report_id = matForm.report_id }
-  if (!body.oss_key && !body.source_link && !body.parsed_text) return ElMessage.warning('请填写内容或上传文件')
+  if (!body.source_link && !body.parsed_text) return ElMessage.warning('请填写内容')
   await api.post(`/api/products/${detail.value.id}/materials`, body)
   ElMessage.success('已添加'); Object.keys(matForm).forEach((k) => delete matForm[k]); refreshDetail(); load()
 }
@@ -427,9 +477,12 @@ onMounted(load)
 .head-name { font-weight: 600; font-size: 15px; }
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.upload-progress { font-size: 12px; }
+.material-card { padding: 12px; margin-bottom: 12px; border: 1px solid #eceef3; border-radius: 10px; }
+.material-card-head { display: flex; align-items: center; gap: 10px; }
 .mat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f4f5f8; }
 .mat-ops { margin-left: auto; display: flex; gap: 10px; }
-.mat-row .op, .mat-row .del { color: #c0c4cc; cursor: pointer; }
-.mat-row .op:hover { color: #6b5cf6; }
-.mat-row .del:hover { color: #f56c6c; }
+.material-card .op, .material-card .del { color: #c0c4cc; cursor: pointer; }
+.material-card .op:hover { color: #6b5cf6; }
+.material-card .del:hover { color: #f56c6c; }
 </style>
