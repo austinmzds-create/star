@@ -43,21 +43,19 @@
         @click="$router.push('/h5/notice')">📌 拍摄前必读(卡审避坑)</el-button>
 
       <h3>已开放给你的产品</h3>
-      <el-card v-for="p in products" :key="p.id" class="prod" @click="$router.push(`/h5/products/${p.id}`)">
-        <div class="prod-in">
-          <el-image v-if="p.product_image" :src="p.product_image" fit="cover" class="pimg" />
-          <div class="pimg placeholder" v-else></div>
-          <div class="pinfo">
-            <div class="pname">{{ p.name }}</div>
-            <div class="pmeta">
+      <p class="muted" style="font-size:12px;margin:-4px 0 8px">选择产品,查看视频/文案素材、拍摄要求与寄样物流</p>
+      <el-select v-model="pickProduct" placeholder="选择产品查看全部资料" size="large" style="width:100%"
+        filterable @change="(id) => $router.push(`/h5/products/${id}`)">
+        <el-option v-for="p in products" :key="p.id" :value="p.id" :label="p.name">
+          <div class="opt">
+            <span>{{ p.name }}</span>
+            <span class="opt-meta">
               <span v-if="p.price_text" class="price">{{ p.price_text }}</span>
-              <el-tag v-if="p.default_commission != null" size="small" type="success" effect="plain">佣金 {{ p.default_commission }}%</el-tag>
-            </div>
-            <div v-if="p.selling_points" class="muted ellipsis">{{ p.selling_points }}</div>
+              <span v-if="p.default_commission != null" class="comm">佣金{{ p.default_commission }}%</span>
+            </span>
           </div>
-          <el-icon class="arr"><ArrowRight /></el-icon>
-        </div>
-      </el-card>
+        </el-option>
+      </el-select>
       <el-empty v-if="!products.length" description="暂无开放产品,完善资料后等待商务开通" :image-size="70" />
 
       <template v-if="me && me.samples.length">
@@ -102,7 +100,7 @@
 </template>
 
 <script setup>
-import { ArrowRight, Van } from '@element-plus/icons-vue'
+import { Van } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { onMounted, ref } from 'vue'
 import api from '../api'
@@ -120,6 +118,7 @@ const me = ref(null)
 const editing = ref(false)
 const expanded = ref(null)
 const tracking = ref(null)
+const pickProduct = ref(null)
 
 // 寄样状态:优先展示物流状态(运输中/已签收),否则用订单状态
 function effStatus(s) {
@@ -195,6 +194,10 @@ h3 { margin: 22px 0 10px; font-size: 15px; }
 .muted { color:#8a93a6; }
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .arr { margin-left: auto; color: #c0c4cc; flex-shrink: 0; }
+.opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.opt-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.opt-meta .price { color: #f56c6c; }
+.opt-meta .comm { color: #67c23a; }
 /* 我的资料卡 */
 .me-card { margin-bottom: 8px; }
 .me-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }

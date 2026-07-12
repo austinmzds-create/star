@@ -158,8 +158,27 @@ def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
-    return {"name": p.name, "selling_points": p.selling_points,
-            "shooting_notes": p.shooting_notes,
+    # 该达人在本产品下的最新寄样(含物流轨迹),让"资料 + 快递"一屏聚合
+    coop_ids = db.scalars(select(Cooperation.id)
+                          .where(Cooperation.influencer_id == inf.id)).all() or [0]
+    o = db.scalars(select(SampleOrder)
+                   .where(SampleOrder.product_id == product_id,
+                          SampleOrder.cooperation_id.in_(coop_ids))
+                   .order_by(SampleOrder.created_at.desc())).first()
+    sample = None
+    if o:
+        sample = {"id": o.id, "status": o.status, "tracking_no": o.tracking_no,
+                  "courier_company": o.courier_company, "logistics_status": o.logistics_status,
+                  "signed_at": o.signed_at.isoformat() if o.signed_at else None,
+                  "reject_reason": o.reject_reason,
+                  "created_at": o.created_at.isoformat()}
+    return {"id": p.id, "name": p.name,
+            "product_image": storage.signed_url(p.product_image) if p.product_image else None,
+            "price_text": p.price_text,
+            "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+            "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
+            "promo_remark": p.promo_remark,
+            "sample": sample,
             "materials": [{"id": m.id, "type": m.type, "title": m.title,
                            "url": storage.signed_url(m.oss_key) if m.oss_key else None,
                            "source_link": m.source_link, "parsed_text": m.parsed_text,
