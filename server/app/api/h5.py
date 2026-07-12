@@ -54,7 +54,7 @@ def sms_verify(body: VerifyIn, db: Session = Depends(get_db)):
 
 @router.get("/me")
 def me(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_db)):
-    """达人自己的档案(仅自己)+ 寄样进度"""
+    """达人自己的档案(仅自己)+ 寄样进度(含物流轨迹)"""
     coop_ids = db.scalars(select(Cooperation.id)
                           .where(Cooperation.influencer_id == inf.id)).all() or [0]
     samples = []
@@ -63,15 +63,24 @@ def me(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_
         .where(SampleOrder.cooperation_id.in_(coop_ids))
         .order_by(SampleOrder.created_at.desc())
     ).all():
-        status = o.status
-        if o.logistics_status and o.status in ("shipped", "in_transit"):
-            status = o.logistics_status.get("status", status)
-        samples.append({"product_name": prod.name, "status": status,
-                        "tracking_no": o.tracking_no,
-                        "signed": bool(o.signed_at), "created_at": o.created_at.isoformat()})
+        samples.append({
+            "id": o.id, "product_name": prod.name,
+            "product_image": storage.signed_url(prod.product_image) if prod.product_image else None,
+            "status": o.status,
+            "tracking_no": o.tracking_no, "courier_company": o.courier_company,
+            "logistics_status": o.logistics_status,
+            "signed_at": o.signed_at.isoformat() if o.signed_at else None,
+            "reject_reason": o.reject_reason,
+            "created_at": o.created_at.isoformat(),
+        })
     return {
         "nickname": inf.nickname, "douyin_id": inf.douyin_id, "fans_count": inf.fans_count,
-        "level": inf.level, "has_profile": inf.raw_intro is not None,
+        "level": inf.level,
+        "commission_tier": float(inf.commission_tier) if inf.commission_tier is not None else None,
+        "cooperation_code": inf.cooperation_code,
+        "real_name": inf.real_name, "phone": inf.phone,
+        "default_address": inf.default_address, "category_tags": inf.category_tags,
+        "has_profile": inf.raw_intro is not None,
         "samples": samples,
     }
 
@@ -97,6 +106,30 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
     return {"ok": True, "parsed": f}
 
 
+@router.post("/samples/{order_id}/track")
+async def track_my_sample(order_id: int, inf: Influencer = Depends(current_influencer),
+                          db: Session = Depends(get_db)):
+    """达人刷新自己寄样单的物流轨迹(严格校验该单属于本达人)。"""
+    from ..services.logistics import get_provider
+    o = db.get(SampleOrder, order_id)
+    if not o:
+        raise HTTPException(404, "寄样单不存在")
+    coop = db.get(Cooperation, o.cooperation_id)
+    if not coop or coop.influencer_id != inf.id:   # 数据隔离红线:只能查自己的单
+        raise HTTPException(403, "无权查看该寄样单")
+    if not o.tracking_no or not o.courier_company:
+        raise HTTPException(400, "该寄样单尚未发货")
+    phone = (o.address_snapshot or {}).get("tel")
+    result = await get_provider().query_realtime(o.tracking_no, o.courier_company, phone)
+    o.logistics_status = result
+    if result.get("signed") and not o.signed_at:
+        from datetime import datetime
+        o.signed_at = datetime.now()
+        o.status = "signed"
+    db.commit()
+    return result
+
+
 @router.get("/products")
 def my_products(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_db)):
     """只返回被授权(AccessGrant)且上架的产品"""
@@ -105,6 +138,8 @@ def my_products(inf: Influencer = Depends(current_influencer), db: Session = Dep
     rows = db.scalars(select(Product).where(Product.id.in_(pids or [0]),
                                             Product.status == "on")).all()
     return [{"id": p.id, "name": p.name, "price_text": p.price_text,
+             "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+             "selling_points": p.selling_points,
              "product_image": storage.signed_url(p.product_image) if p.product_image else None}
             for p in rows]
 
