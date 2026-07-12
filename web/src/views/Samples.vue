@@ -12,12 +12,19 @@
       <el-table-column prop="influencer_nickname" label="达人" />
       <el-table-column prop="product_name" label="产品" />
       <el-table-column prop="round_no" label="轮次" width="70" />
-      <el-table-column label="物流">
+      <el-table-column label="物流" min-width="220">
         <template #default="{ row }">
-          <span v-if="row.tracking_no">{{ row.courier_company || '' }} {{ row.tracking_no }}</span>
-          <el-tag v-if="row.logistics_status" size="small" :type="row.logistics_status.signed ? 'success' : 'info'">
-            {{ STATUS_LABEL[row.logistics_status.status] || row.logistics_status.status }}
-          </el-tag>
+          <div>
+            <span v-if="row.tracking_no">{{ row.courier_company || '' }} {{ row.tracking_no }}</span>
+            <el-tag v-if="row.logistics_status?.status" size="small"
+              :type="row.logistics_status.signed ? 'success' : 'info'" style="margin-left:4px">
+              {{ STATUS_LABEL[row.logistics_status.status] || row.logistics_status.status }}
+            </el-tag>
+          </div>
+          <div v-if="lastEvent(row)" class="logi-line">
+            {{ lastEvent(row).context }}
+            <span class="tm">{{ lastEvent(row).ftime || lastEvent(row).time }}</span>
+          </div>
         </template>
       </el-table-column>
       <el-table-column prop="reject_reason" label="拒绝原因" show-overflow-tooltip />
@@ -146,6 +153,7 @@ async function removeRow(row) {
 }
 
 const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
+const lastEvent = (row) => row.logistics_status?.last_event || row.logistics_status?.events?.[0] || null
 
 async function load() {
   loading.value = true
@@ -222,4 +230,6 @@ onMounted(async () => {
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; }
 .flex-tabs { flex: 1; }
 .flex-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.logi-line { font-size: 12px; color: #8a93a6; margin-top: 2px; }
+.logi-line .tm { margin-left: 6px; color: #b3bac9; }
 </style>

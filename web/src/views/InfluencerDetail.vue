@@ -78,15 +78,38 @@
                 <div class="rc-main">
                   <span class="rc-title">{{ s.product_name }}</span>
                   <el-tag size="small" :type="sampleTag(s.status).type">{{ sampleTag(s.status).label }}</el-tag>
-                  <el-button v-if="isStaff && (s.status === 'pending' || s.status === 'rejected')"
-                    size="small" link type="danger" style="margin-left:auto" @click="delSample(s)">删除</el-button>
+                  <div style="margin-left:auto; display:flex; gap:4px">
+                    <el-button v-if="isStaff && s.tracking_no" size="small" link
+                      :loading="trackingId === s.id" @click="refreshTrack(s)">刷新物流</el-button>
+                    <el-button v-if="isStaff && (s.status === 'pending' || s.status === 'rejected')"
+                      size="small" link type="danger" @click="delSample(s)">删除</el-button>
+                  </div>
                 </div>
                 <div class="rc-sub muted">
-                  <span v-if="s.tracking_no">{{ s.courier_company }} {{ s.tracking_no }}</span>
-                  <span v-if="s.logistics_status">· {{ logi(s.logistics_status.status) }}</span>
+                  <span v-if="s.tracking_no"><CopyText :value="`${s.courier_company} ${s.tracking_no}`" /></span>
+                  <span v-if="s.logistics_status?.status">· {{ logi(s.logistics_status.status) }}</span>
                   <span v-if="s.signed_at">· 签收 {{ ft(s.signed_at) }}</span>
                   <span v-if="s.reject_reason">· {{ s.reject_reason }}</span>
                   <span>· {{ ft(s.created_at) }}</span>
+                </div>
+                <!-- 物流轨迹:最新一条直接显示,可展开全部 -->
+                <div v-if="lastEvent(s)" class="logi-latest">
+                  <el-icon><Van /></el-icon>
+                  <span class="ctx">{{ lastEvent(s).context }}</span>
+                  <span class="tm">{{ lastEvent(s).ftime || lastEvent(s).time }}</span>
+                  <el-button v-if="events(s).length > 1" size="small" text
+                    @click="expandedSample = expandedSample === s.id ? null : s.id">
+                    {{ expandedSample === s.id ? '收起' : `全部${events(s).length}条` }}
+                  </el-button>
+                </div>
+                <el-timeline v-if="expandedSample === s.id" class="logi-timeline">
+                  <el-timeline-item v-for="(e, i) in events(s)" :key="i"
+                    :timestamp="e.ftime || e.time" :type="i === 0 ? 'primary' : ''" size="small">
+                    {{ e.context }}
+                  </el-timeline-item>
+                </el-timeline>
+                <div v-else-if="s.tracking_no && !lastEvent(s)" class="logi-empty muted">
+                  暂无轨迹明细<span v-if="isStaff">,点「刷新物流」拉取</span>
                 </div>
               </div>
             </el-tab-pane>
@@ -165,6 +188,7 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
+import { Van } from '@element-plus/icons-vue'
 import { useRoute } from 'vue-router'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
@@ -190,6 +214,25 @@ const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const promoTag = (s) => tag(PROMO_STATUS, s)
 const logi = (s) => LOGISTICS_STATUS[s] || s
+
+const expandedSample = ref(null)
+const trackingId = ref(null)
+const events = (s) => s.logistics_status?.events || []
+const lastEvent = (s) => s.logistics_status?.last_event || events(s)[0] || null
+
+async function refreshTrack(s) {
+  trackingId.value = s.id
+  try {
+    const r = await api.post(`/api/samples/${s.id}/track`)
+    if (r.ok || r.events?.length) ElMessage.success('物流已更新')
+    else ElMessage.info(r.message || '暂无轨迹')
+    act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '查询失败')
+  } finally {
+    trackingId.value = null
+  }
+}
 
 async function load() {
   d.value = await api.get(`/api/influencers/${route.params.id}`)
@@ -277,4 +320,10 @@ onMounted(async () => {
 .rc-main { display: flex; align-items: center; gap: 8px; }
 .rc-title { font-weight: 500; }
 .rc-sub { font-size: 12px; margin-top: 4px; }
+.logi-latest { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 6px 10px;
+  background: #f6f8fc; border-radius: 8px; font-size: 12px; color: #5a6072; }
+.logi-latest .ctx { flex: 1; }
+.logi-latest .tm { color: #98a0b0; white-space: nowrap; }
+.logi-timeline { margin-top: 8px; padding-left: 4px; }
+.logi-empty { font-size: 12px; margin-top: 6px; }
 </style>
