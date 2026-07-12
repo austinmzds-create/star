@@ -1,6 +1,39 @@
 <template>
   <div v-if="d">
-    <el-page-header :content="d.nickname" @back="$router.back()" />
+    <el-page-header :content="d.nickname" @back="$router.back()">
+      <template #extra>
+        <div v-if="isStaff" style="display:flex; gap:8px; align-items:center">
+          <el-tag v-if="d.archived" type="info" size="small">已停用</el-tag>
+          <el-button size="small" @click="openEdit">编辑档案</el-button>
+          <el-button size="small" :type="d.archived ? 'success' : 'warning'" @click="toggleArchive">
+            {{ d.archived ? '启用' : '停用' }}
+          </el-button>
+          <el-button size="small" type="danger" plain @click="removeInfluencer">删除</el-button>
+        </div>
+      </template>
+    </el-page-header>
+
+    <!-- 编辑核心档案 -->
+    <el-dialog v-model="editVisible" title="编辑档案" width="560px">
+      <el-form label-width="80px">
+        <el-row :gutter="12">
+          <el-col :span="12"><el-form-item label="昵称"><el-input v-model="editForm.nickname" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="抖音号"><el-input v-model="editForm.douyin_id" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="UID"><el-input v-model="editForm.douyin_uid" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="合作码"><el-input v-model="editForm.cooperation_code" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="收件人"><el-input v-model="editForm.real_name" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="手机"><el-input v-model="editForm.phone" maxlength="11" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="粉丝数"><el-input-number v-model="editForm.fans_count" :min="0" :controls="false" style="width:100%" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="主页"><el-input v-model="editForm.homepage_url" /></el-form-item></el-col>
+          <el-col :span="24"><el-form-item label="收件地址"><el-input v-model="editForm.default_address" /></el-form-item></el-col>
+          <el-col :span="24"><el-form-item label="品类"><el-input v-model="categoryText" placeholder="逗号分隔,如 母婴,儿童" /></el-form-item></el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 速览 -->
     <div class="stats">
@@ -189,13 +222,14 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 import { Van } from '@element-plus/icons-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import { formatTime as ft } from '../utils/time'
 import { LOGISTICS_STATUS, PROMO_STATUS, SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
 const route = useRoute()
+const router = useRouter()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isStaff = user.role === 'admin' || user.role === 'bd'
 const d = ref(null)
@@ -209,6 +243,49 @@ const products = ref([])
 const quickVisible = ref(false)
 const quickType = ref('sample')
 const quickForm = reactive({ product_id: null, dy_url: '' })
+
+const editVisible = ref(false)
+const editForm = reactive({})
+const categoryText = ref('')
+const EDIT_FIELDS = ['nickname', 'douyin_id', 'douyin_uid', 'cooperation_code',
+  'real_name', 'phone', 'fans_count', 'homepage_url', 'default_address']
+
+function openEdit() {
+  EDIT_FIELDS.forEach((k) => { editForm[k] = d.value[k] })
+  categoryText.value = (d.value.category_tags || []).join(',')
+  editVisible.value = true
+}
+async function saveEdit() {
+  const payload = {}
+  EDIT_FIELDS.forEach((k) => { payload[k] = editForm[k] ?? null })
+  payload.category_tags = categoryText.value
+    ? categoryText.value.split(/[,，]/).map((s) => s.trim()).filter(Boolean) : []
+  try {
+    await api.patch(`/api/influencers/${route.params.id}`, payload)
+    editVisible.value = false
+    ElMessage.success('已保存')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
+}
+async function toggleArchive() {
+  const to = !d.value.archived
+  await ElMessageBox.confirm(to ? '停用后该达人默认从列表隐藏(不影响历史记录),确认?' : '确认重新启用?', '提示', { type: 'warning' })
+  await api.patch(`/api/influencers/${route.params.id}`, { archived: to })
+  ElMessage.success(to ? '已停用' : '已启用')
+  await load()
+}
+async function removeInfluencer() {
+  await ElMessageBox.confirm('确认删除该达人?(仅无寄样/视频记录时可删)', '删除', { type: 'warning' })
+  try {
+    await api.delete(`/api/influencers/${route.params.id}`)
+    ElMessage.success('已删除')
+    router.push('/influencers')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
+}
 
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)

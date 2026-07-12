@@ -90,10 +90,13 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
 def list_influencers(q: str | None = None, level: str | None = None,
                      commission_tier: float | None = None,
                      owner_bd_id: int | None = None, tag: str | None = None,
+                     include_archived: bool = False,
                      page: int = 1, page_size: int = 50,
                      user: User = Depends(current_user), db: Session = Depends(get_db)):
     from sqlalchemy import func
     base = scope(select(Influencer), user)
+    if not include_archived:
+        base = base.where(Influencer.archived.is_(False))
     if q:
         like = f"%{q}%"
         base = base.where(or_(Influencer.nickname.like(like), Influencer.douyin_id.like(like),
@@ -135,6 +138,23 @@ class UpdateIn(BaseModel):
     gmv_30d: int | None = None
     shoot_type: str | None = None
     reason: str | None = None       # 调级/调档原因(留痕)
+    archived: bool | None = None    # 停用/启用
+    # 核心档案字段(录错可改)
+    nickname: str | None = None
+    douyin_id: str | None = None
+    douyin_uid: str | None = None
+    real_name: str | None = None
+    phone: str | None = None
+    fans_count: int | None = None
+    category_tags: list[str] | None = None
+    cooperation_code: str | None = None
+    default_address: str | None = None
+    homepage_url: str | None = None
+
+
+CORE_FIELDS = ("nickname", "douyin_id", "douyin_uid", "real_name", "phone",
+               "fans_count", "category_tags", "cooperation_code",
+               "default_address", "homepage_url", "archived")
 
 
 @router.patch("/{influencer_id}")
@@ -164,6 +184,40 @@ def update(influencer_id: int, body: UpdateIn,
     for field in ("tags", "gmv_30d", "shoot_type"):
         if getattr(body, field) is not None:
             setattr(inf, field, getattr(body, field))
+    # 核心档案字段(录错可改);phone 唯一性校验避免撞到他人
+    if body.phone is not None and body.phone != inf.phone:
+        clash = db.scalars(select(Influencer).where(Influencer.phone == body.phone,
+                                                    Influencer.id != inf.id)).first()
+        if clash:
+            raise HTTPException(400, "该手机号已被其他达人占用")
+    for field in CORE_FIELDS:
+        if getattr(body, field) is not None:
+            setattr(inf, field, getattr(body, field))
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{influencer_id}")
+def delete_influencer(influencer_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(get_db)):
+    """硬删除:仅在无寄样/视频业务记录时允许(录入即开的空合作轮次会一并清理);
+    已有寄样/视频请改用「停用」(archived) 以保留历史。"""
+    from ..models import AccessGrant
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    coop_ids = [c.id for c in inf.cooperations] or [0]
+    has_sample = db.scalar(select(SampleOrder.id)
+                           .where(SampleOrder.cooperation_id.in_(coop_ids)).limit(1))
+    has_video = db.scalar(select(VideoTask.id)
+                          .where(VideoTask.cooperation_id.in_(coop_ids)).limit(1))
+    if has_sample or has_video:
+        raise HTTPException(400, "该达人已有寄样/视频记录,不能删除;请改用「停用」")
+    db.query(AccessGrant).filter(AccessGrant.influencer_id == inf.id).delete()
+    db.query(LevelChangeLog).filter(LevelChangeLog.influencer_id == inf.id).delete()
+    for c in inf.cooperations:
+        db.delete(c)
+    db.delete(inf)
     db.commit()
     return {"ok": True}
 
@@ -185,7 +239,7 @@ def detail(influencer_id: int, user: User = Depends(current_user), db: Session =
         "promo_mode": inf.promo_mode, "tags": inf.tags, "source": inf.source,
         "raw_intro": inf.raw_intro, "owner_bd_id": inf.owner_bd_id,
         "cooperation_code": inf.cooperation_code, "default_address": inf.default_address,
-        "homepage_raw": inf.homepage_raw,
+        "homepage_raw": inf.homepage_raw, "archived": inf.archived,
         "cooperations": [{"id": c.id, "round_no": c.round_no, "status": c.status,
                           "level_snapshot": c.level_snapshot,
                           "commission_tier_snapshot": float(c.commission_tier_snapshot),

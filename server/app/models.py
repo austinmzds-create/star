@@ -68,6 +68,7 @@ class Influencer(Base, TimestampMixin):
     cooperation_code: Mapped[str | None] = mapped_column(String(64), index=True)  # 合作码(百应/团长绑定用)
     default_address: Mapped[str | None] = mapped_column(String(255))              # 默认收货地址(敏感,同 real_name/phone 权限)
     homepage_raw: Mapped[str | None] = mapped_column(String(512))                 # 主页分享原文(无真实 http 链接时存原文备查)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)                 # 停用(软下架):默认从列表隐藏,不影响历史记录
 
     cooperations: Mapped[list["Cooperation"]] = relationship(back_populates="influencer")
 
