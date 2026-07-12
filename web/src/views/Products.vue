@@ -54,6 +54,21 @@
       </template>
     </el-dialog>
 
+    <!-- 编辑素材 -->
+    <el-dialog v-model="editMatVisible" title="编辑素材" width="480px" append-to-body>
+      <el-form label-width="80px">
+        <el-form-item label="标题"><el-input v-model="matEdit.title" /></el-form-item>
+        <el-form-item v-if="matEdit.type === 'copy'" label="文案"><el-input v-model="matEdit.parsed_text" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item v-if="matEdit.type === 'video_hot'" label="爆款链接"><el-input v-model="matEdit.source_link" /></el-form-item>
+        <el-form-item v-if="matEdit.type === 'pdf'" label="报告ID"><el-input v-model="matEdit.report_id" /></el-form-item>
+        <el-form-item label="允许下载"><el-switch v-model="matEdit.downloadable" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editMatVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveMat">保存</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 产品详情抽屉 -->
     <el-drawer v-model="drawer" :title="detail?.name" size="760px">
       <template v-if="detail">
@@ -66,9 +81,12 @@
             <div class="muted" style="font-size:13px">{{ detail.shop_name }} · {{ detail.price_text }} · 默认佣金 {{ detail.default_commission ?? '—' }}%</div>
             <CopyText v-if="detail.link" :value="detail.link" style="margin-top:6px" />
           </div>
-          <el-button size="small" :type="detail.status === 'on' ? 'info' : 'success'" @click="toggle">
-            {{ detail.status === 'on' ? '下架' : '上架' }}
-          </el-button>
+          <div style="display:flex; flex-direction:column; gap:6px">
+            <el-button size="small" :type="detail.status === 'on' ? 'info' : 'success'" @click="toggle">
+              {{ detail.status === 'on' ? '下架' : '上架' }}
+            </el-button>
+            <el-button size="small" type="danger" plain @click="removeProduct">删除</el-button>
+          </div>
         </div>
 
         <el-tabs v-model="dtab" style="margin-top:8px">
@@ -101,7 +119,10 @@
                   <el-link v-else-if="m.source_link" :href="m.source_link" target="_blank">{{ m.title || m.source_link }}</el-link>
                   <span v-else>{{ m.title || m.parsed_text }}</span>
                   <span v-if="m.report_id" class="muted">报告ID: {{ m.report_id }}</span>
-                  <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
+                  <div class="mat-ops">
+                    <el-icon class="op" @click="openEditMat(m)"><Edit /></el-icon>
+                    <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
+                  </div>
                 </div>
                 <el-empty v-if="!materialsOf(mtype).length" :description="`暂无${MAT_TYPES.find(x=>x.v===mtype).l}`" :image-size="50" />
               </el-tab-pane>
@@ -174,8 +195,8 @@
 </template>
 
 <script setup>
-import { Delete } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { Delete, Edit } from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
@@ -255,7 +276,32 @@ async function addMaterial() {
   ElMessage.success('已添加'); Object.keys(matForm).forEach((k) => delete matForm[k]); refreshDetail(); load()
 }
 async function delMaterial(m) {
+  await ElMessageBox.confirm('确认删除该素材?', '提示', { type: 'warning' })
   await api.delete(`/api/products/materials/${m.id}`); refreshDetail(); load()
+}
+
+const editMatVisible = ref(false)
+const matEdit = reactive({})
+function openEditMat(m) {
+  Object.assign(matEdit, { id: m.id, type: m.type, title: m.title, parsed_text: m.parsed_text,
+    source_link: m.source_link, report_id: m.report_id, downloadable: m.downloadable })
+  editMatVisible.value = true
+}
+async function saveMat() {
+  await api.put(`/api/products/materials/${matEdit.id}`, {
+    title: matEdit.title, parsed_text: matEdit.parsed_text, source_link: matEdit.source_link,
+    report_id: matEdit.report_id, downloadable: matEdit.downloadable,
+  })
+  editMatVisible.value = false; ElMessage.success('已保存'); refreshDetail()
+}
+async function removeProduct() {
+  await ElMessageBox.confirm('确认删除该产品?(仅无寄样/视频/出单记录时可删)', '删除', { type: 'warning' })
+  try {
+    await api.delete(`/api/products/${detail.value.id}`)
+    ElMessage.success('已删除'); drawer.value = false; load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 
 async function saveInfo() {
@@ -296,6 +342,8 @@ onMounted(load)
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .mat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f4f5f8; }
-.mat-row .del { margin-left: auto; color: #c0c4cc; cursor: pointer; }
+.mat-ops { margin-left: auto; display: flex; gap: 10px; }
+.mat-row .op, .mat-row .del { color: #c0c4cc; cursor: pointer; }
+.mat-row .op:hover { color: #6b5cf6; }
 .mat-row .del:hover { color: #f56c6c; }
 </style>

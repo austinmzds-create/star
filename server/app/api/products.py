@@ -75,6 +75,23 @@ def toggle_status(product_id: int, user: User = Depends(current_user), db: Sessi
     return {"status": p.status}
 
 
+@router.delete("/{product_id}")
+def delete_product(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """硬删除:仅在无寄样/视频/出单记录时允许(连带清理素材与授权);否则请下架。"""
+    p = db.get(Product, product_id)
+    if not p:
+        raise HTTPException(404, "产品不存在")
+    if (db.scalar(select(SampleOrder.id).where(SampleOrder.product_id == product_id).limit(1))
+            or db.scalar(select(VideoTask.id).where(VideoTask.product_id == product_id).limit(1))
+            or db.scalar(select(OrderRecord.id).where(OrderRecord.product_id == product_id).limit(1))):
+        raise HTTPException(400, "该产品已有寄样/视频/出单记录,不能删除;请改用「下架」")
+    db.query(Material).filter(Material.product_id == product_id).delete()
+    db.query(AccessGrant).filter(AccessGrant.product_id == product_id).delete()
+    db.delete(p)
+    db.commit()
+    return {"ok": True}
+
+
 def _grant_count(db: Session, pid: int) -> int:
     return db.scalar(select(func.count()).select_from(AccessGrant)
                      .where(AccessGrant.product_id == pid)) or 0
@@ -111,6 +128,27 @@ def add_material(product_id: int, body: MaterialIn,
     db.commit()
     # TODO: source_link 非空时后台任务:下载视频→转存OSS→解析文案回填 parsed_text
     return {"id": m.id}
+
+
+class MaterialEditIn(BaseModel):
+    title: str | None = None
+    source_link: str | None = None
+    parsed_text: str | None = None
+    report_id: str | None = None
+    downloadable: bool | None = None
+
+
+@router.put("/materials/{material_id}")
+def edit_material(material_id: int, body: MaterialEditIn,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """编辑素材(标题/文案/爆款链接/报告ID/是否可下载);不改类型与已上传文件。"""
+    m = db.get(Material, material_id)
+    if not m:
+        raise HTTPException(404, "素材不存在")
+    for k, v in body.model_dump(exclude_unset=True).items():
+        setattr(m, k, v)
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/materials/{material_id}")
