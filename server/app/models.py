@@ -189,6 +189,74 @@ class Product(Base, TimestampMixin):
     materials: Mapped[list["Material"]] = relationship(back_populates="product")
 
 
+class ProductQianchuanBinding(Base, TimestampMixin):
+    """产品与千川侧店铺/商品的本地绑定资料。
+
+    当前只维护映射信息,不保存千川密钥;真实 API 凭证后续应进入独立配置表/密钥服务。
+    """
+    __tablename__ = "product_qianchuan_bindings"
+    __table_args__ = (UniqueConstraint("product_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    shop_auth_id: Mapped[int | None] = mapped_column(ForeignKey("qianchuan_shop_auths.id"), index=True)
+    shop_id: Mapped[str | None] = mapped_column(String(64))
+    shop_name: Mapped[str | None] = mapped_column(String(128))
+    advertiser_id: Mapped[str | None] = mapped_column(String(64))
+    qianchuan_product_id: Mapped[str | None] = mapped_column(String(64))
+    bind_status: Mapped[str] = mapped_column(String(24), default="draft")
+    remark: Mapped[str | None] = mapped_column(Text)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class QianchuanShopAuth(Base, TimestampMixin):
+    """千川/巨量引擎店铺授权。
+
+    先保存 OAuth 结果与店铺/广告主标识。后续对接正式 API 时,产品绑定只引用该授权,
+    不在每个产品上重复保存 token。
+    """
+    __tablename__ = "qianchuan_shop_auths"
+    __table_args__ = (UniqueConstraint("advertiser_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    platform: Mapped[str] = mapped_column(String(32), default="oceanengine")
+    advertiser_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    shop_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    shop_name: Mapped[str | None] = mapped_column(String(128))
+    auth_status: Mapped[str] = mapped_column(String(24), default="active")
+    scopes: Mapped[list | None] = mapped_column(JSON)
+    access_token: Mapped[str | None] = mapped_column(Text)
+    refresh_token: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    refresh_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    raw_payload: Mapped[dict | None] = mapped_column(JSON)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    authorized_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+
+class QianchuanCooperationBinding(Base, TimestampMixin):
+    """内部达人合作与千川合作关系的绑定。
+
+    支持两种落库方式:
+    - manual_id: 人工输入千川合作ID后绑定
+    - shop_auth: 已授权店铺后,未来通过 API 同步/创建合作再回写外部ID
+    """
+    __tablename__ = "qianchuan_cooperation_bindings"
+    __table_args__ = (UniqueConstraint("product_id", "influencer_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    shop_auth_id: Mapped[int | None] = mapped_column(ForeignKey("qianchuan_shop_auths.id"), index=True)
+    qianchuan_cooperation_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    bind_method: Mapped[str] = mapped_column(String(24), default="manual_id")
+    bind_status: Mapped[str] = mapped_column(String(24), default="bound")
+    remark: Mapped[str | None] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text)
+    bound_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    bound_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Material(Base, TimestampMixin):
     __tablename__ = "materials"
 

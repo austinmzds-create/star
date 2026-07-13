@@ -10,14 +10,19 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      OrderRecord, Product, SampleOrder, User,
+                      OrderRecord, Product, ProductQianchuanBinding,
+                      QianchuanCooperationBinding, QianchuanShopAuth,
+                      SampleOrder, User,
                       VideoTask)
 from ..services import storage
+from ..services import qianchuan as qianchuan_service
 from ..services.sample_orders import dedupe_sample_rows
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 MATERIAL_TYPES = {"video_ai", "video_hot", "video_output", "image", "pdf", "copy"}
+QIANCHUAN_BINDING_STATUSES = {"draft", "configured", "disabled"}
+QIANCHUAN_COOP_STATUSES = {"bound", "pending", "failed", "disabled"}
 
 
 class ProductIn(BaseModel):
@@ -101,6 +106,8 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
             or db.scalar(select(VideoTask.id).where(VideoTask.product_id == product_id).limit(1))
             or db.scalar(select(OrderRecord.id).where(OrderRecord.product_id == product_id).limit(1))):
         raise HTTPException(400, "该产品已有寄样/视频/出单记录,不能删除;请改用「下架」")
+    db.query(QianchuanCooperationBinding).filter(QianchuanCooperationBinding.product_id == product_id).delete()
+    db.query(ProductQianchuanBinding).filter(ProductQianchuanBinding.product_id == product_id).delete()
     db.query(Material).filter(Material.product_id == product_id).delete()
     db.query(AccessGrant).filter(AccessGrant.product_id == product_id).delete()
     db.delete(p)
@@ -111,6 +118,42 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
 def _grant_count(db: Session, pid: int) -> int:
     return db.scalar(select(func.count()).select_from(AccessGrant)
                      .where(AccessGrant.product_id == pid)) or 0
+
+
+def _qianchuan_binding_dict(row: ProductQianchuanBinding | None) -> dict:
+    configured = bool(row and any([
+        row.shop_auth_id, row.shop_id, row.shop_name, row.advertiser_id, row.qianchuan_product_id,
+    ]))
+    return {
+        "id": row.id if row else None,
+        "shop_auth_id": row.shop_auth_id if row else None,
+        "shop_id": row.shop_id if row else None,
+        "shop_name": row.shop_name if row else None,
+        "advertiser_id": row.advertiser_id if row else None,
+        "qianchuan_product_id": row.qianchuan_product_id if row else None,
+        "bind_status": row.bind_status if row else "draft",
+        "remark": row.remark if row else None,
+        "configured": configured,
+        "oauth_configured": qianchuan_service.oauth_configured(),
+        "missing_config": qianchuan_service.missing_config(),
+        "integration_status": "oauth_ready" if qianchuan_service.oauth_configured() else "config_missing",
+        "can_start_oauth": qianchuan_service.oauth_configured(),
+        "cooperation_sync_configured": qianchuan_service.cooperation_sync_configured(),
+        "missing_cooperation_sync_config": qianchuan_service.missing_cooperation_sync_config(),
+        "can_sync_cooperation": bool(row and row.shop_auth_id
+                                     and qianchuan_service.cooperation_sync_configured()),
+        "updated_at": row.updated_at.isoformat() if row else None,
+    }
+
+
+def _qianchuan_status(db: Session, product_id: int) -> str:
+    row = db.scalars(select(ProductQianchuanBinding)
+                     .where(ProductQianchuanBinding.product_id == product_id)).first()
+    if not row:
+        return "unconfigured"
+    if row.bind_status == "disabled":
+        return "disabled"
+    return "configured" if _qianchuan_binding_dict(row)["configured"] else "draft"
 
 
 @router.get("")
@@ -138,6 +181,7 @@ def list_products(q: str | None = None, status: str | None = None,
               "default_commission": float(p.default_commission) if p.default_commission else None,
               "status": p.status, "material_count": len(p.materials),
               "granted_count": _grant_count(db, p.id),
+              "qianchuan_status": _qianchuan_status(db, p.id),
               "created_at": p.created_at.isoformat()} for p in rows]
     return {"items": items, "total": total, "page": page, "page_size": page_size} if paged else items
 
@@ -217,6 +261,235 @@ def _material_dict(m: Material) -> dict:
             "starred": m.starred, "created_at": m.created_at.isoformat()}
 
 
+class QianchuanBindingIn(BaseModel):
+    shop_auth_id: int | None = None
+    shop_id: str | None = None
+    shop_name: str | None = None
+    advertiser_id: str | None = None
+    qianchuan_product_id: str | None = None
+    bind_status: str | None = None
+    remark: str | None = None
+
+
+def _clean_text(value: str | None, max_len: int, field_name: str) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > max_len:
+        raise HTTPException(400, f"{field_name}不能超过{max_len}个字符")
+    return value
+
+
+@router.get("/{product_id}/qianchuan-binding")
+def qianchuan_binding(product_id: int, user: User = Depends(current_user),
+                      db: Session = Depends(get_db)):
+    if not db.get(Product, product_id):
+        raise HTTPException(404, "产品不存在")
+    row = db.scalars(select(ProductQianchuanBinding)
+                     .where(ProductQianchuanBinding.product_id == product_id)).first()
+    return _qianchuan_binding_dict(row)
+
+
+@router.put("/{product_id}/qianchuan-binding")
+def save_qianchuan_binding(product_id: int, body: QianchuanBindingIn,
+                           user: User = Depends(current_user),
+                           db: Session = Depends(get_db)):
+    if not db.get(Product, product_id):
+        raise HTTPException(404, "产品不存在")
+    status = body.bind_status or "draft"
+    if status not in QIANCHUAN_BINDING_STATUSES:
+        raise HTTPException(400, "千川绑定状态不支持")
+    row = db.scalars(select(ProductQianchuanBinding)
+                     .where(ProductQianchuanBinding.product_id == product_id)).first()
+    if not row:
+        row = ProductQianchuanBinding(product_id=product_id)
+        db.add(row)
+    row.shop_id = _clean_text(body.shop_id, 64, "千川店铺ID")
+    row.shop_name = _clean_text(body.shop_name, 128, "千川店铺名称")
+    row.advertiser_id = _clean_text(body.advertiser_id, 64, "广告主ID")
+    if body.shop_auth_id is not None:
+        shop_auth = db.get(QianchuanShopAuth, body.shop_auth_id)
+        if not shop_auth or shop_auth.auth_status != "active":
+            raise HTTPException(400, "千川店铺授权不存在或不可用")
+        row.shop_auth_id = shop_auth.id
+        row.shop_id = row.shop_id or shop_auth.shop_id
+        row.shop_name = row.shop_name or shop_auth.shop_name
+        row.advertiser_id = row.advertiser_id or shop_auth.advertiser_id
+    row.qianchuan_product_id = _clean_text(body.qianchuan_product_id, 64, "千川商品ID")
+    row.bind_status = status
+    row.remark = _clean_text(body.remark, 1000, "备注")
+    row.updated_by = user.id
+    db.commit()
+    db.refresh(row)
+    return _qianchuan_binding_dict(row)
+
+
+class QianchuanCooperationIn(BaseModel):
+    influencer_id: int
+    qianchuan_cooperation_id: str | None = None
+    bind_status: str = "bound"
+    remark: str | None = None
+
+
+class QianchuanCooperationSyncIn(BaseModel):
+    influencer_id: int
+    remark: str | None = None
+
+
+def _product_qianchuan_binding(db: Session, product_id: int) -> ProductQianchuanBinding | None:
+    return db.scalars(select(ProductQianchuanBinding)
+                      .where(ProductQianchuanBinding.product_id == product_id)).first()
+
+
+def _qianchuan_coop_dict(row: QianchuanCooperationBinding, inf: Influencer | None = None) -> dict:
+    return {
+        "id": row.id,
+        "product_id": row.product_id,
+        "influencer_id": row.influencer_id,
+        "influencer_nickname": inf.nickname if inf else None,
+        "douyin_id": inf.douyin_id if inf else None,
+        "shop_auth_id": row.shop_auth_id,
+        "qianchuan_cooperation_id": row.qianchuan_cooperation_id,
+        "bind_method": row.bind_method,
+        "bind_status": row.bind_status,
+        "remark": row.remark,
+        "last_error": row.last_error,
+        "bound_at": row.bound_at.isoformat() if row.bound_at else None,
+        "updated_at": row.updated_at.isoformat(),
+    }
+
+
+@router.get("/{product_id}/qianchuan-cooperations")
+def list_qianchuan_cooperations(product_id: int, user: User = Depends(current_user),
+                                db: Session = Depends(get_db)):
+    if not db.get(Product, product_id):
+        raise HTTPException(404, "产品不存在")
+    stmt = (select(QianchuanCooperationBinding, Influencer)
+            .join(Influencer, QianchuanCooperationBinding.influencer_id == Influencer.id)
+            .where(QianchuanCooperationBinding.product_id == product_id)
+            .order_by(QianchuanCooperationBinding.updated_at.desc()))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    return [_qianchuan_coop_dict(row, inf) for row, inf in db.execute(stmt).all()]
+
+
+@router.post("/{product_id}/qianchuan-cooperations")
+def bind_qianchuan_cooperation(product_id: int, body: QianchuanCooperationIn,
+                               user: User = Depends(current_user),
+                               db: Session = Depends(get_db)):
+    if not db.get(Product, product_id):
+        raise HTTPException(404, "产品不存在")
+    if body.bind_status not in QIANCHUAN_COOP_STATUSES:
+        raise HTTPException(400, "千川合作绑定状态不支持")
+    inf = _assert_owns_influencer(db, user, body.influencer_id)
+    grant = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
+                                                 AccessGrant.influencer_id == inf.id)).first()
+    if not grant:
+        raise HTTPException(400, "该达人尚未授权此产品,请先在「授权达人」开放产品")
+    external_id = _clean_text(body.qianchuan_cooperation_id, 64, "千川合作ID")
+    if not external_id:
+        raise HTTPException(400, "请填写千川合作ID;一键同步请使用「从已授权店铺同步」")
+    binding = _product_qianchuan_binding(db, product_id)
+
+    row = db.scalars(select(QianchuanCooperationBinding)
+                     .where(QianchuanCooperationBinding.product_id == product_id,
+                            QianchuanCooperationBinding.influencer_id == inf.id)).first()
+    if not row:
+        row = QianchuanCooperationBinding(product_id=product_id, influencer_id=inf.id)
+        db.add(row)
+    row.shop_auth_id = binding.shop_auth_id if binding else None
+    row.qianchuan_cooperation_id = external_id
+    row.bind_method = "manual_id" if external_id else "shop_auth"
+    row.bind_status = body.bind_status
+    row.remark = _clean_text(body.remark, 1000, "备注")
+    row.last_error = None
+    row.bound_by = user.id
+    row.bound_at = datetime.now()
+    db.commit()
+    db.refresh(row)
+    return _qianchuan_coop_dict(row, inf)
+
+
+@router.post("/{product_id}/qianchuan-cooperations/sync")
+async def sync_qianchuan_cooperation(product_id: int, body: QianchuanCooperationSyncIn,
+                                     user: User = Depends(current_user),
+                                     db: Session = Depends(get_db)):
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "产品不存在")
+    inf = _assert_owns_influencer(db, user, body.influencer_id)
+    grant = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
+                                                 AccessGrant.influencer_id == inf.id)).first()
+    if not grant:
+        raise HTTPException(400, "该达人尚未授权此产品,请先在「授权达人」开放产品")
+    binding = _product_qianchuan_binding(db, product_id)
+    if not binding or not binding.shop_auth_id:
+        raise HTTPException(400, "请先完成千川店铺授权或选择已授权店铺")
+    if not binding.qianchuan_product_id:
+        raise HTTPException(400, "请先填写千川商品ID")
+    shop_auth = db.get(QianchuanShopAuth, binding.shop_auth_id)
+    if not shop_auth or shop_auth.auth_status != "active":
+        raise HTTPException(400, "千川店铺授权不存在或不可用")
+    if not shop_auth.access_token:
+        raise HTTPException(400, "千川店铺授权缺少 access_token,请重新授权")
+    if shop_auth.expires_at and shop_auth.expires_at <= datetime.now():
+        raise HTTPException(400, "千川店铺授权已过期,请重新授权")
+    if not qianchuan_service.cooperation_sync_configured():
+        raise HTTPException(400, "千川合作同步接口未接入,请先使用手动合作ID绑定")
+
+    payload = {
+        "product_id": product.id,
+        "product_name": product.name,
+        "qianchuan_product_id": binding.qianchuan_product_id,
+        "advertiser_id": binding.advertiser_id or shop_auth.advertiser_id,
+        "shop_id": binding.shop_id or shop_auth.shop_id,
+        "influencer_id": inf.id,
+        "douyin_id": inf.douyin_id,
+        "douyin_uid": inf.douyin_uid,
+        "cooperation_code": inf.cooperation_code,
+        "remark": _clean_text(body.remark, 1000, "备注"),
+    }
+    try:
+        result = await qianchuan_service.sync_cooperation(shop_auth.access_token, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    row = db.scalars(select(QianchuanCooperationBinding)
+                     .where(QianchuanCooperationBinding.product_id == product_id,
+                            QianchuanCooperationBinding.influencer_id == inf.id)).first()
+    if not row:
+        row = QianchuanCooperationBinding(product_id=product_id, influencer_id=inf.id)
+        db.add(row)
+    row.shop_auth_id = shop_auth.id
+    row.qianchuan_cooperation_id = result["qianchuan_cooperation_id"]
+    row.bind_method = "shop_auth"
+    row.bind_status = "bound"
+    row.remark = payload["remark"]
+    row.last_error = None
+    row.bound_by = user.id
+    row.bound_at = datetime.now()
+    db.commit()
+    db.refresh(row)
+    return _qianchuan_coop_dict(row, inf)
+
+
+@router.delete("/{product_id}/qianchuan-cooperations/{binding_id}")
+def delete_qianchuan_cooperation(product_id: int, binding_id: int,
+                                 user: User = Depends(current_user),
+                                 db: Session = Depends(get_db)):
+    row = db.get(QianchuanCooperationBinding, binding_id)
+    if not row or row.product_id != product_id:
+        raise HTTPException(404, "千川合作绑定不存在")
+    inf = db.get(Influencer, row.influencer_id)
+    if not owns_or_admin(user, inf.owner_bd_id if inf else None):
+        raise HTTPException(403, "只能操作自己名下达人的千川合作绑定")
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/{product_id}")
 def detail(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = db.get(Product, product_id)
@@ -227,6 +500,8 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
         .where(Material.product_id == product_id)
         .order_by(Material.created_at.desc(), Material.id.desc())
     ).all()
+    binding = db.scalars(select(ProductQianchuanBinding)
+                         .where(ProductQianchuanBinding.product_id == product_id)).first()
     return {"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
             "shop_product_id": p.shop_product_id, "link": p.link, "status": p.status,
             "product_image": storage.signed_url(p.product_image) if p.product_image else None,
@@ -236,6 +511,7 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "sample_remark": p.sample_remark, "promo_remark": p.promo_remark,
             "auto_audit_type": p.auto_audit_type, "allow_promotion": p.allow_promotion,
+            "qianchuan_binding": _qianchuan_binding_dict(binding),
             "materials": [_material_dict(m) for m in materials]}
 
 

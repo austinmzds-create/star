@@ -46,6 +46,14 @@ class Settings(BaseSettings):
     # 巨量引擎开放平台(服务商资质,P0 spike)
     oceanengine_app_id: str = ""
     oceanengine_secret: str = ""
+    oceanengine_redirect_uri: str = ""
+    oceanengine_auth_url: str = "https://ad.oceanengine.com/openapi/audit/oauth.html"
+    oceanengine_token_url: str = "https://ad.oceanengine.com/open_api/oauth2/access_token/"
+    oceanengine_scope: str = ""
+    oceanengine_cooperation_sync_url: str = ""
+    oceanengine_access_token_mode: str = "query"
+    oceanengine_access_token_param: str = "access_token"
+    oceanengine_access_token_header: str = "Access-Token"
 
 
 settings = Settings()

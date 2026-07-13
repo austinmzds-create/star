@@ -17,6 +17,13 @@
         </template>
       </el-table-column>
       <el-table-column prop="shop_name" label="店铺" width="150" />
+      <el-table-column label="千川" width="90">
+        <template #default="{ row }">
+          <el-tag size="small" :type="qianchuanTag(row.qianchuan_status).type">
+            {{ qianchuanTag(row.qianchuan_status).label }}
+          </el-tag>
+        </template>
+      </el-table-column>
       <el-table-column prop="price_text" label="价格" width="90" />
       <el-table-column label="默认佣金" width="90">
         <template #default="{ row }">{{ row.default_commission != null ? row.default_commission + '%' : '—' }}</template>
@@ -118,6 +125,34 @@
         </div>
 
         <el-tabs v-model="dtab" style="margin-top:8px">
+          <!-- 商品信息 -->
+          <el-tab-pane label="商品信息" name="info">
+            <el-form label-width="88px" style="max-width:560px">
+              <el-form-item label="名称"><el-input v-model="detail.name" /></el-form-item>
+              <el-form-item label="商品图">
+                <MultiUpload v-model="detail.product_images_keys" :max="6" prefix="product"
+                  :initial-previews="imgPreviewMap" />
+                <span class="muted" style="font-size:12px">首张作封面</span>
+              </el-form-item>
+              <el-form-item label="店铺"><el-input v-model="detail.shop_name" /></el-form-item>
+              <el-form-item label="价格"><el-input v-model="detail.price_text" placeholder="如 30起" /></el-form-item>
+              <el-form-item label="抖店商品ID"><el-input v-model="detail.shop_product_id" /></el-form-item>
+              <el-form-item label="抖店链接"><el-input v-model="detail.link" /></el-form-item>
+              <el-form-item label="默认佣金%"><el-input-number v-model="detail.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
+              <el-form-item label="卖点"><el-input v-model="detail.selling_points" type="textarea" :rows="2" /></el-form-item>
+              <el-form-item label="拍摄要求"><el-input v-model="detail.shooting_notes" type="textarea" :rows="2" /></el-form-item>
+              <el-form-item label="寄样备注"><el-input v-model="detail.sample_remark" type="textarea" :rows="2" /></el-form-item>
+              <el-form-item label="带货备注"><el-input v-model="detail.promo_remark" type="textarea" :rows="2" placeholder="如:孩子太小的话就不要出镜,打码也不行" /></el-form-item>
+              <el-form-item label="一键审核">
+                <el-segmented v-model="detail.auto_audit_type" :options="AUDIT_TYPES" />
+              </el-form-item>
+              <el-form-item label="允许带货">
+                <el-segmented v-model="detail.allow_promotion" :options="[{label:'允许',value:true},{label:'不允许',value:false}]" />
+              </el-form-item>
+              <el-button type="primary" @click="saveInfo">保存</el-button>
+            </el-form>
+          </el-tab-pane>
+
           <!-- 素材 -->
           <el-tab-pane label="素材" name="materials">
             <el-tabs v-model="mtype" tab-position="left" class="mat-tabs">
@@ -187,29 +222,99 @@
             </el-tabs>
           </el-tab-pane>
 
-          <!-- 商品信息 -->
-          <el-tab-pane label="商品信息" name="info">
-            <el-form label-width="88px" style="max-width:560px">
-              <el-form-item label="名称"><el-input v-model="detail.name" /></el-form-item>
-              <el-form-item label="商品图">
-                <MultiUpload v-model="detail.product_images_keys" :max="6" prefix="product"
-                  :initial-previews="imgPreviewMap" />
-                <span class="muted" style="font-size:12px">首张作封面</span>
+          <!-- 授权达人 -->
+          <el-tab-pane label="授权达人" name="grants">
+            <div class="mat-add">
+              <InfluencerSelect v-model="grantId" style="flex:1" />
+              <el-button type="primary" size="small" :disabled="!grantId" @click="addGrant">开放</el-button>
+            </div>
+            <el-table :data="grants" size="small">
+              <el-table-column prop="nickname" label="达人" />
+              <el-table-column prop="douyin_id" label="抖音号" />
+              <el-table-column label="授权时间" width="150"><template #default="{ row }">{{ ft(row.granted_at) }}</template></el-table-column>
+              <el-table-column width="70"><template #default="{ row }">
+                <el-button size="small" text type="danger" @click="removeGrant(row)">移除</el-button>
+              </template></el-table-column>
+            </el-table>
+            <el-empty v-if="!grants.length" description="尚未授权任何达人" :image-size="50" />
+          </el-tab-pane>
+
+          <!-- 千川店铺绑定 -->
+          <el-tab-pane label="千川店铺绑定" name="qianchuan">
+            <div class="qianchuan-head">
+              <div>
+                <el-tag size="small" :type="qianchuan.configured ? 'success' : 'warning'">
+                  {{ qianchuan.configured ? '已维护店铺映射' : '未绑定店铺' }}
+                </el-tag>
+                <el-tag size="small" style="margin-left:6px" :type="qianchuan.can_start_oauth ? 'primary' : 'info'">
+                  {{ qianchuan.can_start_oauth ? '可发起授权' : '待配置开放平台' }}
+                </el-tag>
+                <el-tag size="small" style="margin-left:6px" :type="qianchuan.can_sync_cooperation ? 'success' : 'info'">
+                  {{ qianchuan.can_sync_cooperation ? '合作同步可用' : '合作同步待接入' }}
+                </el-tag>
+              </div>
+              <div class="qc-actions">
+                <el-button size="small" @click="loadShopAuths">刷新授权店铺</el-button>
+                <el-button size="small" type="primary" :disabled="!qianchuan.can_start_oauth"
+                  :loading="startingOauth" @click="startQianchuanOauth">
+                  跳转授权千川店铺
+                </el-button>
+              </div>
+            </div>
+            <el-alert v-if="!qianchuan.can_start_oauth" type="warning" :closable="false" show-icon
+              :title="`待配置: ${(qianchuan.missing_config || []).join(' / ') || '开放平台参数'}`" />
+            <el-form label-width="110px" style="max-width:580px">
+              <el-form-item label="已授权店铺">
+                <el-select v-model="qianchuan.shop_auth_id" clearable filterable placeholder="选择已授权店铺"
+                  style="width:100%" @change="applyShopAuth">
+                  <el-option v-for="shop in qianchuanShopAuths" :key="shop.id"
+                    :label="shopAuthLabel(shop)" :value="shop.id" />
+                </el-select>
               </el-form-item>
-              <el-form-item label="抖店链接"><el-input v-model="detail.link" /></el-form-item>
-              <el-form-item label="默认佣金%"><el-input-number v-model="detail.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
-              <el-form-item label="卖点"><el-input v-model="detail.selling_points" type="textarea" :rows="2" /></el-form-item>
-              <el-form-item label="拍摄要求"><el-input v-model="detail.shooting_notes" type="textarea" :rows="2" /></el-form-item>
-              <el-form-item label="寄样备注"><el-input v-model="detail.sample_remark" type="textarea" :rows="2" /></el-form-item>
-              <el-form-item label="带货备注"><el-input v-model="detail.promo_remark" type="textarea" :rows="2" placeholder="如:孩子太小的话就不要出镜,打码也不行" /></el-form-item>
-              <el-form-item label="一键审核">
-                <el-segmented v-model="detail.auto_audit_type" :options="AUDIT_TYPES" />
+              <el-form-item label="本地状态">
+                <el-segmented v-model="qianchuan.bind_status" :options="QIANCHUAN_STATUS_OPTIONS" />
               </el-form-item>
-              <el-form-item label="允许带货">
-                <el-segmented v-model="detail.allow_promotion" :options="[{label:'允许',value:true},{label:'不允许',value:false}]" />
-              </el-form-item>
-              <el-button type="primary" @click="saveInfo">保存</el-button>
+              <el-form-item label="千川店铺ID"><el-input v-model="qianchuan.shop_id" /></el-form-item>
+              <el-form-item label="千川店铺名"><el-input v-model="qianchuan.shop_name" /></el-form-item>
+              <el-form-item label="广告主ID"><el-input v-model="qianchuan.advertiser_id" /></el-form-item>
+              <el-form-item label="千川商品ID"><el-input v-model="qianchuan.qianchuan_product_id" /></el-form-item>
+              <el-form-item label="备注"><el-input v-model="qianchuan.remark" type="textarea" :rows="3" /></el-form-item>
+              <el-button type="primary" :loading="savingQianchuan" @click="saveQianchuan">保存本地映射</el-button>
             </el-form>
+
+            <el-divider>达人合作绑定</el-divider>
+            <div class="mat-add">
+              <InfluencerSelect v-model="qcCoopForm.influencer_id" style="flex:1" />
+              <el-input v-model="qcCoopForm.qianchuan_cooperation_id" placeholder="千川合作ID" style="width:180px" />
+              <el-input v-model="qcCoopForm.remark" placeholder="备注(选填)" style="width:160px" />
+              <el-button type="primary" size="small" :loading="bindingQcCoop" @click="bindQianchuanCoop">
+                绑定合作ID
+              </el-button>
+              <el-button size="small" :disabled="!canSyncQianchuanCoop" :loading="syncingQcCoop"
+                @click="syncQianchuanCoop">
+                从已授权店铺同步
+              </el-button>
+              <span class="muted" style="font-size:12px">{{ qianchuanSyncText }}</span>
+            </div>
+            <el-table :data="qianchuanCoops" size="small">
+              <el-table-column prop="influencer_nickname" label="达人" />
+              <el-table-column prop="douyin_id" label="抖音号" width="120" />
+              <el-table-column prop="qianchuan_cooperation_id" label="千川合作ID" width="150" />
+              <el-table-column label="方式" width="90">
+                <template #default="{ row }">{{ row.bind_method === 'manual_id' ? '手动ID' : '店铺授权' }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }"><el-tag size="small">{{ row.bind_status }}</el-tag></template>
+              </el-table-column>
+              <el-table-column prop="last_error" label="异常" width="120" show-overflow-tooltip />
+              <el-table-column prop="remark" label="备注" show-overflow-tooltip />
+              <el-table-column width="70">
+                <template #default="{ row }">
+                  <el-button size="small" text type="danger" @click="removeQianchuanCoop(row)">移除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-if="!qianchuanCoops.length" description="暂无千川合作绑定" :image-size="50" />
           </el-tab-pane>
 
           <!-- 出单登记(GMV) -->
@@ -234,23 +339,6 @@
             </el-table>
             <el-empty v-if="!orders.length" description="暂无出单登记" :image-size="50" />
             <div class="muted" style="text-align:right; margin-top:8px">合计 GMV: ¥{{ orderTotal.toFixed(2) }}</div>
-          </el-tab-pane>
-
-          <!-- 授权达人 -->
-          <el-tab-pane label="授权达人" name="grants">
-            <div class="mat-add">
-              <InfluencerSelect v-model="grantId" style="flex:1" />
-              <el-button type="primary" size="small" :disabled="!grantId" @click="addGrant">开放</el-button>
-            </div>
-            <el-table :data="grants" size="small">
-              <el-table-column prop="nickname" label="达人" />
-              <el-table-column prop="douyin_id" label="抖音号" />
-              <el-table-column label="授权时间" width="150"><template #default="{ row }">{{ ft(row.granted_at) }}</template></el-table-column>
-              <el-table-column width="70"><template #default="{ row }">
-                <el-button size="small" text type="danger" @click="removeGrant(row)">移除</el-button>
-              </template></el-table-column>
-            </el-table>
-            <el-empty v-if="!grants.length" description="尚未授权任何达人" :image-size="50" />
           </el-tab-pane>
 
           <!-- 动态 -->
@@ -279,7 +367,7 @@
 <script setup>
 import { Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
@@ -298,6 +386,17 @@ const AUDIT_TYPES = [
   { label: '不需审核', value: 'none' }, { label: '必须审核', value: 'must' },
   { label: '18:30自动通过', value: 'auto1830' },
 ]
+const QIANCHUAN_STATUS_OPTIONS = [
+  { label: '草稿', value: 'draft' },
+  { label: '已配置', value: 'configured' },
+  { label: '停用', value: 'disabled' },
+]
+const QIANCHUAN_STATUS = {
+  unconfigured: { label: '未配置', type: 'info' },
+  draft: { label: '草稿', type: 'warning' },
+  configured: { label: '已配置', type: 'success' },
+  disabled: { label: '停用', type: 'info' },
+}
 
 const rows = ref([])
 const search = ref('')
@@ -308,7 +407,7 @@ const createVisible = ref(false)
 const form = reactive({})
 const drawer = ref(false)
 const detail = ref(null)
-const dtab = ref('materials')
+const dtab = ref('info')
 const mtype = ref('video_ai')
 const matForm = reactive({})
 const matUploading = ref(false)
@@ -323,9 +422,28 @@ const orderForm = reactive({ influencer_id: null, order_date: '', amount: null, 
 const orderTotal = computed(() => orders.value.reduce((s, o) => s + Number(o.amount || 0), 0))
 const editOrderVisible = ref(false)
 const orderEdit = reactive({})
+const qianchuan = reactive({ bind_status: 'draft' })
+const savingQianchuan = ref(false)
+const startingOauth = ref(false)
+const qianchuanCoops = ref([])
+const qianchuanShopAuths = ref([])
+const bindingQcCoop = ref(false)
+const syncingQcCoop = ref(false)
+const qcCoopForm = reactive({ influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
 
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
+const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
+const canSyncQianchuanCoop = computed(() => Boolean(
+  qcCoopForm.influencer_id && qianchuan.can_sync_cooperation && qianchuan.qianchuan_product_id,
+))
+const qianchuanSyncText = computed(() => {
+  if (!qianchuan.cooperation_sync_configured) return '合作同步接口待接入'
+  if (!qianchuan.shop_auth_id) return '请先选择已授权店铺'
+  if (!qianchuan.qianchuan_product_id) return '请先填写千川商品ID'
+  if (!qcCoopForm.influencer_id) return '请选择达人'
+  return ''
+})
 const materialsOf = (t) => (detail.value?.materials || []).filter((m) => m.type === t)
 const countOf = (t) => materialsOf(t).length
 const acceptOf = (type) => {
@@ -357,13 +475,64 @@ async function saveCreate() {
   ElMessage.success('已创建'); createVisible.value = false; load()
 }
 
-async function open(row, tabName = 'materials') {
+function resetQianchuan(value = {}) {
+  Object.keys(qianchuan).forEach((key) => delete qianchuan[key])
+  Object.assign(qianchuan, {
+    shop_auth_id: null,
+    shop_id: '',
+    shop_name: '',
+    advertiser_id: '',
+    qianchuan_product_id: '',
+    bind_status: 'draft',
+    remark: '',
+    configured: false,
+    integration_status: 'config_missing',
+    missing_config: [],
+    can_start_oauth: false,
+    cooperation_sync_configured: false,
+    missing_cooperation_sync_config: [],
+    can_sync_cooperation: false,
+  }, value)
+}
+
+async function loadShopAuths() {
+  try {
+    qianchuanShopAuths.value = await api.get('/api/qianchuan/shop-auths')
+  } catch (e) {
+    qianchuanShopAuths.value = []
+    ElMessage.error(e.response?.data?.detail || '授权店铺加载失败')
+  }
+}
+
+function shopAuthLabel(shop) {
+  const name = shop.shop_name || shop.shop_id || '未命名店铺'
+  const parts = [name]
+  if (shop.advertiser_id) parts.push(`广告主 ${shop.advertiser_id}`)
+  if (shop.shop_id && shop.shop_id !== name) parts.push(`店铺 ${shop.shop_id}`)
+  return parts.join(' / ')
+}
+
+function applyShopAuth(id) {
+  const shop = qianchuanShopAuths.value.find((item) => item.id === Number(id))
+  if (!shop) return
+  qianchuan.shop_id = shop.shop_id || ''
+  qianchuan.shop_name = shop.shop_name || ''
+  qianchuan.advertiser_id = shop.advertiser_id || ''
+  if (qianchuan.bind_status === 'draft') qianchuan.bind_status = 'configured'
+}
+
+async function open(row, tabName = 'info') {
+  const targetTab = typeof tabName === 'string' ? tabName : 'info'
   detail.value = await api.get(`/api/products/${row.id}`)
-  drawer.value = true; dtab.value = tabName; mtype.value = 'video_ai'
+  drawer.value = true; dtab.value = targetTab; mtype.value = 'video_ai'
+  resetQianchuan(detail.value.qianchuan_binding || {})
+  await loadShopAuths()
   Object.keys(matForm).forEach((k) => delete matForm[k])
   grants.value = await api.get(`/api/products/${row.id}/grants`)
   act.value = await api.get(`/api/products/${row.id}/activity`)
   orders.value = await api.get(`/api/products/${row.id}/orders`)
+  qianchuanCoops.value = await api.get(`/api/products/${row.id}/qianchuan-cooperations`)
+  Object.assign(qcCoopForm, { influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
 }
 
 async function loadOrders() { orders.value = await api.get(`/api/products/${detail.value.id}/orders`) }
@@ -519,7 +688,9 @@ async function removeProduct(row) {
 
 async function saveInfo() {
   await api.put(`/api/products/${detail.value.id}`, {
-    name: detail.value.name, link: detail.value.link,
+    name: detail.value.name, shop_name: detail.value.shop_name,
+    price_text: detail.value.price_text, shop_product_id: detail.value.shop_product_id,
+    link: detail.value.link,
     product_images: detail.value.product_images_keys || [],
     default_commission: detail.value.default_commission,
     selling_points: detail.value.selling_points, shooting_notes: detail.value.shooting_notes,
@@ -527,6 +698,97 @@ async function saveInfo() {
     auto_audit_type: detail.value.auto_audit_type, allow_promotion: detail.value.allow_promotion,
   })
   ElMessage.success('已保存'); load()
+}
+
+async function saveQianchuan() {
+  savingQianchuan.value = true
+  try {
+    const saved = await api.put(`/api/products/${detail.value.id}/qianchuan-binding`, {
+      shop_auth_id: qianchuan.shop_auth_id || undefined,
+      shop_id: qianchuan.shop_id,
+      shop_name: qianchuan.shop_name,
+      advertiser_id: qianchuan.advertiser_id,
+      qianchuan_product_id: qianchuan.qianchuan_product_id,
+      bind_status: qianchuan.bind_status || 'draft',
+      remark: qianchuan.remark,
+    })
+    resetQianchuan(saved)
+    detail.value.qianchuan_binding = saved
+    ElMessage.success('千川本地映射已保存')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    savingQianchuan.value = false
+  }
+}
+
+async function startQianchuanOauth() {
+  startingOauth.value = true
+  try {
+    const r = await api.post('/api/qianchuan/oauth/start', { product_id: detail.value.id })
+    window.open(r.auth_url, '_blank')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '千川授权暂不可用')
+  } finally {
+    startingOauth.value = false
+  }
+}
+
+async function refreshQianchuanBinding() {
+  if (!detail.value?.id) return
+  await loadShopAuths()
+  const saved = await api.get(`/api/products/${detail.value.id}/qianchuan-binding`)
+  resetQianchuan(saved)
+  detail.value.qianchuan_binding = saved
+  load()
+}
+
+async function bindQianchuanCoop() {
+  if (!qcCoopForm.influencer_id) return ElMessage.warning('请选择达人')
+  if (!qcCoopForm.qianchuan_cooperation_id?.trim()) return ElMessage.warning('请填写千川合作ID')
+  bindingQcCoop.value = true
+  try {
+    await api.post(`/api/products/${detail.value.id}/qianchuan-cooperations`, {
+      influencer_id: qcCoopForm.influencer_id,
+      qianchuan_cooperation_id: qcCoopForm.qianchuan_cooperation_id,
+      remark: qcCoopForm.remark || undefined,
+    })
+    Object.assign(qcCoopForm, { influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
+    qianchuanCoops.value = await api.get(`/api/products/${detail.value.id}/qianchuan-cooperations`)
+    ElMessage.success('千川合作已绑定')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '绑定失败')
+  } finally {
+    bindingQcCoop.value = false
+  }
+}
+
+async function syncQianchuanCoop() {
+  if (!qcCoopForm.influencer_id) return ElMessage.warning('请选择达人')
+  if (!qianchuan.can_sync_cooperation) return ElMessage.warning('千川合作同步接口未接入')
+  if (!qianchuan.qianchuan_product_id) return ElMessage.warning('请先填写千川商品ID')
+  syncingQcCoop.value = true
+  try {
+    await api.post(`/api/products/${detail.value.id}/qianchuan-cooperations/sync`, {
+      influencer_id: qcCoopForm.influencer_id,
+      remark: qcCoopForm.remark || undefined,
+    })
+    Object.assign(qcCoopForm, { influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
+    qianchuanCoops.value = await api.get(`/api/products/${detail.value.id}/qianchuan-cooperations`)
+    ElMessage.success('千川合作已同步')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '同步失败')
+  } finally {
+    syncingQcCoop.value = false
+  }
+}
+
+async function removeQianchuanCoop(row) {
+  await ElMessageBox.confirm('确认移除该千川合作绑定?', '提示', { type: 'warning' })
+  await api.delete(`/api/products/${detail.value.id}/qianchuan-cooperations/${row.id}`)
+  qianchuanCoops.value = await api.get(`/api/products/${detail.value.id}/qianchuan-cooperations`)
+  ElMessage.success('已移除')
 }
 
 async function addGrant() {
@@ -539,7 +801,16 @@ async function removeGrant(row) {
   grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
 }
 
-onMounted(load)
+function onQianchuanMessage(event) {
+  if (event.data?.type === 'qianchuan-oauth-finished') refreshQianchuanBinding()
+}
+
+onMounted(() => {
+  load()
+  loadShopAuths()
+  window.addEventListener('message', onQianchuanMessage)
+})
+onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 </script>
 
 <style scoped>
@@ -563,4 +834,12 @@ onMounted(load)
 .material-card .op, .material-card .del { color: #c0c4cc; cursor: pointer; }
 .material-card .op:hover { color: #6b5cf6; }
 .material-card .del:hover { color: #f56c6c; }
+.qianchuan-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0 14px;
+}
+.qc-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 </style>
