@@ -6,7 +6,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     app_name: str = "达人管理平台"
-    debug: bool = True
+    # 安全默认:debug 默认 False(生产安全优先);开发/测试环境在 .env 显式设 DEBUG=true。
+    # debug=True 才启用:dev-switch 换角色、默认管理员 admin/admin123 种子、SQL echo。
+    debug: bool = False
     secret_key: str = "change-me"
 
     # 本地开发默认 sqlite,生产切 PostgreSQL:postgresql+psycopg://user:pass@host/db

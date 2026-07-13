@@ -42,17 +42,23 @@ SEED_REASONS = [
 ]
 
 
+# 已知的弱/示例密钥:生产(debug=False)拒绝使用,避免 token 被伪造
+WEAK_SECRETS = {"", "change-me", "star-dev-please-rotate-in-prod"}
+
+
 @app.on_event("startup")
 def startup():
-    # 生产环境(debug=False)必须显式设置 SECRET_KEY,否则签发的 token 可被伪造
-    if not settings.debug and settings.secret_key == "change-me":
-        raise RuntimeError("生产环境必须设置 SECRET_KEY(当前仍为默认值)")
+    # 生产环境(debug=False)必须显式设置足够强的 SECRET_KEY(非默认/示例、≥16 位)
+    if not settings.debug and (settings.secret_key in WEAK_SECRETS or len(settings.secret_key) < 16):
+        raise RuntimeError("生产环境必须设置足够强的 SECRET_KEY(非默认/示例值,长度≥16)")
     # 骨架阶段用 create_all;上生产前切 alembic 迁移
     Base.metadata.create_all(engine)
     ensure_columns()  # 自动补齐已存在表的新增列(create_all 不会 ALTER)
     with SessionLocal() as db:
         levels.seed_defaults(db)  # L1/L2/L3 → 5/6/7(可在配置中心改)
-        if not db.scalars(select(User).where(User.role == "admin")).first():
+        # 默认管理员(admin/admin123)仅在开发环境种子;生产由 admin_phones 白名单短信登录引导,
+        # 避免弱口令随包上线。
+        if settings.debug and not db.scalars(select(User).where(User.role == "admin")).first():
             db.add(User(username="admin", password_hash=hash_password("admin123"),
                         display_name="管理员", role="admin"))
         if not db.scalars(select(RejectReason)).first():
