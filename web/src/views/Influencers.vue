@@ -7,13 +7,20 @@
       </el-select>
       <el-button @click="importVisible = true">Excel 导入</el-button>
       <el-button type="primary" @click="showPaste = true">+ 粘贴录入达人</el-button>
+      <el-tag v-if="ownerBdId" closable type="warning" @close="clearOwnerFilter">
+        仅看商务：{{ ownerBdName || '#' + ownerBdId }}
+      </el-tag>
     </div>
 
-    <el-table :data="rows" @row-click="(r) => $router.push(`/influencers/${r.id}`)" style="cursor: pointer">
+    <el-table :data="rows" v-loading="loading" @row-click="(r) => $router.push(`/influencers/${r.id}`)" style="cursor: pointer">
       <el-table-column prop="nickname" label="昵称" />
       <el-table-column prop="douyin_id" label="抖音号" />
-      <el-table-column prop="fans_count" label="粉丝" width="80" />
-      <el-table-column prop="gmv_30d" label="GMV" width="80" />
+      <el-table-column label="粉丝" width="90">
+        <template #default="{ row }">{{ row.fans_count != null ? num(row.fans_count) : '—' }}</template>
+      </el-table-column>
+      <el-table-column label="GMV" width="90">
+        <template #default="{ row }">{{ row.gmv_30d != null ? num(row.gmv_30d) : '—' }}</template>
+      </el-table-column>
       <el-table-column label="数据来源" width="120">
         <template #default="{ row }">{{ row.data_source || (row.source === 'import' ? '导入' : row.source) || '—' }}</template>
       </el-table-column>
@@ -34,7 +41,8 @@
         <template #default="{ row }">{{ fmtDate(row.updated_at) }}</template>
       </el-table-column>
     </el-table>
-    <el-pagination background layout="total, prev, pager, next" :total="total"
+    <el-empty v-if="!loading && !rows.length" description="暂无达人" :image-size="70" />
+    <el-pagination v-if="total > pageSize" background layout="total, prev, pager, next" :total="total"
       :page-size="pageSize" :current-page="page" style="margin-top: 16px; justify-content: flex-end"
       @current-change="(p) => { page = p; load() }" />
 
@@ -122,8 +130,9 @@
 <script setup>
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
+import { num } from '../utils/format'
 
 const FIELDS = [
   { key: 'nickname', label: '昵称' },
@@ -143,11 +152,15 @@ const MODES = [
 ]
 const rows = ref([])
 const router = useRouter()
+const route = useRoute()
 const total = ref(0)
 const page = ref(1)
 const pageSize = 50
 const q = ref('')
 const level = ref('')
+const loading = ref(false)
+// 从看板"按商务"下钻时带入的归属商务过滤
+const ownerBdId = ref(route.query.owner_bd_id ? Number(route.query.owner_bd_id) : null)
 const showPaste = ref(false)
 const mode = ref('paste')
 const pasteText = ref('')
@@ -179,11 +192,27 @@ function resetDialog() {
 }
 
 async function load() {
-  const data = await api.get('/api/influencers', {
-    params: { q: q.value || undefined, level: level.value || undefined, page: page.value, page_size: pageSize },
-  })
-  rows.value = data.items
-  total.value = data.total
+  loading.value = true
+  try {
+    const data = await api.get('/api/influencers', {
+      params: {
+        q: q.value || undefined, level: level.value || undefined,
+        owner_bd_id: ownerBdId.value || undefined,
+        page: page.value, page_size: pageSize,
+      },
+    })
+    rows.value = data.items
+    total.value = data.total
+  } finally {
+    loading.value = false
+  }
+}
+const ownerBdName = computed(() => rows.value.find((r) => r.owner_bd_id === ownerBdId.value)?.owner_bd_name)
+function clearOwnerFilter() {
+  ownerBdId.value = null
+  router.replace({ path: '/influencers' })
+  page.value = 1
+  load()
 }
 
 async function doParse() {

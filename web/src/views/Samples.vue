@@ -19,7 +19,11 @@
     </div>
 
     <el-table :data="rows" v-loading="loading">
-      <el-table-column prop="influencer_nickname" label="达人" />
+      <el-table-column label="达人">
+        <template #default="{ row }">
+          <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname }}</router-link>
+        </template>
+      </el-table-column>
       <el-table-column prop="product_name" label="产品" />
       <el-table-column prop="round_no" label="轮次" width="70" />
       <el-table-column label="物流" min-width="220">
@@ -110,8 +114,11 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
+
+const route = useRoute()
 
 const TABS = [
   { key: 'pending', label: '待审批' },
@@ -247,6 +254,8 @@ async function refreshTrack(row) {
 }
 
 onMounted(async () => {
+  // 工作台待办可带 ?tab= 精确进入对应状态分栏
+  if (route.query.tab && TABS.some((t) => t.key === route.query.tab)) tab.value = route.query.tab
   reasons.value = await api.get('/api/samples/reject-reasons')
   couriers.value = await api.get('/api/samples/couriers')
   products.value = await api.get('/api/products')
@@ -262,4 +271,6 @@ onMounted(async () => {
 .logi-line { font-size: 12px; color: #8a93a6; margin-top: 2px; }
 .logi-line .tm { margin-left: 6px; color: #b3bac9; }
 .logi-empty { font-size: 12px; color: #e6a23c; margin-top: 2px; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 </style>

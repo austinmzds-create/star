@@ -34,7 +34,10 @@
         <template #default="{ row }"><el-tag v-if="row.tag" size="small" type="danger">{{ row.tag }}</el-tag></template>
       </el-table-column>
       <el-table-column label="关联达人" width="120">
-        <template #default="{ row }">{{ row.influencer_nickname || '—' }}</template>
+        <template #default="{ row }">
+          <router-link v-if="row.influencer_id" :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname || '—' }}</router-link>
+          <span v-else class="muted">—</span>
+        </template>
       </el-table-column>
       <el-table-column label="视频" width="70">
         <template #default="{ row }">
@@ -155,4 +158,7 @@ onMounted(async () => { products.value = await api.get('/api/products'); loadTag
 <style scoped>
 .shots { display: flex; gap: 4px; }
 .shot { width: 40px; height: 40px; border-radius: 6px; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
+.muted { color: #909399; }
 </style>

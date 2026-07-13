@@ -9,7 +9,11 @@
     </div>
 
     <el-table :data="rows" v-loading="loading">
-      <el-table-column prop="influencer_nickname" label="达人" />
+      <el-table-column label="达人">
+        <template #default="{ row }">
+          <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname }}</router-link>
+        </template>
+      </el-table-column>
       <el-table-column prop="note" label="待办" />
       <el-table-column label="生成时间" width="200">
         <template #default="{ row }">{{ ft(row.created_at) }}</template>
@@ -65,4 +69,6 @@ onMounted(load)
 
 <style scoped>
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 </style>

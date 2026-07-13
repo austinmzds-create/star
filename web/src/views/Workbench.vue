@@ -7,19 +7,19 @@
 
     <div class="section-title">今日待办</div>
     <div class="todo-grid">
-      <div class="todo-card" :class="{ hot: data.todos.pending_sample }" @click="$router.push('/samples')">
+      <div class="todo-card" :class="{ hot: data.todos.pending_sample }" @click="go('/samples', { tab: 'pending' })">
         <div class="n">{{ data.todos.pending_sample }}</div><div class="l">待审批寄样</div>
       </div>
-      <div class="todo-card" :class="{ hot: data.todos.to_ship }" @click="$router.push('/samples')">
+      <div class="todo-card" :class="{ hot: data.todos.to_ship }" @click="go('/samples', { tab: 'approved' })">
         <div class="n">{{ data.todos.to_ship }}</div><div class="l">待发货</div>
       </div>
-      <div class="todo-card" :class="{ hot: data.todos.pending_video }" @click="$router.push('/videos')">
+      <div class="todo-card" :class="{ hot: data.todos.pending_video }" @click="go('/videos', { main: 'video', tab: 'submitted' })">
         <div class="n">{{ data.todos.pending_video }}</div><div class="l">待审视频</div>
       </div>
-      <div class="todo-card" :class="{ hot: data.todos.followup }" @click="$router.push('/followups')">
+      <div class="todo-card" :class="{ hot: data.todos.followup }" @click="go('/followups')">
         <div class="n">{{ data.todos.followup }}</div><div class="l">催拍待办</div>
       </div>
-      <div class="todo-card" :class="{ hot: data.todos.pending_promotion }" @click="$router.push('/videos')">
+      <div class="todo-card" :class="{ hot: data.todos.pending_promotion }" @click="go('/videos', { main: 'promotion' })">
         <div class="n">{{ data.todos.pending_promotion }}</div><div class="l">待处理投流</div>
       </div>
     </div>
@@ -28,7 +28,7 @@
     <div class="stat-grid">
       <div class="stat-card"><div class="n">{{ data.stats.influencer_total }}</div><div class="l">我的达人</div></div>
       <div class="stat-card"><div class="n">{{ data.stats.week_new }}</div><div class="l">本周新增达人</div></div>
-      <div class="stat-card"><div class="n">¥{{ data.stats.week_gmv.toLocaleString() }}</div><div class="l">本周产出GMV</div></div>
+      <div class="stat-card"><div class="n">{{ money(data.stats.week_gmv) }}</div><div class="l">本周产出GMV</div></div>
     </div>
 
     <div class="quick">
@@ -45,11 +45,15 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
+import { money } from '../utils/format'
 
+const router = useRouter()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const data = ref(null)
-const totalTodo = computed(() => data.value ? Object.values(data.value.todos).reduce((a, b) => a + b, 0) : 0)
+const totalTodo = computed(() => data.value ? Object.values(data.value.todos).reduce((a, b) => a + (Number(b) || 0), 0) : 0)
+const go = (path, query) => router.push({ path, query })
 
 onMounted(async () => { data.value = await api.get('/api/dashboard/workbench') })
 </script>

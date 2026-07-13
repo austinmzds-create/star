@@ -25,8 +25,12 @@
         </div>
       </div>
 
-      <el-table :data="videos">
-        <el-table-column prop="influencer_nickname" label="达人" />
+      <el-table :data="videos" v-loading="vLoading">
+        <el-table-column label="达人">
+          <template #default="{ row }">
+            <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname }}</router-link>
+          </template>
+        </el-table-column>
         <el-table-column prop="product_name" label="产品" />
         <el-table-column prop="round_no" label="轮次" width="70" />
         <el-table-column label="抖音链接">
@@ -111,7 +115,7 @@
       <div v-for="row in promotions" :key="row.id" class="promo-card">
         <div class="pc-head">
           <div>
-            <span class="pc-name">{{ row.influencer_nickname }}</span>
+            <router-link :to="`/influencers/${row.influencer_id}`" class="pc-name link">{{ row.influencer_nickname }}</router-link>
             <span class="muted" style="margin-left:8px">{{ row.fans_count ?? '—' }}粉丝 · {{ row.product_name }}</span>
           </div>
           <el-tag size="small" :type="PROMO_TAG[row.auth_status] || 'info'">{{ promoLabel(row.auth_status) }}</el-tag>
@@ -148,7 +152,10 @@
       <!-- 投流失败(填原因) -->
       <el-dialog v-model="failVisible" title="标记投流失败" width="480px">
         <el-input v-model="failReason" placeholder="失败原因" type="textarea" :rows="2" />
-        <el-input v-model="failProof" placeholder="失败截图 OSS key(可选)" style="margin-top: 8px" />
+        <div style="margin-top:10px">
+          <div class="muted" style="font-size:12px;margin-bottom:6px">失败截图(可选)</div>
+          <MultiUpload v-model="failProofKeys" :max="3" prefix="promo_fail" />
+        </div>
         <template #footer>
           <el-button @click="failVisible = false">取消</el-button>
           <el-button type="danger" @click="doFail">确认</el-button>
@@ -161,11 +168,14 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { nextTick, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
+import MultiUpload from '../components/MultiUpload.vue'
 import { formatTime as ft } from '../utils/time'
 
+const route = useRoute()
 const mainTab = ref('video')
 const expanded = ref(null)
 const products = ref([])
@@ -253,11 +263,14 @@ async function passVideo(row) {
   loadVideos()
 }
 
-function blockVideo(row) {
-  api.post(`/api/videos/${row.id}/audit`, { approve: false, blocked: true }).then(() => {
+async function blockVideo(row) {
+  try {
+    await api.post(`/api/videos/${row.id}/audit`, { approve: false, blocked: true })
     ElMessage.success('已标记卡审')
     loadVideos()
-  })
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
 }
 
 function openReject(row) {
@@ -280,7 +293,11 @@ async function doReject() {
 async function startPromotion(row) {
   try {
     await api.post('/api/promotions', { video_task_id: row.id })
-    ElMessage.success('已发起投流,可在「投流管理」跟进')
+    ElMessage.success('已发起投流,已跳转「投流管理」跟进')
+    mainTab.value = 'promotion'
+    pTab.value = 'pending_request'
+    pPage.value = 1
+    loadPromotions()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发起失败')
   }
@@ -334,7 +351,7 @@ function onPPage(p) { pPage.value = p; loadPromotions() }
 
 const failVisible = ref(false)
 const failReason = ref('')
-const failProof = ref('')
+const failProofKeys = ref([])
 let currentPromo = null
 
 const promoLabel = (k) => PROMO_TABS.find((t) => t.key === k)?.label || k
@@ -367,14 +384,14 @@ async function doTransition(row, action) {
 function openFail(row) {
   currentPromo = row
   failReason.value = ''
-  failProof.value = ''
+  failProofKeys.value = []
   failVisible.value = true
 }
 async function doFail() {
   try {
     await api.post(`/api/promotions/${currentPromo.id}/transition`, {
       action: 'mark_failed', fail_reason: failReason.value,
-      fail_proof_oss_key: failProof.value || undefined,
+      fail_proof_oss_key: failProofKeys.value[0] || undefined,
     })
     failVisible.value = false
     ElMessage.success('已标记失败')
@@ -389,10 +406,17 @@ function onMainTab(name) {
   else loadPromotions()
 }
 
-// 延到首帧之后再触发加载,避免 vLoading 在挂载中同步翻转导致 v-loading 指令报错
 onMounted(async () => {
   products.value = await api.get('/api/products')
-  nextTick(loadVideos)
+  // 工作台待办深链:?main=promotion 进投流管理,?tab= 精确到子分栏
+  if (route.query.main === 'promotion') mainTab.value = 'promotion'
+  if (mainTab.value === 'video') {
+    if (route.query.tab && VIDEO_TABS.some((t) => t.key === route.query.tab)) vTab.value = route.query.tab
+    nextTick(loadVideos)
+  } else {
+    if (route.query.tab && PROMO_TABS.some((t) => t.key === route.query.tab)) pTab.value = route.query.tab
+    nextTick(loadPromotions)
+  }
 })
 </script>
 
@@ -407,4 +431,6 @@ onMounted(async () => {
 .pc-sub { font-size: 12px; margin-top: 4px; }
 .pc-copy { margin-top: 10px; padding: 10px 12px; background: #f8f9fc; border-radius: 8px; display: flex; flex-direction: column; gap: 6px; }
 .pc-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 </style>
