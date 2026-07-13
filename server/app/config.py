@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     # 安全默认:debug 默认 False(生产安全优先);开发/测试环境在 .env 显式设 DEBUG=true。
     # debug=True 才启用:dev-switch 换角色、默认管理员 admin/admin123 种子、SQL echo。
     debug: bool = False
+    # 可在生产环境显式开放管理员测试切换；接口仍强制要求管理员 staff token。
+    enable_test_role_switcher: bool = False
     secret_key: str = "change-me"
 
     # 本地开发默认 sqlite,生产切 PostgreSQL:postgresql+psycopg://user:pass@host/db

@@ -60,7 +60,7 @@
               <span class="tm">{{ lastEvent.ftime || lastEvent.time }}</span>
             </div>
             <div v-else-if="logisticsIncomplete" class="logi-empty">
-              数据不完整:暂无轨迹明细,请点「刷新物流」
+              {{ logisticsMessage }}
             </div>
             <el-timeline v-if="expandLogi" class="logi-tl">
               <el-timeline-item
@@ -164,6 +164,12 @@ const courierName = (c) => COURIERS[c] || c || ''
 const events = computed(() => d.value?.sample?.logistics_status?.events || [])
 const lastEvent = computed(() => d.value?.sample?.logistics_status?.last_event || events.value[0] || null)
 const logisticsIncomplete = computed(() => Boolean(d.value?.sample?.tracking_no && !lastEvent.value))
+const logisticsMessage = computed(() => {
+  const status = d.value?.sample?.logistics_status || {}
+  if (status.code === 'CONFIG_MISSING') return status.message || '物流接口未配置,请联系管理员'
+  if (status.message && status.message !== 'ok') return `${status.message}:暂无轨迹明细,请稍后刷新`
+  return '暂无轨迹明细,请稍后刷新'
+})
 
 function countOf(tab) {
   if (tab.key === 'detail') return detailItems.value.length
@@ -185,6 +191,7 @@ async function refreshLogi() {
   try {
     const r = await api.post(`/api/h5/samples/${d.value.sample.id}/track`)
     if (r.ok || r.events?.length) ElMessage.success('物流已更新')
+    else if (r.code === 'CONFIG_MISSING') ElMessage.warning(r.message || '物流接口未配置')
     else ElMessage.info(r.message || '暂无轨迹')
     await loadDetail()
   } catch (e) {

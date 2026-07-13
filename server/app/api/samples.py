@@ -10,7 +10,7 @@ from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, RejectReason,
                       SampleOrder, User)
-from ..services.logistics import get_provider
+from ..services.logistics import COURIERS, get_provider
 from ..services.sample_orders import (OPEN_SAMPLE_STATUSES, dedupe_sample_rows,
                                       status_bucket, status_filter_values)
 from ..services.tracking import refresh_order_tracking
@@ -181,22 +181,34 @@ class ShipIn(BaseModel):
     phone: str | None = None    # 顺丰等需要收件人手机后四位
 
 
+COURIER_CODES = {item["code"] for item in COURIERS}
+
+
 @router.post("/{order_id}/ship")
 async def ship(order_id: int, body: ShipIn,
                user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _load_owned_order(db, user, order_id)
     if order.status != "approved":
         raise HTTPException(400, "只有已通过的寄样单才能发货")
+    tracking_no = (body.tracking_no or "").strip()
+    if not tracking_no:
+        raise HTTPException(400, "请填写快递单号")
     provider = get_provider()
-    courier = body.courier or await provider.identify_courier(body.tracking_no)
+    courier = (body.courier or "").strip() or await provider.identify_courier(tracking_no)
     if not courier:
         raise HTTPException(400, "无法识别快递公司,请手动选择")
-    ok, msg = await provider.subscribe(body.tracking_no, courier, body.phone)
-    order.tracking_no = body.tracking_no
+    if courier not in COURIER_CODES:
+        raise HTTPException(400, "快递公司不支持,请重新选择")
+    address_phone = (order.address_snapshot or {}).get("tel") if isinstance(order.address_snapshot, dict) else None
+    query_phone = (body.phone or "").strip() or address_phone
+    ok, msg = await provider.subscribe(tracking_no, courier, query_phone)
+    order.tracking_no = tracking_no
     order.courier_company = courier
     order.status = "shipped"
     db.commit()
-    return {"ok": True, "courier": courier, "subscribed": ok, "message": msg}
+    tracking_status = await refresh_order_tracking(db, order)
+    return {"ok": True, "courier": courier, "subscribed": ok, "message": msg,
+            "tracking_status": tracking_status}
 
 
 @router.post("/{order_id}/track")

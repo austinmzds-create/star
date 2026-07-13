@@ -8,10 +8,17 @@
     />
     <el-image
       v-else-if="material.type === 'image' && material.url"
-      :src="material.url"
-      :preview-src-list="[material.url]"
+      :key="imageUrl"
+      :src="imageUrl"
+      :preview-src-list="[imageUrl]"
       fit="contain"
+      @error="imageFailed = true"
     />
+    <div v-if="imageFailed" class="image-error">
+      <span>图片暂未加载成功</span>
+      <el-button size="small" text type="primary" @click="retryImage">重新加载</el-button>
+      <a :href="material.url" target="_blank" rel="noopener">打开原图</a>
+    </div>
     <div v-else-if="material.type === 'pdf' && material.url" class="pdf-preview">
       <iframe :src="material.url" title="质检报告预览" />
       <a :href="material.url" target="_blank" rel="noopener">新窗口打开报告</a>
@@ -42,7 +49,7 @@
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const props = defineProps({
   material: { type: Object, required: true },
@@ -51,6 +58,23 @@ const props = defineProps({
 const isVideo = computed(() => (
   ['video_ai', 'video_hot', 'video_output'].includes(props.material.type)
 ))
+const retryToken = ref(0)
+const imageFailed = ref(false)
+const imageUrl = computed(() => {
+  if (!props.material.url || retryToken.value === 0) return props.material.url
+  const joiner = props.material.url.includes('?') ? '&' : '?'
+  return `${props.material.url}${joiner}_preview_retry=${retryToken.value}`
+})
+
+watch(() => props.material.url, () => {
+  retryToken.value = 0
+  imageFailed.value = false
+})
+
+function retryImage() {
+  imageFailed.value = false
+  retryToken.value += 1
+}
 
 async function copy(text) {
   try {
@@ -71,6 +95,11 @@ async function copy(text) {
   width: 100%; max-height: 320px; border-radius: 8px; background: #f7f8fb;
 }
 .material-preview :deep(.el-image img) { max-height: 320px; }
+.image-error {
+  display: flex; align-items: center; gap: 8px; margin-top: 8px;
+  color: #e6a23c; font-size: 12px;
+}
+.image-error a { color: #6254e8; text-decoration: none; }
 .pdf-preview iframe {
   display: block; width: 100%; height: 360px; border: 1px solid #e5e7ed; border-radius: 8px;
 }

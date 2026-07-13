@@ -22,21 +22,37 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import api from '../api'
 import { applyRoleSession } from '../test-role-session'
 
+const TEST_STAFF_TOKEN_KEY = 'test_staff_token'
 const loading = ref(false)
 const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
-const visible = computed(() => Boolean(user.value && localStorage.getItem('token')))
+const visible = computed(() => Boolean(
+  localStorage.getItem('token')
+  && (user.value?.role === 'admin' || localStorage.getItem(TEST_STAFF_TOKEN_KEY)),
+))
 const roleLabel = computed(() => (
   { admin: '管理员', bd: '商务', influencer: '达人' }[user.value?.role] || '未登录'
 ))
 
+function rememberStaffToken() {
+  const token = localStorage.getItem('token')
+  if (user.value?.role === 'admin' && token) {
+    localStorage.setItem(TEST_STAFF_TOKEN_KEY, token)
+  }
+}
+
 function sync() {
   user.value = JSON.parse(localStorage.getItem('user') || 'null')
+  rememberStaffToken()
 }
 
 async function switchRole(role) {
   loading.value = true
   try {
-    const data = await api.post('/api/auth/dev-switch', { role })
+    rememberStaffToken()
+    const staffToken = localStorage.getItem(TEST_STAFF_TOKEN_KEY)
+    const data = await api.post('/api/auth/dev-switch', { role }, {
+      headers: staffToken ? { Authorization: `Bearer ${staffToken}` } : undefined,
+    })
     const destination = applyRoleSession(data)
     location.href = destination
   } catch (error) {
@@ -46,7 +62,10 @@ async function switchRole(role) {
   }
 }
 
-onMounted(() => window.addEventListener('role-session-changed', sync))
+onMounted(() => {
+  rememberStaffToken()
+  window.addEventListener('role-session-changed', sync)
+})
 onBeforeUnmount(() => window.removeEventListener('role-session-changed', sync))
 </script>
 

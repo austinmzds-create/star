@@ -124,6 +124,7 @@ def _serve_oss(key: str, request: Request):
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Disposition": f'inline; filename="{_inline_name(key)}"',
+        "Cache-Control": "private, max-age=3600",
     }
     status_code = 200
     if isinstance(byte_range, tuple):
@@ -158,9 +159,31 @@ def serve_file(key: str, request: Request, e: str | None = None, s: str | None =
     if os.path.isfile(path):
         response = FileResponse(path, media_type=storage.content_type(key))
         response.headers["Content-Disposition"] = f'inline; filename="{_inline_name(key)}"'
+        response.headers["Cache-Control"] = "private, max-age=3600"
         return response
 
     if storage.use_oss():
         return _serve_oss(key, request)
 
     raise HTTPException(404, "文件不存在")
+
+
+@router.get("/thumbs/{size}/{key:path}")
+def serve_thumb(size: int, key: str, e: str | None = None, s: str | None = None):
+    if not storage.verify_local(key, e, s):
+        raise HTTPException(403, "链接无效或已过期")
+    if not _is_safe_key(key):
+        raise HTTPException(400, "非法路径")
+    try:
+        path = storage.ensure_thumbnail(key, size)
+    except ValueError:
+        raise HTTPException(400, "不支持的缩略图")
+    except FileNotFoundError:
+        raise HTTPException(404, "文件不存在")
+    except Exception:
+        logger.exception("[upload] 缩略图生成失败")
+        raise HTTPException(502, "缩略图生成失败")
+    response = FileResponse(path, media_type="image/webp")
+    response.headers["Content-Disposition"] = f'inline; filename="{_inline_name(key)}.webp"'
+    response.headers["Cache-Control"] = "private, max-age=3600"
+    return response

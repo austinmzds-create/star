@@ -95,10 +95,16 @@ class DevSwitchIn(BaseModel):
 
 
 @router.post("/dev-switch", include_in_schema=False)
-def dev_switch(body: DevSwitchIn, db: Session = Depends(get_db)):
-    """本地测试专用:签发预设角色的真实 token；生产环境不可用。"""
-    if not settings.debug:
+def dev_switch(
+    body: DevSwitchIn,
+    db: Session = Depends(get_db),
+    actor: User = Depends(current_user),
+):
+    """管理员测试专用:签发预设角色的真实 token。"""
+    if not (settings.debug or settings.enable_test_role_switcher):
         raise HTTPException(404, "Not Found")
+    if actor.role != "admin":
+        raise HTTPException(403, "仅管理员可切换测试身份")
 
     if body.role in ("admin", "bd"):
         user = db.scalars(

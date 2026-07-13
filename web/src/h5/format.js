@@ -25,3 +25,11 @@ export const sampleTagType = (s) => SAMPLE_STATUS_TYPE[sampleEffStatus(s)] || 'i
 export const courierName = (c) => COURIERS[c] || c || ''
 export const logiEvents = (s) => s.logistics_status?.events || []
 export const logiLast = (s) => s.logistics_status?.last_event || logiEvents(s)[0] || null
+export function logiMessage(s, staff = false) {
+  const status = s?.logistics_status || {}
+  if (status.code === 'CONFIG_MISSING') return status.message || '物流接口未配置,请联系管理员'
+  if (status.message && status.message !== 'ok') {
+    return `${status.message}:暂无轨迹明细${staff ? ',请确认快递公司/单号/收件手机号后刷新' : ',请稍后刷新'}`
+  }
+  return staff ? '暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新' : '暂无轨迹明细,请稍后刷新'
+}

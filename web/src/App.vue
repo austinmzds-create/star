@@ -1,12 +1,12 @@
 <template>
-  <TestRoleSwitcher v-if="isDev" />
+  <TestRoleSwitcher v-if="showRoleSwitcher" />
   <router-view />
 </template>
 
 <script setup>
 import TestRoleSwitcher from './components/TestRoleSwitcher.vue'
 
-const isDev = import.meta.env.DEV
+const showRoleSwitcher = import.meta.env.DEV || import.meta.env.VITE_ENABLE_TEST_ROLE_SWITCHER === 'true'
 </script>
 
 <style>

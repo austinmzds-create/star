@@ -44,7 +44,7 @@
             <span class="tm">{{ lastEvent(row).ftime || lastEvent(row).time }}</span>
           </div>
           <div v-else-if="logisticsIncomplete(row)" class="logi-empty">
-            数据不完整:暂无轨迹明细,请确认快递公司/单号/收件手机号并点「刷新物流」
+            {{ logisticsMessage(row) }}
           </div>
         </template>
       </el-table-column>
@@ -187,6 +187,14 @@ const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
 const tabBadgeType = (k) => (['pending', 'approved'].includes(k) ? 'danger' : 'info')
 const lastEvent = (row) => row.logistics_status?.last_event || row.logistics_status?.events?.[0] || null
 const logisticsIncomplete = (row) => Boolean(row.tracking_no && !lastEvent(row))
+function logisticsMessage(row) {
+  const status = row.logistics_status || {}
+  if (status.code === 'CONFIG_MISSING') return status.message || '物流接口未配置,请联系管理员'
+  if (status.message && status.message !== 'ok') {
+    return `${status.message}:暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新`
+  }
+  return '暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新'
+}
 
 async function load() {
   loading.value = true
@@ -239,7 +247,8 @@ async function doShip() {
       tracking_no: trackingNo.value, courier: courier.value, phone: shipPhone.value || undefined,
     })
     shipVisible.value = false
-    ElMessage.success(r.subscribed ? '已发货并订阅轨迹' : `已发货(订阅未成功:${r.message || ''})`)
+    if (r.subscribed) ElMessage.success('已发货并订阅轨迹')
+    else ElMessage.warning(`已发货,但轨迹订阅未生效:${r.message || '请检查物流配置'}`)
     load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发货失败')
@@ -250,6 +259,7 @@ async function refreshTrack(row) {
   try {
     const r = await api.post(`/api/samples/${row.id}/track`)
     if (r.ok) ElMessage.success(`最新:${r.last_event?.context || r.status || '已更新'}`)
+    else if (r.code === 'CONFIG_MISSING') ElMessage.warning(r.message || '物流接口未配置')
     else ElMessage.info(r.message || '暂无轨迹')
     load()
   } catch (e) {

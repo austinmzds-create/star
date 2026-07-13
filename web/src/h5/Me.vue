@@ -65,6 +65,7 @@
           <span class="ctx">{{ logiLast(s).context }}</span>
           <span class="tm">{{ logiLast(s).ftime || logiLast(s).time }}</span>
         </div>
+        <div v-else-if="s.tracking_no" class="logi-empty">{{ logiMessage(s) }}</div>
         <el-timeline v-if="expanded === s.id" class="logi-tl">
           <el-timeline-item v-for="(e, i) in logiEvents(s)" :key="i" :timestamp="e.ftime || e.time"
             :type="i === 0 ? 'primary' : ''" size="small">{{ e.context }}</el-timeline-item>
@@ -90,7 +91,7 @@ import { onMounted, ref, toRefs } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { formatTime as fmt } from '../utils/time'
-import { courierName, logiEvents, logiLast, sampleLabel, sampleTagType, VIDEO_STATUS_TYPE } from './format'
+import { courierName, logiEvents, logiLast, logiMessage, sampleLabel, sampleTagType, VIDEO_STATUS_TYPE } from './format'
 import { clearH5, h5store, loadH5, refreshMe } from './store'
 
 const router = useRouter()
@@ -124,6 +125,7 @@ async function refresh(s) {
   try {
     const r = await api.post(`/api/h5/samples/${s.id}/track`)
     if (r.ok || r.events?.length) ElMessage.success('物流已更新')
+    else if (r.code === 'CONFIG_MISSING') ElMessage.warning(r.message || '物流接口未配置')
     else ElMessage.info(r.message || '暂无轨迹')
     await refreshMe()
   } catch (e) {
@@ -174,6 +176,7 @@ onMounted(() => { if (!h5store.loaded) loadH5() })
   border-radius: 8px; font-size: 12px; color: #5a6072; }
 .logi .ctx { flex: 1; min-width: 0; }
 .logi .tm { color: #98a0b0; white-space: nowrap; }
+.logi-empty { margin-top: 8px; font-size: 12px; color: #e6a23c; }
 .logi-tl { margin-top: 8px; padding-left: 4px; }
 .logi-actions { margin-top: 4px; display: flex; gap: 8px; }
 /* 退出 */

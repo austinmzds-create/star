@@ -7,16 +7,22 @@
         <el-menu-item index="/influencers">达人库</el-menu-item>
         <el-menu-item index="/products">产品中心</el-menu-item>
         <el-menu-item index="/samples">
-          寄样管理
-          <el-badge v-if="samplesBadge" :value="samplesBadge" class="menu-badge" />
+          <span class="menu-entry">
+            <span>寄样管理</span>
+            <el-badge v-if="samplesBadge" :value="samplesBadge" class="menu-badge" />
+          </span>
         </el-menu-item>
         <el-menu-item index="/followups">
-          催拍待办
-          <el-badge v-if="followupCount" :value="followupCount" class="menu-badge" />
+          <span class="menu-entry">
+            <span>催拍待办</span>
+            <el-badge v-if="followupCount" :value="followupCount" class="menu-badge" />
+          </span>
         </el-menu-item>
         <el-menu-item index="/videos">
-          视频与投流
-          <el-badge v-if="videoBadge" :value="videoBadge" class="menu-badge" />
+          <span class="menu-entry">
+            <span>视频与投流</span>
+            <el-badge v-if="videoBadge" :value="videoBadge" class="menu-badge" />
+          </span>
         </el-menu-item>
         <el-menu-item index="/block-records">卡审知识库</el-menu-item>
         <el-menu-item v-if="isAdmin" index="/dashboard">总览看板</el-menu-item>
@@ -79,5 +85,11 @@ onBeforeUnmount(() => {
 <style scoped>
 .logo { padding: 16px; font-weight: bold; text-align: center; }
 .header { display: flex; align-items: center; justify-content: flex-end; gap: 12px; background: #fff; }
-.menu-badge { margin-left: 6px; }
+.menu-entry { display: inline-flex; align-items: center; gap: 8px; }
+.menu-badge { display: inline-flex; align-items: center; }
+.menu-badge :deep(.el-badge__content) {
+  position: static;
+  transform: none;
+  line-height: 18px;
+}
 </style>

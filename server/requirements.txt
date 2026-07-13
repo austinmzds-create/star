@@ -10,3 +10,4 @@ itsdangerous>=2.2
 bcrypt>=4.1
 oss2>=2.18            # 阿里云 OSS(未配置 endpoint/bucket 时走本地 _uploads/ 兜底)
 openpyxl>=3.1         # 达人库 Excel 模板导出/批量导入
+Pillow>=10.4          # 商品图缩略图生成

@@ -18,6 +18,8 @@ from urllib.parse import quote
 from ..config import settings
 
 LOCAL_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "_uploads")
+THUMB_DIR = os.path.join(LOCAL_DIR, "_thumbs")
+THUMB_SIZES = {64, 96, 160, 320}
 
 
 def _sign_local(key: str, exp: int) -> str:
@@ -81,6 +83,13 @@ def local_path(key: str) -> str:
     return os.path.abspath(os.path.join(LOCAL_DIR, key))
 
 
+def thumb_path(key: str, size: int) -> str:
+    digest = hashlib.sha1(key.encode()).hexdigest()[:12]
+    stem = os.path.splitext(os.path.basename(key))[0] or "image"
+    safe_stem = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in stem)[:48]
+    return os.path.abspath(os.path.join(THUMB_DIR, str(size), f"{safe_stem}-{digest}.webp"))
+
+
 def save_local(key: str, data: bytes) -> None:
     path = local_path(key)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -104,6 +113,10 @@ def save(data: bytes, filename: str, prefix: str = "materials") -> str:
     return key
 
 
+def is_image(key_or_filename: str) -> bool:
+    return (content_type(key_or_filename) or "").startswith("image/")
+
+
 def get_oss_object(key: str, byte_range: tuple[int, int] | None = None):
     b = _bucket()
     if not b:
@@ -118,8 +131,50 @@ def get_oss_size(key: str) -> int:
     return int(b.head_object(key).content_length)
 
 
+def _stable_exp(expires: int) -> int:
+    """让长效签名按小时稳定，提升浏览器缓存命中率。"""
+    now = int(time.time())
+    if expires <= 3600:
+        return now + expires
+    bucket = 3600
+    return ((now // bucket) + max(1, expires // bucket)) * bucket
+
+
 def signed_url(key: str, expires: int = 86400) -> str:
     # 统一走后端文件代理。公共 OSS 默认域名当前会强制 attachment,
     # 图片/video 标签会碎图或不可内联预览；代理层可稳定返回 inline。
-    exp = int(time.time()) + expires
+    exp = _stable_exp(expires)
     return f"/api/files/{quote(key, safe='/')}?e={exp}&s={_sign_local(key, exp)}"
+
+
+def thumbnail_url(key: str | None, size: int = 160, expires: int = 86400) -> str | None:
+    if not key:
+        return None
+    if size not in THUMB_SIZES:
+        size = 160
+    if not is_image(key):
+        return signed_url(key, expires)
+    exp = _stable_exp(expires)
+    return f"/api/thumbs/{size}/{quote(key, safe='/')}?e={exp}&s={_sign_local(key, exp)}"
+
+
+def ensure_thumbnail(key: str, size: int) -> str:
+    if size not in THUMB_SIZES:
+        raise ValueError("unsupported thumbnail size")
+    if not is_image(key):
+        raise ValueError("not an image")
+    src = local_path(key)
+    if not os.path.isfile(src):
+        raise FileNotFoundError(key)
+    dst = thumb_path(key, size)
+    if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
+        return dst
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    from PIL import Image, ImageOps
+    with Image.open(src) as image:
+        image = ImageOps.exif_transpose(image)
+        image.thumbnail((size, size), Image.Resampling.LANCZOS)
+        if image.mode not in ("RGB", "RGBA"):
+            image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+        image.save(dst, "WEBP", quality=78, method=4)
+    return dst

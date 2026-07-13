@@ -4,6 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>达人管理平台</title>
+    <script>
+      if (location.protocol === "http:" && location.hostname === "talent.jisheng.yun") {
+        location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

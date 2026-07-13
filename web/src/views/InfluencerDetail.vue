@@ -163,7 +163,7 @@
                   </el-timeline-item>
                 </el-timeline>
                 <div v-else-if="s.tracking_no && !lastEvent(s)" class="logi-empty muted">
-                  数据不完整:暂无轨迹明细<span v-if="isStaff">,请确认快递公司/单号/收件手机号并点「刷新物流」</span>
+                  {{ logisticsMessage(s) }}
                 </div>
               </div>
             </el-tab-pane>
@@ -333,6 +333,14 @@ const expandedSample = ref(null)
 const trackingId = ref(null)
 const events = (s) => s.logistics_status?.events || []
 const lastEvent = (s) => s.logistics_status?.last_event || events(s)[0] || null
+function logisticsMessage(s) {
+  const status = s.logistics_status || {}
+  if (status.code === 'CONFIG_MISSING') return status.message || '物流接口未配置,请联系管理员'
+  if (status.message && status.message !== 'ok') {
+    return `${status.message}:暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新`
+  }
+  return isStaff ? '暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新' : '暂无轨迹明细,请稍后刷新'
+}
 const sampleAttention = computed(() => act.value.samples.filter((s) => (
   ['pending', 'approved'].includes(s.status) || (s.tracking_no && !lastEvent(s))
 )).length)
@@ -348,6 +356,7 @@ async function refreshTrack(s) {
   try {
     const r = await api.post(`/api/samples/${s.id}/track`)
     if (r.ok || r.events?.length) ElMessage.success('物流已更新')
+    else if (r.code === 'CONFIG_MISSING') ElMessage.warning(r.message || '物流接口未配置')
     else ElMessage.info(r.message || '暂无轨迹')
     act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
   } catch (e) {

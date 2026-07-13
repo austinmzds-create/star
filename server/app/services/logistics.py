@@ -58,6 +58,23 @@ class Kd100Provider(LogisticsProvider):
     SUBSCRIBE_URL = "https://poll.kuaidi100.com/poll"
     QUERY_URL = "https://poll.kuaidi100.com/poll/query.do"
 
+    def _missing_config(self, fields: list[tuple[str, str]]) -> list[str]:
+        return [label for attr, label in fields if not (getattr(settings, attr) or "").strip()]
+
+    def _config_result(self, action: str, tracking_no: str, courier: str,
+                       missing: list[str]) -> dict:
+        return {
+            "ok": False,
+            "code": "CONFIG_MISSING",
+            "message": f"快递100{action}未配置:{'、'.join(missing)}",
+            "tracking_no": tracking_no,
+            "courier": courier,
+            "status": None,
+            "signed": False,
+            "last_event": None,
+            "events": [],
+        }
+
     def _sign(self, param: str) -> str:
         # 快递100 规则:MD5(param + key + customer) 转大写
         return hashlib.md5(
@@ -89,6 +106,12 @@ class Kd100Provider(LogisticsProvider):
         return sign.upper() == expected
 
     async def subscribe(self, tracking_no: str, courier: str, phone: str | None = None) -> tuple[bool, str]:
+        missing = self._missing_config([
+            ("kd100_key", "KD100_KEY"),
+            ("kd100_callback_url", "KD100_CALLBACK_URL"),
+        ])
+        if missing:
+            return False, f"快递100订阅未配置:{'、'.join(missing)}"
         params = {"callbackurl": settings.kd100_callback_url, "phone": phone or "", "resultv2": "4"}
         salt = self.callback_salt()
         if salt:
@@ -111,6 +134,12 @@ class Kd100Provider(LogisticsProvider):
             return False, str(e)
 
     async def query_realtime(self, tracking_no: str, courier: str, phone: str | None = None) -> dict:
+        missing = self._missing_config([
+            ("kd100_key", "KD100_KEY"),
+            ("kd100_customer", "KD100_CUSTOMER"),
+        ])
+        if missing:
+            return self._config_result("实时查询", tracking_no, courier, missing)
         p = {"com": courier, "num": tracking_no}
         if phone:
             p["phone"] = phone
@@ -130,6 +159,7 @@ class Kd100Provider(LogisticsProvider):
         events = body.get("data", []) or []
         return {
             "ok": body.get("message") == "ok" or bool(events),
+            "code": str(body.get("returnCode", "")) or None,
             "message": body.get("message", ""),
             "tracking_no": body.get("nu", tracking_no),
             "courier": body.get("com", courier),

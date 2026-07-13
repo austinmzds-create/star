@@ -177,7 +177,7 @@ def list_products(q: str | None = None, status: str | None = None,
         q_stmt = q_stmt.offset((page - 1) * page_size).limit(page_size)
     rows = db.scalars(q_stmt).all()
     items = [{"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
-              "product_image": storage.signed_url(p.product_image) if p.product_image else None,
+              "product_image": storage.thumbnail_url(p.product_image, 96),
               "default_commission": float(p.default_commission) if p.default_commission else None,
               "status": p.status, "material_count": len(p.materials),
               "granted_count": _grant_count(db, p.id),
@@ -504,8 +504,9 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
                          .where(ProductQianchuanBinding.product_id == product_id)).first()
     return {"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
             "shop_product_id": p.shop_product_id, "link": p.link, "status": p.status,
-            "product_image": storage.signed_url(p.product_image) if p.product_image else None,
-            "product_images": [storage.signed_url(k) for k in (p.product_images or [])],
+            "product_image": storage.thumbnail_url(p.product_image, 160),
+            "product_image_original": storage.signed_url(p.product_image) if p.product_image else None,
+            "product_images": [storage.thumbnail_url(k, 160) for k in (p.product_images or [])],
             "product_images_keys": list(p.product_images or []),
             "default_commission": float(p.default_commission) if p.default_commission else None,
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,

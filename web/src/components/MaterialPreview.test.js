@@ -26,6 +26,17 @@ describe('MaterialPreview', () => {
     expect(image.props('previewSrcList')).toEqual(['/signed/image.jpg'])
   })
 
+  it('offers a retry with a cache-busting URL after an image error', async () => {
+    const wrapper = mountPreview({ type: 'image', url: '/signed/image.jpg?e=1&s=test' })
+    const image = wrapper.getComponent({ name: 'ElImage' })
+
+    await image.vm.$emit('error', new Event('error'))
+
+    expect(wrapper.text()).toContain('图片暂未加载成功')
+    await wrapper.get('.image-error button').trigger('click')
+    expect(wrapper.getComponent({ name: 'ElImage' }).props('src')).toContain('_preview_retry=1')
+  })
+
   it('embeds a PDF and provides a fallback link', () => {
     const wrapper = mountPreview({ type: 'pdf', url: '/signed/report.pdf' })
 
