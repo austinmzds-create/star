@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..config import settings
@@ -76,13 +76,18 @@ def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
         inf = Influencer(nickname=f"达人{body.phone[-4:]}", phone=body.phone, source="h5")
         db.add(inf)
         db.commit()
-    return {"token": make_token("influencer", inf.id), "kind": "influencer",
-            "user": {"id": inf.id, "name": inf.nickname, "role": "influencer"}}
+    return _influencer_result(inf)
 
 
 def _staff_result(user: User) -> dict:
     return {"token": make_token("staff", user.id), "kind": "staff",
             "user": {"id": user.id, "name": user.display_name, "role": user.role}}
+
+
+def _influencer_result(influencer: Influencer) -> dict:
+    return {"token": make_token("influencer", influencer.id), "kind": "influencer",
+            "user": {"id": influencer.id, "name": influencer.nickname,
+                     "role": "influencer"}}
 
 
 class DevSwitchIn(BaseModel):
@@ -114,15 +119,7 @@ def dev_switch(body: DevSwitchIn, db: Session = Depends(get_db)):
         influencer = Influencer(nickname="测试达人", phone="15000000000", source="h5")
         db.add(influencer)
         db.commit()
-    return {
-        "token": make_token("influencer", influencer.id),
-        "kind": "influencer",
-        "user": {
-            "id": influencer.id,
-            "name": influencer.nickname,
-            "role": "influencer",
-        },
-    }
+    return _influencer_result(influencer)
 
 
 # —— 兼容旧账号密码登录(引导/后备)——
@@ -133,12 +130,29 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalars(select(User).where(User.username == body.username)).first()
-    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
-        raise HTTPException(401, "用户名或密码错误")
-    if not user.is_active:
+    user = db.scalars(
+        select(User).where(
+            or_(User.username == body.username, User.phone == body.username)
+        )
+    ).first()
+    if user:
+        if not user.password_hash or not verify_password(body.password, user.password_hash):
+            raise HTTPException(401, "账号或密码错误")
+        if not user.is_active:
+            raise HTTPException(403, "账号已停用")
+        return _staff_result(user)
+
+    influencer = db.scalars(
+        select(Influencer)
+        .where(Influencer.phone == body.username)
+        .order_by(Influencer.id)
+    ).first()
+    if (not influencer or not influencer.password_hash
+            or not verify_password(body.password, influencer.password_hash)):
+        raise HTTPException(401, "账号或密码错误")
+    if influencer.archived:
         raise HTTPException(403, "账号已停用")
-    return _staff_result(user)
+    return _influencer_result(influencer)
 
 
 @router.get("/me")

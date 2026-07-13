@@ -3,6 +3,7 @@ import sys
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -10,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.db import Base  # noqa: E402
+from app.api.auth import LoginIn, login  # noqa: E402
 from app.models import Influencer, User  # noqa: E402
 from app.security import hash_password, verify_password  # noqa: E402
 
@@ -142,3 +144,102 @@ def test_adding_phone_later_assigns_default_password(db):
     db.commit()
 
     assert verify_password("007777", influencer.password_hash)
+
+
+def test_explicit_admin_can_still_log_in_with_username(db):
+    admin = User(
+        username="admin",
+        password_hash=hash_password("admin123"),
+        display_name="管理员",
+        role="admin",
+    )
+    db.add(admin)
+    db.commit()
+
+    result = login(LoginIn(username="admin", password="admin123"), db)
+
+    assert result["kind"] == "staff"
+    assert result["user"]["role"] == "admin"
+
+
+def test_business_user_can_log_in_with_phone_and_default_password(db):
+    user = User(phone="13900001234", display_name="商务", role="bd")
+    db.add(user)
+    db.commit()
+
+    result = login(LoginIn(username="13900001234", password="001234"), db)
+
+    assert result["kind"] == "staff"
+    assert result["user"]["role"] == "bd"
+
+
+def test_influencer_can_log_in_with_phone_and_default_password(db):
+    influencer = Influencer(phone="15095037973", nickname="达人")
+    db.add(influencer)
+    db.commit()
+
+    result = login(LoginIn(username="15095037973", password="037973"), db)
+
+    assert result["kind"] == "influencer"
+    assert result["user"]["role"] == "influencer"
+
+
+def test_staff_account_wins_when_phone_matches_both_account_types(db):
+    user = User(phone="13900001234", display_name="商务", role="bd")
+    influencer = Influencer(phone="13900001234", nickname="同号达人")
+    db.add_all([user, influencer])
+    db.commit()
+
+    result = login(LoginIn(username="13900001234", password="001234"), db)
+
+    assert result["kind"] == "staff"
+    assert result["user"]["id"] == user.id
+
+
+@pytest.mark.parametrize(
+    ("account", "username", "password"),
+    [
+        (
+            User(phone="13900001234", display_name="停用商务", is_active=False),
+            "13900001234",
+            "001234",
+        ),
+        (
+            Influencer(phone="15095037973", nickname="停用达人", archived=True),
+            "15095037973",
+            "037973",
+        ),
+    ],
+    ids=["inactive-staff", "archived-influencer"],
+)
+def test_disabled_account_with_correct_password_is_rejected(db, account, username, password):
+    db.add(account)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        login(LoginIn(username=username, password=password), db)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "账号已停用"
+
+
+@pytest.mark.parametrize(
+    ("account", "username", "password"),
+    [
+        (None, "missing", "anything"),
+        (User(username="no-password", display_name="无密码商务"), "no-password", "anything"),
+        (User(phone="13900001234", display_name="商务"), "13900001234", "wrong-password"),
+        (Influencer(phone="15095037973", nickname="达人"), "15095037973", "wrong-password"),
+    ],
+    ids=["unknown-account", "no-password", "wrong-staff-password", "wrong-influencer-password"],
+)
+def test_invalid_password_login_has_one_error_response(db, account, username, password):
+    if account is not None:
+        db.add(account)
+        db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        login(LoginIn(username=username, password=password), db)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "账号或密码错误"
