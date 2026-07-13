@@ -76,13 +76,28 @@ class Kd100Provider(LogisticsProvider):
             pass
         return None
 
+    def callback_salt(self) -> str:
+        """订阅时提交的 salt;快递100 回调 sign=MD5(param+salt) 用它校验来源。"""
+        return settings.kd100_secret or settings.kd100_key
+
+    def verify_callback_sign(self, param_raw: str, sign: str | None) -> bool:
+        """校验推送签名:sign == MD5(param + salt) 大写。未配 salt 时无法校验返回 False。"""
+        salt = self.callback_salt()
+        if not salt or not sign:
+            return False
+        expected = hashlib.md5((param_raw + salt).encode()).hexdigest().upper()
+        return sign.upper() == expected
+
     async def subscribe(self, tracking_no: str, courier: str, phone: str | None = None) -> tuple[bool, str]:
+        params = {"callbackurl": settings.kd100_callback_url, "phone": phone or "", "resultv2": "4"}
+        salt = self.callback_salt()
+        if salt:
+            params["salt"] = salt   # 推送回调将带 sign=MD5(param+salt),供服务端验签
         param = {
             "company": courier,
             "number": tracking_no,
             "key": settings.kd100_key,
-            "parameters": {"callbackurl": settings.kd100_callback_url,
-                           "phone": phone or "", "resultv2": "4"},
+            "parameters": params,
         }
         try:
             async with httpx.AsyncClient(timeout=10) as client:

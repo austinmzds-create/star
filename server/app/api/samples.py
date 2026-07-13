@@ -231,8 +231,18 @@ webhook_router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 async def kd100_callback(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     import json
-    payload = json.loads(form.get("param", "{}"))
-    parsed = get_provider().parse_callback(payload)
+    import logging
+    provider = get_provider()
+    param_raw = form.get("param", "{}")
+    sign = form.get("sign")
+    # 验签:配置了 salt 就强制校验来源(防伪造签收);未配置(本地/降级)仅告警放行
+    if provider.callback_salt():
+        if not provider.verify_callback_sign(param_raw, sign):
+            raise HTTPException(403, "回调签名校验失败")
+    else:
+        logging.getLogger(__name__).warning("[kd100] 未配置 salt,回调未验签(仅本地/降级允许)")
+    payload = json.loads(param_raw)
+    parsed = provider.parse_callback(payload)
     if parsed["tracking_no"]:
         order = db.scalars(select(SampleOrder)
                            .where(SampleOrder.tracking_no == parsed["tracking_no"])).first()
