@@ -32,6 +32,7 @@ describe('TestRoleSwitcher', () => {
     localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', name: '管理员' }))
     mocks.post.mockRejectedValue({ response: { data: { detail: 'stop after request' } } })
     const wrapper = mountSwitcher()
+    await flushPromises()
 
     wrapper.getComponent({ name: 'ElDropdown' }).vm.$emit('command', 'bd')
     await flushPromises()
@@ -49,5 +50,17 @@ describe('TestRoleSwitcher', () => {
     const wrapper = mountSwitcher()
 
     expect(wrapper.find('.test-role-switcher').exists()).toBe(false)
+  })
+
+  it('appears immediately when an admin session is created after mount', async () => {
+    const wrapper = mountSwitcher()
+    expect(wrapper.find('.test-role-switcher').exists()).toBe(false)
+
+    localStorage.setItem('token', 'admin-token')
+    localStorage.setItem('user', JSON.stringify({ id: 1, role: 'admin', name: '管理员' }))
+    window.dispatchEvent(new Event('role-session-changed'))
+    await flushPromises()
+
+    expect(wrapper.find('.test-role-switcher').exists()).toBe(true)
   })
 })

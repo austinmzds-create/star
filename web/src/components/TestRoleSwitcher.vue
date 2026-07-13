@@ -25,10 +25,7 @@ import { applyRoleSession } from '../test-role-session'
 const TEST_STAFF_TOKEN_KEY = 'test_staff_token'
 const loading = ref(false)
 const user = ref(JSON.parse(localStorage.getItem('user') || 'null'))
-const visible = computed(() => Boolean(
-  localStorage.getItem('token')
-  && (user.value?.role === 'admin' || localStorage.getItem(TEST_STAFF_TOKEN_KEY)),
-))
+const visible = ref(false)
 const roleLabel = computed(() => (
   { admin: '管理员', bd: '商务', influencer: '达人' }[user.value?.role] || '未登录'
 ))
@@ -40,9 +37,17 @@ function rememberStaffToken() {
   }
 }
 
+function refreshVisibility() {
+  visible.value = Boolean(
+    localStorage.getItem('token')
+    && (user.value?.role === 'admin' || localStorage.getItem(TEST_STAFF_TOKEN_KEY))
+  )
+}
+
 function sync() {
   user.value = JSON.parse(localStorage.getItem('user') || 'null')
   rememberStaffToken()
+  refreshVisibility()
 }
 
 async function switchRole(role) {
@@ -63,7 +68,7 @@ async function switchRole(role) {
 }
 
 onMounted(() => {
-  rememberStaffToken()
+  sync()
   window.addEventListener('role-session-changed', sync)
 })
 onBeforeUnmount(() => window.removeEventListener('role-session-changed', sync))
