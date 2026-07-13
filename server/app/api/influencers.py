@@ -661,7 +661,7 @@ async def activity(influencer_id: int, user: User = Depends(current_user), db: S
         await refresh_if_needed(db, row[0])
     for o, prod in dedupe_sample_rows(sample_rows):
         samples.append({
-            "id": o.id, "product_name": prod.name, "status": o.status,
+            "id": o.id, "product_id": prod.id, "product_name": prod.name, "status": o.status,
             "tracking_no": o.tracking_no, "courier_company": o.courier_company,
             "logistics_status": o.logistics_status,
             "signed_at": o.signed_at.isoformat() if o.signed_at else None,
@@ -675,7 +675,7 @@ async def activity(influencer_id: int, user: User = Depends(current_user), db: S
         .where(VideoTask.cooperation_id.in_(coop_ids))
         .order_by(VideoTask.created_at.desc())
     ).all():
-        videos.append({"id": v.id, "product_name": prod.name, "status": v.status,
+        videos.append({"id": v.id, "product_id": prod.id, "product_name": prod.name, "status": v.status,
                        "blocked": v.blocked, "dy_url": v.dy_url,
                        "created_at": v.created_at.isoformat()})
 

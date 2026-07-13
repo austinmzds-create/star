@@ -130,7 +130,7 @@
               <el-empty v-if="!act.samples.length" description="暂无寄样" :image-size="60" />
               <div v-for="s in act.samples" :key="s.id" class="row-card">
                 <div class="rc-main">
-                  <span class="rc-title">{{ s.product_name }}</span>
+                  <router-link :to="{ path: '/products', query: { open: s.product_id } }" class="rc-title link">{{ s.product_name }}</router-link>
                   <el-tag size="small" :type="sampleTag(s.status).type">{{ sampleTag(s.status).label }}</el-tag>
                   <div style="margin-left:auto; display:flex; gap:4px">
                     <el-button v-if="isStaff && s.tracking_no" size="small" link
@@ -181,7 +181,7 @@
               <el-empty v-if="!act.videos.length" description="暂无视频" :image-size="60" />
               <div v-for="v in act.videos" :key="v.id" class="row-card">
                 <div class="rc-main">
-                  <span class="rc-title">{{ v.product_name }}</span>
+                  <router-link :to="{ path: '/products', query: { open: v.product_id } }" class="rc-title link">{{ v.product_name }}</router-link>
                   <el-tag size="small" :type="videoTag(v.status).type">{{ videoTag(v.status).label }}</el-tag>
                   <el-link v-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" style="margin-left:auto">查看</el-link>
                   <el-button v-if="isStaff" size="small" link type="danger"
@@ -457,6 +457,8 @@ onMounted(async () => {
 .row-card:last-child { border-bottom: none; }
 .rc-main { display: flex; align-items: center; gap: 8px; }
 .rc-title { font-weight: 500; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 .rc-sub { font-size: 12px; margin-top: 4px; }
 .logi-latest { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 6px 10px;
   background: #f6f8fc; border-radius: 8px; font-size: 12px; color: #5a6072; }

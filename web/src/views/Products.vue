@@ -368,6 +368,7 @@
 import { Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
@@ -398,6 +399,7 @@ const QIANCHUAN_STATUS = {
   disabled: { label: '停用', type: 'info' },
 }
 
+const route = useRoute()
 const rows = ref([])
 const search = ref('')
 const page = ref(1)
@@ -805,10 +807,14 @@ function onQianchuanMessage(event) {
   if (event.data?.type === 'qianchuan-oauth-finished') refreshQianchuanBinding()
 }
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await load()
   loadShopAuths()
   window.addEventListener('message', onQianchuanMessage)
+  // 从寄样/视频/达人详情"点产品名"深链进来:自动打开该产品抽屉
+  if (route.query.open) {
+    try { await open({ id: Number(route.query.open) }) } catch (e) { /* 产品可能已删除 */ }
+  }
 })
 onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 </script>

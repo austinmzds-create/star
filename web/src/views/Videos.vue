@@ -31,7 +31,11 @@
             <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname }}</router-link>
           </template>
         </el-table-column>
-        <el-table-column prop="product_name" label="产品" />
+        <el-table-column label="产品">
+          <template #default="{ row }">
+            <router-link :to="{ path: '/products', query: { open: row.product_id } }" class="link">{{ row.product_name }}</router-link>
+          </template>
+        </el-table-column>
         <el-table-column prop="round_no" label="轮次" width="70" />
         <el-table-column label="抖音链接">
           <template #default="{ row }">
