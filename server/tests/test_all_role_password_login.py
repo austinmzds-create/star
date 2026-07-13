@@ -1,5 +1,6 @@
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, update
@@ -39,6 +40,15 @@ def test_new_phone_accounts_receive_default_passwords(db):
 
     assert verify_password("001234", user.password_hash)
     assert verify_password("037973", influencer.password_hash)
+
+
+def test_default_phone_password_uses_fast_bcrypt_cost(db):
+    user = User(phone="13900001234", display_name="商务")
+
+    db.add(user)
+    db.commit()
+
+    assert int(user.password_hash.split("$")[2]) == 4
 
 
 def test_influencer_without_phone_has_no_password(db):
@@ -83,14 +93,44 @@ def test_seed_missing_passwords_only_fills_phone_accounts_without_hash(db):
     )
     db.commit()
 
-    changed = seed_missing_passwords(db)
+    with patch.object(db, "commit", wraps=db.commit) as commit_spy:
+        changed = seed_missing_passwords(db)
 
     assert changed == 2
+    assert commit_spy.call_count == 1
     assert verify_password("005678", missing_user.password_hash)
     assert verify_password("004321", missing_influencer.password_hash)
     assert no_phone_influencer.password_hash is None
     assert custom_user.password_hash == custom_password_hash
     assert verify_password("custom-password", custom_user.password_hash)
+
+
+def test_seed_missing_passwords_does_not_commit_when_nothing_changes(db):
+    from app.services.account_passwords import seed_missing_passwords
+
+    with patch.object(db, "commit", wraps=db.commit) as commit_spy:
+        changed = seed_missing_passwords(db)
+
+    assert changed == 0
+    assert commit_spy.call_count == 0
+
+
+def test_explicit_admin_password_is_not_replaced_by_default_rule(db):
+    admin_password_hash = hash_password("admin123")
+    admin = User(
+        username="admin",
+        phone="13900001234",
+        password_hash=admin_password_hash,
+        display_name="管理员",
+        role="admin",
+    )
+
+    db.add(admin)
+    db.commit()
+
+    assert admin.password_hash == admin_password_hash
+    assert verify_password("admin123", admin.password_hash)
+    assert not verify_password("001234", admin.password_hash)
 
 
 def test_adding_phone_later_assigns_default_password(db):
