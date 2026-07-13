@@ -10,7 +10,7 @@ from .config import settings
 from .db import Base, SessionLocal, engine, ensure_columns
 from .models import RejectReason, User
 from .security import hash_password
-from .services import levels
+from .services import account_passwords, levels
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -62,6 +62,7 @@ def startup():
         if settings.debug and not db.scalars(select(User).where(User.role == "admin")).first():
             db.add(User(username="admin", password_hash=hash_password("admin123"),
                         display_name="管理员", role="admin"))
+        account_passwords.seed_missing_passwords(db)
         if not db.scalars(select(RejectReason)).first():
             for text in SEED_REASONS:
                 db.add(RejectReason(text=text, scene="sample"))

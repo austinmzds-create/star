@@ -8,7 +8,7 @@
 from datetime import datetime
 
 from sqlalchemy import (JSON, Boolean, DateTime, ForeignKey, Integer, Numeric,
-                        String, Text, UniqueConstraint)
+                        String, Text, UniqueConstraint, event)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
@@ -51,6 +51,7 @@ class Influencer(Base, TimestampMixin):
     homepage_url: Mapped[str | None] = mapped_column(String(512))
     real_name: Mapped[str | None] = mapped_column(String(64))       # 敏感:仅管理员/归属商务可见
     phone: Mapped[str | None] = mapped_column(String(20), index=True)  # 敏感,同上;也是 H5 登录标识
+    password_hash: Mapped[str | None] = mapped_column(String(128), nullable=True)
     fans_count: Mapped[int | None] = mapped_column(Integer)
     gmv_30d: Mapped[int | None] = mapped_column(Integer)            # 人工填,蝉妈妈接入后自动
     category_tags: Mapped[list | None] = mapped_column(JSON)        # 内容品类,如 ["母婴","儿童"]
@@ -386,3 +387,14 @@ class SmsCode(Base):
     used: Mapped[bool] = mapped_column(Boolean, default=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0)          # 校验失败次数,超限作废
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)  # 发送频控用
+
+
+def _assign_default_password(_mapper, _connection, account) -> None:
+    from .security import assign_default_password_if_missing
+
+    assign_default_password_if_missing(account)
+
+
+for account_model in (User, Influencer):
+    event.listen(account_model, "before_insert", _assign_default_password)
+    event.listen(account_model, "before_update", _assign_default_password)
