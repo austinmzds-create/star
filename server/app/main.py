@@ -13,6 +13,7 @@ from .security import hash_password
 from .services import levels
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title=settings.app_name)
 
