@@ -220,6 +220,33 @@ def test_phone_login_uses_phone_owner_when_another_username_matches(db):
     assert _load_token(result["token"], "staff") == phone_owner.id
 
 
+def test_phone_login_falls_back_to_legacy_numeric_username(db):
+    legacy_user = User(
+        username="13800138000",
+        password_hash=hash_password("legacy-password"),
+        display_name="历史数字用户名",
+        role="admin",
+    )
+    db.add(legacy_user)
+    db.commit()
+
+    result = login(LoginIn(username="13800138000", password="legacy-password"), db)
+
+    assert result["user"]["id"] == legacy_user.id
+    assert _load_token(result["token"], "staff") == legacy_user.id
+
+
+def test_phone_shape_matching_existing_validation_does_not_require_digits(db):
+    user = User(phone="1abcde12345", display_name="兼容手机号", role="bd")
+    db.add(user)
+    db.commit()
+
+    result = login(LoginIn(username="1abcde12345", password="e12345"), db)
+
+    assert result["user"]["id"] == user.id
+    assert _load_token(result["token"], "staff") == user.id
+
+
 def test_non_phone_login_still_uses_username(db):
     username_owner = User(
         username="business-alias",
@@ -336,12 +363,17 @@ def test_correct_default_password_is_rehashed_and_persisted_at_standard_cost(db)
 def test_disabled_account_with_correct_password_is_rejected(db, account, username, password):
     db.add(account)
     db.commit()
+    original_hash = account.password_hash
 
-    with pytest.raises(HTTPException) as exc_info:
-        login(LoginIn(username=username, password=password), db)
+    with patch.object(db, "commit", wraps=db.commit) as commit_spy:
+        with pytest.raises(HTTPException) as exc_info:
+            login(LoginIn(username=username, password=password), db)
 
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "账号已停用"
+    assert commit_spy.call_count == 0
+    assert account.password_hash == original_hash
+    assert int(account.password_hash.split("$")[2]) == 4
 
 
 @pytest.mark.parametrize(

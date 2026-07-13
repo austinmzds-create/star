@@ -90,18 +90,6 @@ def _influencer_result(influencer: Influencer) -> dict:
                      "role": "influencer"}}
 
 
-def _password_matches(account: User | Influencer | None, password: str,
-                      db: Session) -> bool:
-    matched, upgraded_hash = verify_login_password(
-        password,
-        account.password_hash if account else None,
-    )
-    if account and matched and upgraded_hash:
-        account.password_hash = upgraded_hash
-        db.commit()
-    return matched
-
-
 class DevSwitchIn(BaseModel):
     role: Literal["admin", "bd", "influencer"]
 
@@ -142,16 +130,23 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    is_phone = (len(body.username) == 11 and body.username.isascii()
-                and body.username.isdigit()
-                and body.username.startswith("1"))
-    user_identifier = User.phone if is_phone else User.username
-    user = db.scalars(select(User).where(user_identifier == body.username)).first()
+    is_phone = len(body.username) == 11 and body.username.startswith("1")
+    user = None
+    if is_phone:
+        user = db.scalars(select(User).where(User.phone == body.username)).first()
+    if not user:
+        user = db.scalars(select(User).where(User.username == body.username)).first()
     if user:
-        if not _password_matches(user, body.password, db):
+        matched, upgraded_hash = verify_login_password(
+            body.password, user.password_hash
+        )
+        if not matched:
             raise HTTPException(401, "账号或密码错误")
         if not user.is_active:
             raise HTTPException(403, "账号已停用")
+        if upgraded_hash:
+            user.password_hash = upgraded_hash
+            db.commit()
         return _staff_result(user)
 
     influencer = db.scalars(
@@ -159,10 +154,17 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         .where(Influencer.phone == body.username)
         .order_by(Influencer.id)
     ).first()
-    if not _password_matches(influencer, body.password, db):
+    matched, upgraded_hash = verify_login_password(
+        body.password,
+        influencer.password_hash if influencer else None,
+    )
+    if not matched:
         raise HTTPException(401, "账号或密码错误")
     if influencer.archived:
         raise HTTPException(403, "账号已停用")
+    if upgraded_hash:
+        influencer.password_hash = upgraded_hash
+        db.commit()
     return _influencer_result(influencer)
 
 
