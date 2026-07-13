@@ -2,8 +2,14 @@
   <div>
     <div class="page-toolbar">
       <el-tabs v-model="tab" @tab-change="reload" class="flex-tabs">
-        <el-tab-pane v-for="s in TABS" :key="s.key" :name="s.key"
-          :label="`${s.label}${counts[s.key] ? ' ' + counts[s.key] : ''}`" />
+        <el-tab-pane v-for="s in TABS" :key="s.key" :name="s.key">
+          <template #label>
+            <span class="tab-label-badge">
+              {{ s.label }}
+              <el-badge v-if="counts[s.key]" :value="counts[s.key]" :type="tabBadgeType(s.key)" />
+            </span>
+          </template>
+        </el-tab-pane>
       </el-tabs>
       <div style="display:flex; gap:8px; align-items:center">
         <el-input v-model="search" placeholder="搜达人/产品/单号" clearable style="width:200px"
@@ -28,6 +34,9 @@
           <div v-if="lastEvent(row)" class="logi-line">
             {{ lastEvent(row).context }}
             <span class="tm">{{ lastEvent(row).ftime || lastEvent(row).time }}</span>
+          </div>
+          <div v-else-if="logisticsIncomplete(row)" class="logi-empty">
+            数据不完整:暂无轨迹明细,请确认快递公司/单号/收件手机号并点「刷新物流」
           </div>
         </template>
       </el-table-column>
@@ -164,7 +173,9 @@ async function removeRow(row) {
 }
 
 const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
+const tabBadgeType = (k) => (['pending', 'approved'].includes(k) ? 'danger' : 'info')
 const lastEvent = (row) => row.logistics_status?.last_event || row.logistics_status?.events?.[0] || null
+const logisticsIncomplete = (row) => Boolean(row.tracking_no && !lastEvent(row))
 
 async function load() {
   loading.value = true
@@ -247,6 +258,8 @@ onMounted(async () => {
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; }
 .flex-tabs { flex: 1; }
 .flex-tabs :deep(.el-tabs__header) { margin-bottom: 0; }
+.tab-label-badge { display: inline-flex; align-items: center; gap: 6px; }
 .logi-line { font-size: 12px; color: #8a93a6; margin-top: 2px; }
 .logi-line .tm { margin-left: 6px; color: #b3bac9; }
+.logi-empty { font-size: 12px; color: #e6a23c; margin-top: 2px; }
 </style>

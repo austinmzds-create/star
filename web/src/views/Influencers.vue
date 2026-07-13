@@ -5,6 +5,7 @@
       <el-select v-model="level" placeholder="等级" style="width: 100px" clearable @change="() => { page = 1; load() }">
         <el-option label="L1" value="L1" /><el-option label="L2" value="L2" /><el-option label="L3" value="L3" />
       </el-select>
+      <el-button @click="importVisible = true">Excel 导入</el-button>
       <el-button type="primary" @click="showPaste = true">+ 粘贴录入达人</el-button>
     </div>
 
@@ -13,6 +14,9 @@
       <el-table-column prop="douyin_id" label="抖音号" />
       <el-table-column prop="fans_count" label="粉丝" width="80" />
       <el-table-column prop="gmv_30d" label="GMV" width="80" />
+      <el-table-column label="数据来源" width="120">
+        <template #default="{ row }">{{ row.data_source || (row.source === 'import' ? '导入' : row.source) || '—' }}</template>
+      </el-table-column>
       <el-table-column label="等级" width="70">
         <template #default="{ row }"><el-tag>{{ row.level }}</el-tag></template>
       </el-table-column>
@@ -26,6 +30,9 @@
       </el-table-column>
       <el-table-column prop="owner_bd_name" label="归属商务" width="100" />
       <el-table-column prop="round_count" label="轮次" width="70" />
+      <el-table-column label="更新" width="110">
+        <template #default="{ row }">{{ fmtDate(row.updated_at) }}</template>
+      </el-table-column>
     </el-table>
     <el-pagination background layout="total, prev, pager, next" :total="total"
       :page-size="pageSize" :current-page="page" style="margin-top: 16px; justify-content: flex-end"
@@ -52,7 +59,7 @@
           type="error" :closable="false" style="margin: 12px 0"
           :title="`该账号已被商务 ${parsed.duplicate.owner_bd_name || '其他同事'} 对接,请勿重复建档`" />
         <el-alert v-else-if="parsed && parsed.duplicate" type="warning" :closable="false" style="margin: 12px 0"
-          :title="`老达人:${parsed.duplicate.nickname},已合作 ${parsed.duplicate.round_count} 轮,将挂到已有档案`" />
+          :title="`达人已存在:${parsed.duplicate.nickname},已合作 ${parsed.duplicate.round_count} 轮,请打开已有档案继续维护`" />
         <el-form label-width="90px" style="margin-top: 12px">
           <el-row :gutter="12">
             <el-col v-for="f in FIELDS" :key="f.key" :span="12">
@@ -77,7 +84,36 @@
 
       <template #footer>
         <el-button @click="showPaste = false">取消</el-button>
-        <el-button type="primary" :disabled="!canSave" @click="save">保存建档</el-button>
+        <el-button type="primary" :disabled="!canSave" @click="save">{{ saveLabel }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="importVisible" title="批量导入达人" width="720px" @closed="resetImport">
+      <div class="import-actions">
+        <el-button @click="downloadTemplate">下载 Excel 模板</el-button>
+      </div>
+      <el-upload
+        drag
+        accept=".xlsx"
+        :auto-upload="false"
+        :limit="1"
+        :file-list="importFileList"
+        :on-change="onImportFile"
+        :on-remove="removeImportFile"
+      >
+        <div class="upload-text">把填写好的 .xlsx 文件拖到这里，或点击选择文件</div>
+      </el-upload>
+      <el-alert v-if="importResult" style="margin-top:12px" type="success" :closable="false"
+        :title="`共读取 ${importResult.total} 行，成功 ${importResult.success_count} 行，失败 ${importResult.failed_count} 行`" />
+      <el-table v-if="importResult?.failures?.length" :data="importResult.failures" size="small" style="margin-top:12px" max-height="260">
+        <el-table-column prop="row" label="行号" width="70" />
+        <el-table-column prop="nickname" label="昵称" width="120" />
+        <el-table-column prop="douyin_id" label="抖音号" width="140" />
+        <el-table-column prop="reason" label="失败原因" />
+      </el-table>
+      <template #footer>
+        <el-button @click="importVisible = false">关闭</el-button>
+        <el-button type="primary" :disabled="!importFile" :loading="importing" @click="doImport">开始导入</el-button>
       </template>
     </el-dialog>
   </div>
@@ -86,6 +122,7 @@
 <script setup>
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '../api'
 
 const FIELDS = [
@@ -105,6 +142,7 @@ const MODES = [
   { label: '手动填写', value: 'manual' },
 ]
 const rows = ref([])
+const router = useRouter()
 const total = ref(0)
 const page = ref(1)
 const pageSize = 50
@@ -116,8 +154,21 @@ const pasteText = ref('')
 const parsing = ref(false)
 const parsed = ref(null)
 const form = reactive({ level: 'L1' })
+const importVisible = ref(false)
+const importFile = ref(null)
+const importFileList = ref([])
+const importing = ref(false)
+const importResult = ref(null)
 
-const canSave = computed(() => !!(form.nickname && (mode.value === 'manual' || parsed.value)))
+const duplicate = computed(() => parsed.value?.duplicate || null)
+const duplicateOwnedByOther = computed(() => Boolean(duplicate.value?.owned_by_other_bd))
+const duplicateInScope = computed(() => Boolean(duplicate.value?.id && !duplicateOwnedByOther.value))
+const saveLabel = computed(() => (duplicateInScope.value ? '打开已有档案' : '保存建档'))
+const canSave = computed(() => {
+  if (duplicateOwnedByOther.value) return false
+  if (duplicateInScope.value) return true
+  return Boolean(form.nickname && form.douyin_id && (mode.value === 'manual' || parsed.value))
+})
 
 function resetDialog() {
   mode.value = 'paste'
@@ -146,6 +197,11 @@ async function doParse() {
 }
 
 async function save() {
+  if (duplicateInScope.value) {
+    showPaste.value = false
+    router.push(`/influencers/${duplicate.value.id}`)
+    return
+  }
   try {
     await api.post('/api/influencers', { ...form })
     ElMessage.success('已建档并开启第1轮合作')
@@ -156,10 +212,57 @@ async function save() {
   }
 }
 
+function fmtDate(value) {
+  if (!value) return '—'
+  return value.slice(0, 10)
+}
+
+function onImportFile(uploadFile) {
+  importFile.value = uploadFile.raw
+  importFileList.value = [uploadFile]
+  importResult.value = null
+}
+function removeImportFile() {
+  importFile.value = null
+  importFileList.value = []
+}
+function resetImport() {
+  importFile.value = null
+  importFileList.value = []
+  importResult.value = null
+  importing.value = false
+}
+async function downloadTemplate() {
+  const blob = await api.get('/api/influencers/import-template', { responseType: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = '达人导入模板.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
+}
+async function doImport() {
+  if (!importFile.value) return ElMessage.warning('请先选择 Excel 文件')
+  importing.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', importFile.value)
+    importResult.value = await api.post('/api/influencers/import', fd)
+    ElMessage.success(`导入完成:成功 ${importResult.value.success_count} 行,失败 ${importResult.value.failed_count} 行`)
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '导入失败')
+  } finally {
+    importing.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
 <style scoped>
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
 .low-conf :deep(.el-input__wrapper) { background: #fdf6ec; } /* LLM 低置信度标黄待确认 */
+.import-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
+.upload-text { color: #606266; font-size: 13px; }
 </style>

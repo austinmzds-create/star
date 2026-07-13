@@ -35,6 +35,16 @@
       <el-table-column label="创建" width="140">
         <template #default="{ row }">{{ ft(row.created_at) }}</template>
       </el-table-column>
+      <el-table-column label="操作" width="210" fixed="right">
+        <template #default="{ row }">
+          <el-button size="small" text @click.stop="open(row)">查看</el-button>
+          <el-button size="small" text @click.stop="open(row, 'info')">编辑</el-button>
+          <el-button size="small" text :type="row.status === 'on' ? 'warning' : 'success'" @click.stop="toggleProduct(row)">
+            {{ row.status === 'on' ? '禁用' : '启用' }}
+          </el-button>
+          <el-button size="small" text type="danger" @click.stop="removeProduct(row)">删除</el-button>
+        </template>
+      </el-table-column>
     </el-table>
     <el-pagination v-if="total > pageSize" background layout="prev, pager, next, total"
       :total="total" :page-size="pageSize" :current-page="page"
@@ -100,10 +110,10 @@
             <CopyText v-if="detail.link" :value="detail.link" style="margin-top:6px" />
           </div>
           <div style="display:flex; flex-direction:column; gap:6px">
-            <el-button size="small" :type="detail.status === 'on' ? 'info' : 'success'" @click="toggle">
-              {{ detail.status === 'on' ? '下架' : '上架' }}
+            <el-button size="small" :type="detail.status === 'on' ? 'warning' : 'success'" @click="toggleProduct(detail)">
+              {{ detail.status === 'on' ? '禁用' : '启用' }}
             </el-button>
-            <el-button size="small" type="danger" plain @click="removeProduct">删除</el-button>
+            <el-button size="small" type="danger" plain @click="removeProduct(detail)">删除</el-button>
           </div>
         </div>
 
@@ -117,11 +127,12 @@
                   <template v-if="t.v === 'video_hot'">
                     <el-upload
                       :show-file-list="false"
+                      :disabled="matUploading"
                       :before-upload="() => true"
                       :http-request="uploadMat"
                       accept="video/*"
                     >
-                      <el-button size="small" :loading="matUploading">上传视频</el-button>
+                      <el-button size="small" :loading="matUploading" :disabled="matUploading">上传视频</el-button>
                     </el-upload>
                     <el-input v-model="matForm.source_link" placeholder="爆款抖音链接" style="flex:1" />
                     <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
@@ -132,11 +143,12 @@
                   <template v-else>
                     <el-upload
                       :show-file-list="false"
+                      :disabled="matUploading"
                       :before-upload="() => true"
                       :http-request="uploadMat"
                       :accept="acceptOf(t.v)"
                     >
-                      <el-button size="small" :loading="matUploading">上传文件</el-button>
+                      <el-button size="small" :loading="matUploading" :disabled="matUploading">上传文件</el-button>
                     </el-upload>
                     <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
                     <el-input v-if="t.v === 'pdf'" v-model="matForm.report_id" placeholder="报告ID(可选)" style="width:130px" />
@@ -154,7 +166,15 @@
                 <!-- 列表 -->
                 <div v-for="m in materialsOf(t.v)" :key="m.id" class="material-card">
                   <div class="material-card-head">
-                    <strong>{{ m.title || MAT_TYPES.find((item) => item.v === m.type)?.l }}</strong>
+                    <template v-if="renamingId === m.id">
+                      <el-input v-model="renameTitle" size="small" class="rename-input" @keyup.enter="saveRename(m)" />
+                      <el-button size="small" text type="primary" @click="saveRename(m)">保存</el-button>
+                      <el-button size="small" text @click="cancelRename">取消</el-button>
+                    </template>
+                    <template v-else>
+                      <strong>{{ m.title || MAT_TYPES.find((item) => item.v === m.type)?.l }}</strong>
+                      <el-button size="small" text @click="startRename(m)">改名</el-button>
+                    </template>
                     <div class="mat-ops">
                       <el-icon class="op" @click="openEditMat(m)"><Edit /></el-icon>
                       <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
@@ -293,6 +313,8 @@ const mtype = ref('video_ai')
 const matForm = reactive({})
 const matUploading = ref(false)
 const matProgress = ref(0)
+const renamingId = ref(null)
+const renameTitle = ref('')
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
@@ -335,9 +357,9 @@ async function saveCreate() {
   ElMessage.success('已创建'); createVisible.value = false; load()
 }
 
-async function open(row) {
+async function open(row, tabName = 'materials') {
   detail.value = await api.get(`/api/products/${row.id}`)
-  drawer.value = true; dtab.value = 'materials'; mtype.value = 'video_ai'
+  drawer.value = true; dtab.value = tabName; mtype.value = 'video_ai'
   Object.keys(matForm).forEach((k) => delete matForm[k])
   grants.value = await api.get(`/api/products/${row.id}/grants`)
   act.value = await api.get(`/api/products/${row.id}/activity`)
@@ -371,16 +393,36 @@ async function delOrder(row) {
 }
 async function refreshDetail() { detail.value = await api.get(`/api/products/${detail.value.id}`) }
 
-async function toggle() {
-  const r = await api.post(`/api/products/${detail.value.id}/toggle`)
-  detail.value.status = r.status; load()
+async function toggleProduct(row) {
+  const action = row.status === 'on' ? '禁用' : '启用'
+  await ElMessageBox.confirm(`确认${action}该产品?`, '提示', { type: 'warning' })
+  const r = await api.post(`/api/products/${row.id}/toggle`)
+  row.status = r.status
+  if (detail.value?.id === row.id) detail.value.status = r.status
+  ElMessage.success(`已${action}`)
+  load()
 }
 
-async function uploadMat({ file, onProgress }) {
+function prependMaterial(material) {
+  if (!detail.value?.materials || !material?.id) return
+  detail.value.materials = [
+    material,
+    ...detail.value.materials.filter((item) => item.id !== material.id),
+  ]
+}
+
+function updateMaterialLocal(materialId, patch) {
+  if (!detail.value?.materials) return
+  detail.value.materials = detail.value.materials.map((item) => (
+    item.id === materialId ? { ...item, ...patch } : item
+  ))
+}
+
+async function uploadMat({ file, onProgress, onSuccess, onError }) {
   matUploading.value = true
   matProgress.value = 0
   try {
-    await uploadAndCreateMaterial(api, {
+    const created = await uploadAndCreateMaterial(api, {
       productId: detail.value.id,
       type: mtype.value,
       file,
@@ -392,13 +434,17 @@ async function uploadMat({ file, onProgress }) {
       },
     })
     ElMessage.success('上传成功，素材已添加')
+    prependMaterial(created)
     Object.keys(matForm).forEach((key) => delete matForm[key])
-    await refreshDetail()
-    await load()
+    onSuccess?.(created)
+    load()
+    return created
   } catch (error) {
+    onError?.(error)
     ElMessage.error(error.materialStage === 'create'
       ? '文件已上传，但素材创建失败，请重试'
       : (error.response?.data?.detail || '文件上传失败'))
+    throw error
   } finally {
     matUploading.value = false
   }
@@ -408,12 +454,18 @@ async function addMaterial() {
   if (mtype.value === 'video_hot') body.source_link = matForm.source_link
   else if (mtype.value === 'copy') body.parsed_text = matForm.parsed_text
   if (!body.source_link && !body.parsed_text) return ElMessage.warning('请填写内容')
-  await api.post(`/api/products/${detail.value.id}/materials`, body)
-  ElMessage.success('已添加'); Object.keys(matForm).forEach((k) => delete matForm[k]); refreshDetail(); load()
+  const created = await api.post(`/api/products/${detail.value.id}/materials`, body)
+  ElMessage.success('已添加')
+  prependMaterial(created)
+  Object.keys(matForm).forEach((k) => delete matForm[k])
+  load()
 }
 async function delMaterial(m) {
   await ElMessageBox.confirm('确认删除该素材?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/materials/${m.id}`); refreshDetail(); load()
+  await api.delete(`/api/products/materials/${m.id}`)
+  detail.value.materials = detail.value.materials.filter((item) => item.id !== m.id)
+  ElMessage.success('已删除')
+  load()
 }
 
 const editMatVisible = ref(false)
@@ -428,13 +480,38 @@ async function saveMat() {
     title: matEdit.title, parsed_text: matEdit.parsed_text, source_link: matEdit.source_link,
     report_id: matEdit.report_id, downloadable: matEdit.downloadable,
   })
-  editMatVisible.value = false; ElMessage.success('已保存'); refreshDetail()
+  updateMaterialLocal(matEdit.id, {
+    title: matEdit.title,
+    parsed_text: matEdit.parsed_text,
+    source_link: matEdit.source_link,
+    report_id: matEdit.report_id,
+    downloadable: matEdit.downloadable,
+  })
+  editMatVisible.value = false; ElMessage.success('已保存')
 }
-async function removeProduct() {
+function startRename(m) {
+  renamingId.value = m.id
+  renameTitle.value = m.title || ''
+}
+function cancelRename() {
+  renamingId.value = null
+  renameTitle.value = ''
+}
+async function saveRename(m) {
+  const title = renameTitle.value.trim()
+  if (!title) return ElMessage.warning('名称不能为空')
+  await api.put(`/api/products/materials/${m.id}`, { title })
+  updateMaterialLocal(m.id, { title })
+  cancelRename()
+  ElMessage.success('已改名')
+}
+async function removeProduct(row) {
   await ElMessageBox.confirm('确认删除该产品?(仅无寄样/视频/出单记录时可删)', '删除', { type: 'warning' })
   try {
-    await api.delete(`/api/products/${detail.value.id}`)
-    ElMessage.success('已删除'); drawer.value = false; load()
+    await api.delete(`/api/products/${row.id}`)
+    ElMessage.success('已删除')
+    if (detail.value?.id === row.id) drawer.value = false
+    load()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '删除失败')
   }
@@ -482,6 +559,7 @@ onMounted(load)
 .material-card-head { display: flex; align-items: center; gap: 10px; }
 .mat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f4f5f8; }
 .mat-ops { margin-left: auto; display: flex; gap: 10px; }
+.rename-input { width: 220px; max-width: 42vw; }
 .material-card .op, .material-card .del { color: #c0c4cc; cursor: pointer; }
 .material-card .op:hover { color: #6b5cf6; }
 .material-card .del:hover { color: #f56c6c; }

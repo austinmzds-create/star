@@ -9,8 +9,14 @@
     <div v-if="mainTab === 'video'" key="video-pane">
       <div class="page-toolbar">
         <el-tabs v-model="vTab" @tab-change="reloadVideos" class="flex-tabs">
-          <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key"
-            :label="`${s.label}${vCounts[s.key] ? ' ' + vCounts[s.key] : ''}`" />
+          <el-tab-pane v-for="s in VIDEO_TABS" :key="s.key" :name="s.key">
+            <template #label>
+              <span class="tab-label-badge">
+                {{ s.label }}
+                <el-badge v-if="vCounts[s.key]" :value="vCounts[s.key]" :type="videoBadgeType(s.key)" />
+              </span>
+            </template>
+          </el-tab-pane>
         </el-tabs>
         <div style="display:flex; gap:8px; align-items:center">
           <el-input v-model="vSearch" placeholder="搜达人/产品" clearable style="width:180px"
@@ -88,8 +94,14 @@
     <div v-else key="promo-pane">
       <div class="page-toolbar">
         <el-tabs v-model="pTab" @tab-change="reloadPromotions" class="flex-tabs">
-          <el-tab-pane v-for="s in PROMO_TABS" :key="s.key" :name="s.key"
-            :label="`${s.label}${pCounts[s.key] ? ' ' + pCounts[s.key] : ''}`" />
+          <el-tab-pane v-for="s in PROMO_TABS" :key="s.key" :name="s.key">
+            <template #label>
+              <span class="tab-label-badge">
+                {{ s.label }}
+                <el-badge v-if="pCounts[s.key]" :value="pCounts[s.key]" :type="promoBadgeType(s.key)" />
+              </span>
+            </template>
+          </el-tab-pane>
         </el-tabs>
         <el-input v-model="pSearch" placeholder="搜达人/产品/抖音号" clearable style="width:200px"
           @keyup.enter="reloadPromotions" @clear="reloadPromotions" />
@@ -217,6 +229,7 @@ const timeComments = ref('')
 let currentVideo = null
 
 const videoTabLabel = (k) => VIDEO_TABS.find((t) => t.key === k)?.label || k
+const videoBadgeType = (k) => (['submitted', 'blocked'].includes(k) ? 'danger' : 'info')
 
 async function loadVideos() {
   vLoading.value = true
@@ -325,6 +338,7 @@ const failProof = ref('')
 let currentPromo = null
 
 const promoLabel = (k) => PROMO_TABS.find((t) => t.key === k)?.label || k
+const promoBadgeType = (k) => (['pending_request', 'pending_confirm', 'failed'].includes(k) ? 'danger' : 'info')
 
 async function loadPromotions() {
   pLoading.value = true
@@ -386,6 +400,7 @@ onMounted(async () => {
 .page-toolbar { display: flex; align-items: center; justify-content: space-between; }
 .flex-tabs { flex: 1; }
 .flex-tabs :deep(.el-tabs__header) { margin-bottom: 12px; }
+.tab-label-badge { display: inline-flex; align-items: center; gap: 6px; }
 .promo-card { background: #fff; border: 1px solid #f0f1f5; border-radius: 12px; padding: 14px 16px; margin-bottom: 12px; }
 .pc-head { display: flex; align-items: center; justify-content: space-between; }
 .pc-name { font-weight: 600; }

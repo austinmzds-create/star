@@ -5,7 +5,7 @@
 """
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -14,9 +14,36 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       MaterialDownloadLog, Product, SampleOrder)
 from ..services import storage
 from ..services.parser import parse_influencer_text
+from ..services.sample_orders import dedupe_sample_rows
 from ..services.sms import SmsError, send_code, verify_code
+from ..services.tracking import refresh_if_needed, refresh_order_tracking
 
 router = APIRouter(prefix="/api/h5", tags=["h5"])
+
+H5_IDENTITY_FIELDS = ("douyin_id", "douyin_uid", "cooperation_code")
+
+
+def _clean_identity(value):
+    if isinstance(value, str):
+        value = value.strip()
+    return value or None
+
+
+def _assert_identity_available(db: Session, inf: Influencer, fields: dict) -> None:
+    conds = []
+    for field in H5_IDENTITY_FIELDS:
+        value = _clean_identity(fields.get(field))
+        if value:
+            conds.append(getattr(Influencer, field) == value)
+    if not conds:
+        return
+    existing = db.scalars(
+        select(Influencer)
+        .where(Influencer.id != inf.id, Influencer.archived.is_not(True), or_(*conds))
+        .order_by(Influencer.id)
+    ).first()
+    if existing:
+        raise HTTPException(409, "该抖音号/UID/合作码已存在,请联系商务合并资料,不要重复建档")
 
 
 class PhoneIn(BaseModel):
@@ -43,7 +70,11 @@ class VerifyIn(BaseModel):
 def sms_verify(body: VerifyIn, db: Session = Depends(get_db)):
     if not verify_code(db, body.phone, body.code):
         raise HTTPException(400, "验证码错误或已过期")
-    inf = db.scalars(select(Influencer).where(Influencer.phone == body.phone)).first()
+    inf = db.scalars(
+        select(Influencer)
+        .where(Influencer.phone == body.phone, Influencer.archived.is_not(True))
+        .order_by(Influencer.id)
+    ).first()
     if not inf:
         inf = Influencer(nickname=f"达人{body.phone[-4:]}", phone=body.phone, source="h5")
         db.add(inf)
@@ -53,16 +84,19 @@ def sms_verify(body: VerifyIn, db: Session = Depends(get_db)):
 
 
 @router.get("/me")
-def me(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_db)):
+async def me(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_db)):
     """达人自己的档案(仅自己)+ 寄样进度(含物流轨迹)"""
     coop_ids = db.scalars(select(Cooperation.id)
                           .where(Cooperation.influencer_id == inf.id)).all() or [0]
     samples = []
-    for o, prod in db.execute(
+    sample_rows = db.execute(
         select(SampleOrder, Product).join(Product, SampleOrder.product_id == Product.id)
         .where(SampleOrder.cooperation_id.in_(coop_ids))
         .order_by(SampleOrder.created_at.desc())
-    ).all():
+    ).all()
+    for row in sample_rows:
+        await refresh_if_needed(db, row[0])
+    for o, prod in dedupe_sample_rows(sample_rows):
         samples.append({
             "id": o.id, "product_name": prod.name,
             "product_image": storage.signed_url(prod.product_image) if prod.product_image else None,
@@ -95,6 +129,7 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
     """达人粘贴自我介绍,解析结果落到自己档案(商务后台可见并复核)"""
     result = await parse_influencer_text(body.text)
     f = result["fields"]
+    _assert_identity_available(db, inf, f)
     inf.raw_intro = body.text
     # 注意:不写 phone —— 它是 H5 登录标识,不能被解析出的"收件电话"覆盖
     for field in ("nickname", "douyin_id", "douyin_uid", "homepage_url",
@@ -110,7 +145,6 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
 async def track_my_sample(order_id: int, inf: Influencer = Depends(current_influencer),
                           db: Session = Depends(get_db)):
     """达人刷新自己寄样单的物流轨迹(严格校验该单属于本达人)。"""
-    from ..services.logistics import get_provider
     o = db.get(SampleOrder, order_id)
     if not o:
         raise HTTPException(404, "寄样单不存在")
@@ -119,15 +153,7 @@ async def track_my_sample(order_id: int, inf: Influencer = Depends(current_influ
         raise HTTPException(403, "无权查看该寄样单")
     if not o.tracking_no or not o.courier_company:
         raise HTTPException(400, "该寄样单尚未发货")
-    phone = (o.address_snapshot or {}).get("tel")
-    result = await get_provider().query_realtime(o.tracking_no, o.courier_company, phone)
-    o.logistics_status = result
-    if result.get("signed") and not o.signed_at:
-        from datetime import datetime
-        o.signed_at = datetime.now()
-        o.status = "signed"
-    db.commit()
-    return result
+    return await refresh_order_tracking(db, o)
 
 
 @router.get("/products")
@@ -152,8 +178,8 @@ def _assert_granted(db: Session, inf_id: int, product_id: int):
 
 
 @router.get("/products/{product_id}/materials")
-def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
-                 db: Session = Depends(get_db)):
+async def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
+                       db: Session = Depends(get_db)):
     _assert_granted(db, inf.id, product_id)
     p = db.get(Product, product_id)
     if not p:
@@ -161,10 +187,16 @@ def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
     # 该达人在本产品下的最新寄样(含物流轨迹),让"资料 + 快递"一屏聚合
     coop_ids = db.scalars(select(Cooperation.id)
                           .where(Cooperation.influencer_id == inf.id)).all() or [0]
-    o = db.scalars(select(SampleOrder)
-                   .where(SampleOrder.product_id == product_id,
-                          SampleOrder.cooperation_id.in_(coop_ids))
-                   .order_by(SampleOrder.created_at.desc())).first()
+    sample_rows = db.execute(
+        select(SampleOrder)
+        .where(SampleOrder.product_id == product_id,
+               SampleOrder.cooperation_id.in_(coop_ids))
+        .order_by(SampleOrder.created_at.desc())
+    ).all()
+    for row in sample_rows:
+        await refresh_if_needed(db, row[0])
+    deduped_samples = dedupe_sample_rows(sample_rows)
+    o = deduped_samples[0][0] if deduped_samples else None
     sample = None
     if o:
         sample = {"id": o.id, "status": o.status, "tracking_no": o.tracking_no,
@@ -172,6 +204,11 @@ def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
                   "signed_at": o.signed_at.isoformat() if o.signed_at else None,
                   "reject_reason": o.reject_reason,
                   "created_at": o.created_at.isoformat()}
+    materials = db.scalars(
+        select(Material)
+        .where(Material.product_id == product_id)
+        .order_by(Material.created_at.desc(), Material.id.desc())
+    ).all()
     return {"id": p.id, "name": p.name,
             "product_image": storage.signed_url(p.product_image) if p.product_image else None,
             "price_text": p.price_text,
@@ -183,7 +220,7 @@ def my_materials(product_id: int, inf: Influencer = Depends(current_influencer),
                            "url": storage.signed_url(m.oss_key) if m.oss_key else None,
                            "source_link": m.source_link, "parsed_text": m.parsed_text,
                            "report_id": m.report_id, "downloadable": m.downloadable}
-                          for m in p.materials]}
+                          for m in materials]}
 
 
 @router.post("/materials/{material_id}/download")

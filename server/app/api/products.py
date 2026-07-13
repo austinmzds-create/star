@@ -13,8 +13,11 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       OrderRecord, Product, SampleOrder, User,
                       VideoTask)
 from ..services import storage
+from ..services.sample_orders import dedupe_sample_rows
 
 router = APIRouter(prefix="/api/products", tags=["products"])
+
+MATERIAL_TYPES = {"video_ai", "video_hot", "video_output", "image", "pdf", "copy"}
 
 
 class ProductIn(BaseModel):
@@ -37,7 +40,12 @@ class ProductIn(BaseModel):
 @router.post("")
 def create(body: ProductIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
+    data["name"] = data["name"].strip()
+    if not data["name"]:
+        raise HTTPException(400, "产品名称不能为空")
     if data.get("default_commission") is not None:
+        if data["default_commission"] < 0 or data["default_commission"] > 100:
+            raise HTTPException(400, "默认佣金需在 0-100 之间")
         data["default_commission"] = Decimal(str(data["default_commission"]))
     # 首张图集自动作封面(未单独指定封面时)
     if data.get("product_images") and not data.get("product_image"):
@@ -55,6 +63,14 @@ def update_product(product_id: int, body: ProductIn,
     if not p:
         raise HTTPException(404, "产品不存在")
     data = body.model_dump()
+    if data.get("name") is not None:
+        data["name"] = data["name"].strip()
+        if not data["name"]:
+            raise HTTPException(400, "产品名称不能为空")
+    if data.get("default_commission") is not None and (
+        data["default_commission"] < 0 or data["default_commission"] > 100
+    ):
+        raise HTTPException(400, "默认佣金需在 0-100 之间")
     if data.get("product_images") and not data.get("product_image"):
         data["product_image"] = data["product_images"][0]
     for k, v in data.items():
@@ -136,16 +152,31 @@ class MaterialIn(BaseModel):
     downloadable: bool = True
 
 
+def _validate_material(body: MaterialIn):
+    if body.type not in MATERIAL_TYPES:
+        raise HTTPException(400, "素材类型不支持")
+    if body.type == "copy":
+        if not (body.parsed_text or "").strip():
+            raise HTTPException(400, "文案内容不能为空")
+        return
+    if body.type == "video_hot" and (body.source_link or "").strip():
+        return
+    if not (body.oss_key or "").strip():
+        raise HTTPException(400, "请先上传文件")
+
+
 @router.post("/{product_id}/materials")
 def add_material(product_id: int, body: MaterialIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     if not db.get(Product, product_id):
         raise HTTPException(404, "产品不存在")
+    _validate_material(body)
     m = Material(product_id=product_id, **body.model_dump())
     db.add(m)
     db.commit()
+    db.refresh(m)
     # TODO: source_link 非空时后台任务:下载视频→转存OSS→解析文案回填 parsed_text
-    return {"id": m.id}
+    return _material_dict(m)
 
 
 class MaterialEditIn(BaseModel):
@@ -182,7 +213,8 @@ def _material_dict(m: Material) -> dict:
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
             "url": storage.signed_url(m.oss_key) if m.oss_key else None,
             "source_link": m.source_link, "parsed_text": m.parsed_text,
-            "report_id": m.report_id, "downloadable": m.downloadable, "starred": m.starred}
+            "report_id": m.report_id, "downloadable": m.downloadable,
+            "starred": m.starred, "created_at": m.created_at.isoformat()}
 
 
 @router.get("/{product_id}")
@@ -190,6 +222,11 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
+    materials = db.scalars(
+        select(Material)
+        .where(Material.product_id == product_id)
+        .order_by(Material.created_at.desc(), Material.id.desc())
+    ).all()
     return {"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
             "shop_product_id": p.shop_product_id, "link": p.link, "status": p.status,
             "product_image": storage.signed_url(p.product_image) if p.product_image else None,
@@ -199,7 +236,7 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "sample_remark": p.sample_remark, "promo_remark": p.promo_remark,
             "auto_audit_type": p.auto_audit_type, "allow_promotion": p.allow_promotion,
-            "materials": [_material_dict(m) for m in p.materials]}
+            "materials": [_material_dict(m) for m in materials]}
 
 
 # ---------- 授权达人 ----------
@@ -267,7 +304,7 @@ def activity(product_id: int, user: User = Depends(current_user), db: Session = 
         s_stmt = s_stmt.where(Influencer.owner_bd_id == user.id)
     samples = [{"id": o.id, "nickname": inf.nickname, "status": o.status,
                 "created_at": o.created_at.isoformat()}
-               for o, inf in db.execute(s_stmt).all()]
+               for o, inf in dedupe_sample_rows(db.execute(s_stmt).all(), influencer_index=1)]
     v_stmt = (select(VideoTask, Influencer)
               .join(Cooperation, VideoTask.cooperation_id == Cooperation.id)
               .join(Influencer, Cooperation.influencer_id == Influencer.id)

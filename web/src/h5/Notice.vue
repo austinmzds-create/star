@@ -1,5 +1,8 @@
 <template>
   <div class="h5-wrap">
+    <div class="topbar">
+      <el-button size="small" type="primary" plain @click="$router.push('/h5')">← 返回产品列表</el-button>
+    </div>
     <h2>拍摄前必读</h2>
     <p class="sub">以下为近期卡审/违规案例,加星为高频重点,拍摄前请逐条规避。</p>
 
@@ -34,6 +37,7 @@ onMounted(async () => {
 
 <style scoped>
 .h5-wrap { max-width: 480px; margin: 0 auto; padding: 24px 16px; }
+.topbar { margin-bottom: 12px; }
 .sub { color: #999; font-size: 13px; margin: 4px 0 16px; }
 .item { margin-top: 10px; }
 .item.star { border: 1px solid #e6a23c; background: #fdf6ec; }

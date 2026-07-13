@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 dev.db
 server/.env
+server/_uploads/
 node_modules/
 web/dist/
 .DS_Store

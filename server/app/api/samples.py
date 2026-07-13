@@ -11,6 +11,9 @@ from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, RejectReason,
                       SampleOrder, User)
 from ..services.logistics import get_provider
+from ..services.sample_orders import (OPEN_SAMPLE_STATUSES, dedupe_sample_rows,
+                                      status_bucket, status_filter_values)
+from ..services.tracking import refresh_order_tracking
 
 router = APIRouter(prefix="/api/samples", tags=["samples"])
 
@@ -32,24 +35,28 @@ def list_samples(status: str | None = None, q: str | None = None,
                  page: int = 1, page_size: int = 50,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     """寄样单列表(商务只见自己达人的单;管理员全量)。status 过滤 + q 搜索(达人/产品/单号)+ 分页。"""
-    from sqlalchemy import func, or_
+    from sqlalchemy import or_
     stmt = (select(SampleOrder, Cooperation, Influencer, Product)
             .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
             .join(Influencer, Cooperation.influencer_id == Influencer.id)
             .join(Product, SampleOrder.product_id == Product.id))
     if user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
-    if status:
-        stmt = stmt.where(SampleOrder.status == status)
+    status_values = status_filter_values(status)
+    if status_values:
+        stmt = stmt.where(SampleOrder.status.in_(status_values))
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(Influencer.nickname.like(like), Product.name.like(like),
                               SampleOrder.tracking_no.like(like)))
-    total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     page = max(1, page)
     page_size = min(max(1, page_size), 200)
-    rows = db.execute(stmt.order_by(SampleOrder.created_at.desc())
-                      .offset((page - 1) * page_size).limit(page_size)).all()
+    rows_all = dedupe_sample_rows(
+        db.execute(stmt.order_by(SampleOrder.created_at.desc())).all(),
+        influencer_index=2,
+    )
+    total = len(rows_all)
+    rows = rows_all[(page - 1) * page_size: page * page_size]
     items = [{
         "id": order.id, "status": order.status,
         "influencer_id": inf.id, "influencer_nickname": inf.nickname,
@@ -66,14 +73,16 @@ def list_samples(status: str | None = None, q: str | None = None,
 
 @router.get("/status-counts")
 def status_counts(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    from sqlalchemy import func
-    stmt = (select(SampleOrder.status, func.count())
+    stmt = (select(SampleOrder, Cooperation, Influencer)
             .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
-            .join(Influencer, Cooperation.influencer_id == Influencer.id)
-            .group_by(SampleOrder.status))
+            .join(Influencer, Cooperation.influencer_id == Influencer.id))
     if user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
-    return {status: count for status, count in db.execute(stmt).all()}
+    counts = {}
+    for order, _coop, _inf in dedupe_sample_rows(db.execute(stmt).all(), influencer_index=2):
+        key = status_bucket(order.status)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 class CreateIn(BaseModel):
@@ -87,14 +96,29 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
     inf = db.get(Influencer, body.influencer_id)
     if not inf:
         raise HTTPException(404, "达人不存在")
+    if inf.archived:
+        raise HTTPException(400, "达人已停用,不能新建寄样单")
     if user.role != "admin" and inf.owner_bd_id != user.id:
         raise HTTPException(403, "只能给自己名下的达人建寄样单")
-    if not db.get(Product, body.product_id):
+    product = db.get(Product, body.product_id)
+    if not product:
         raise HTTPException(404, "产品不存在")
+    if product.status != "on":
+        raise HTTPException(400, "产品已下架,不能新建寄样单")
     coop = db.scalars(select(Cooperation).where(Cooperation.influencer_id == inf.id)
-                      .order_by(Cooperation.round_no.desc()).limit(1)).first()
+                      .order_by(Cooperation.round_no.desc(), Cooperation.id.desc()).limit(1)).first()
     if not coop:
         raise HTTPException(400, "该达人没有进行中的合作轮次")
+    existing = db.scalars(
+        select(SampleOrder)
+        .join(Cooperation, SampleOrder.cooperation_id == Cooperation.id)
+        .where(Cooperation.influencer_id == inf.id,
+               SampleOrder.product_id == body.product_id,
+               SampleOrder.status.in_(OPEN_SAMPLE_STATUSES))
+        .order_by(SampleOrder.created_at.desc())
+    ).first()
+    if existing:
+        raise HTTPException(409, "该达人这个产品已有进行中的寄样单,请勿重复创建")
     # 收件地址快照:优先用传入,否则用达人档案默认地址(下单即固化,后续改档案不影响本单)
     address = body.address or {"name": inf.real_name, "tel": inf.phone,
                                "address": inf.default_address}
@@ -181,16 +205,7 @@ async def track(order_id: int, user: User = Depends(current_user), db: Session =
     order = _load_owned_order(db, user, order_id)
     if not order.tracking_no or not order.courier_company:
         raise HTTPException(400, "该寄样单尚未发货或缺快递公司")
-    phone = (order.address_snapshot or {}).get("tel")
-    result = await get_provider().query_realtime(order.tracking_no, order.courier_company, phone)
-    order.logistics_status = result
-    if result.get("signed") and not order.signed_at:
-        order.signed_at = datetime.now()
-        order.status = "signed"
-    elif order.status == "shipped" and result.get("status"):
-        order.status = result["status"]
-    db.commit()
-    return result
+    return await refresh_order_tracking(db, order)
 
 
 @router.get("/couriers")

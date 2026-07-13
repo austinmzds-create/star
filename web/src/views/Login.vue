@@ -80,6 +80,7 @@ import { ElMessage } from 'element-plus'
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
+import { applyRoleSession } from '../test-role-session'
 
 const phone = ref('')
 const code = ref('')
@@ -108,14 +109,7 @@ async function login() {
   loading.value = true
   try {
     const data = await api.post('/api/auth/sms/login', { phone: phone.value, code: code.value })
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('user', JSON.stringify(data.user))
-    if (data.kind === 'influencer') {
-      localStorage.setItem('h5_token', data.token)
-      router.push('/h5')
-    } else {
-      router.push('/workbench')
-    }
+    router.push(applyRoleSession(data))
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '登录失败')
   } finally {
@@ -133,9 +127,7 @@ async function passwordLogin() {
       username: username.value,
       password: password.value,
     })
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('user', JSON.stringify(data.user))
-    await router.push('/workbench')
+    await router.push(applyRoleSession(data))
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '登录失败')
   } finally {

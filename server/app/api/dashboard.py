@@ -17,12 +17,16 @@ def _range(days: int | None):
     return datetime.now() - timedelta(days=days) if days else None
 
 
+def _active_influencer(*conds):
+    return select(Influencer.id).where(Influencer.archived.is_not(True), *conds)
+
+
 @router.get("/workbench")
 def workbench(user: User = Depends(current_user), db: Session = Depends(get_db)):
     """工作台:今日待办 + 数据速览(商务只看自己达人,管理员全量)"""
     is_admin = user.role == "admin"
-    # 我的达人范围
-    inf_stmt = select(Influencer.id)
+    # 我的达人范围:和达人库列表保持一致,停用/合并归档的达人不进入速览口径。
+    inf_stmt = _active_influencer()
     if not is_admin:
         inf_stmt = inf_stmt.where(Influencer.owner_bd_id == user.id)
     inf_ids = db.scalars(inf_stmt).all() or [0]
@@ -72,10 +76,10 @@ def by_bd(days: int | None = 30, admin: User = Depends(current_admin),
     since = _range(days)
     out = []
     for bd in db.scalars(select(User).where(User.role == "bd", User.is_active)).all():
-        inf_ids = db.scalars(select(Influencer.id)
-                             .where(Influencer.owner_bd_id == bd.id)).all()
+        inf_ids = db.scalars(_active_influencer(Influencer.owner_bd_id == bd.id)).all()
         new_inf = db.scalar(select(func.count()).select_from(Influencer)
                             .where(Influencer.owner_bd_id == bd.id,
+                                   Influencer.archived.is_not(True),
                                    *( [Influencer.created_at >= since] if since else [] )))
         gmv = db.scalar(select(func.coalesce(func.sum(OrderRecord.amount), 0))
                         .where(OrderRecord.influencer_id.in_(inf_ids or [0]),
@@ -113,8 +117,10 @@ def by_product(days: int | None = 30, admin: User = Depends(current_admin),
 def by_tier(admin: User = Depends(current_admin), db: Session = Depends(get_db)):
     """解决'佣金5%的达人有多少我感知不到':当前档位分布"""
     rows = db.execute(select(Influencer.commission_tier, func.count())
+                      .where(Influencer.archived.is_not(True))
                       .group_by(Influencer.commission_tier)).all()
     levels_ = db.execute(select(Influencer.level, func.count())
+                         .where(Influencer.archived.is_not(True))
                          .group_by(Influencer.level)).all()
     return {"by_commission": [{"tier": float(t), "count": c} for t, c in rows],
             "by_level": [{"level": l, "count": c} for l, c in levels_]}

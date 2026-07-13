@@ -5,6 +5,8 @@
 - 手机号对应内部账号(User)→ 发 staff 令牌(admin/bd)
 - 否则 → 找/建达人(Influencer)→ 发 influencer 令牌
 """
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -81,6 +83,46 @@ def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
 def _staff_result(user: User) -> dict:
     return {"token": make_token("staff", user.id), "kind": "staff",
             "user": {"id": user.id, "name": user.display_name, "role": user.role}}
+
+
+class DevSwitchIn(BaseModel):
+    role: Literal["admin", "bd", "influencer"]
+
+
+@router.post("/dev-switch", include_in_schema=False)
+def dev_switch(body: DevSwitchIn, db: Session = Depends(get_db)):
+    """本地测试专用:签发预设角色的真实 token；生产环境不可用。"""
+    if not settings.debug:
+        raise HTTPException(404, "Not Found")
+
+    if body.role in ("admin", "bd"):
+        user = db.scalars(
+            select(User)
+            .where(User.role == body.role, User.is_active.is_(True))
+            .order_by(User.id)
+        ).first()
+        if not user and body.role == "bd":
+            user = User(phone="13900000000", display_name="测试商务", role="bd")
+            db.add(user)
+            db.commit()
+        if not user:
+            raise HTTPException(404, "测试管理员不存在")
+        return _staff_result(user)
+
+    influencer = db.scalars(select(Influencer).order_by(Influencer.id)).first()
+    if not influencer:
+        influencer = Influencer(nickname="测试达人", phone="15000000000", source="h5")
+        db.add(influencer)
+        db.commit()
+    return {
+        "token": make_token("influencer", influencer.id),
+        "kind": "influencer",
+        "user": {
+            "id": influencer.id,
+            "name": influencer.nickname,
+            "role": "influencer",
+        },
+    }
 
 
 # —— 兼容旧账号密码登录(引导/后备)——

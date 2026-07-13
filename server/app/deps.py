@@ -52,4 +52,6 @@ def current_influencer(authorization: str = Header(""), db: Session = Depends(ge
     inf = db.get(Influencer, _load_token(token, "influencer"))
     if not inf:
         raise HTTPException(401, "达人不存在")
+    if inf.archived:
+        raise HTTPException(401, "达人已停用")
     return inf

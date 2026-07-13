@@ -25,8 +25,10 @@
           <el-col :span="12"><el-form-item label="手机"><el-input v-model="editForm.phone" maxlength="11" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="粉丝数"><el-input-number v-model="editForm.fans_count" :min="0" :controls="false" style="width:100%" /></el-form-item></el-col>
           <el-col :span="12"><el-form-item label="主页"><el-input v-model="editForm.homepage_url" /></el-form-item></el-col>
+          <el-col :span="12"><el-form-item label="数据来源"><el-input v-model="editForm.data_source" placeholder="官方后台/蝉妈妈/导入" /></el-form-item></el-col>
           <el-col :span="24"><el-form-item label="收件地址"><el-input v-model="editForm.default_address" /></el-form-item></el-col>
           <el-col :span="24"><el-form-item label="品类"><el-input v-model="categoryText" placeholder="逗号分隔,如 母婴,儿童" /></el-form-item></el-col>
+          <el-col :span="24"><el-form-item label="来源备注"><el-input v-model="editForm.source_note" type="textarea" :rows="3" /></el-form-item></el-col>
         </el-row>
       </el-form>
       <template #footer>
@@ -57,6 +59,7 @@
             <div class="kv"><span class="k">收件人</span><span>{{ d.real_name || '—' }}</span></div>
             <div class="kv"><span class="k">拍摄</span><span>{{ d.shoot_type || '未知' }}</span></div>
             <div class="kv"><span class="k">品类</span><span>{{ (d.category_tags || []).join(' / ') || '—' }}</span></div>
+            <div class="kv"><span class="k">来源</span><span>{{ d.data_source || (d.source === 'import' ? '导入' : d.source) || '—' }}</span></div>
             <div class="kv"><span class="k">主页</span>
               <el-link v-if="d.homepage_url" :href="d.homepage_url" target="_blank" type="primary">打开</el-link>
               <span v-else>{{ d.homepage_raw || '—' }}</span>
@@ -96,13 +99,31 @@
         <el-card v-if="d.raw_intro" header="原始资料" style="margin-top: 16px">
           <pre class="raw">{{ d.raw_intro }}</pre>
         </el-card>
+
+        <el-card v-if="d.source_note" header="来源备注" style="margin-top: 16px">
+          <pre class="raw">{{ d.source_note }}</pre>
+        </el-card>
+
+        <el-card v-if="isAdmin" header="管理员备注" style="margin-top: 16px">
+          <el-input v-model="adminNote" type="textarea" :rows="4" maxlength="1000"
+            show-word-limit placeholder="仅管理员可见" />
+          <div class="note-actions">
+            <el-button size="small" type="primary" :loading="savingAdminNote" @click="saveAdminNote">保存备注</el-button>
+          </div>
+        </el-card>
       </el-col>
 
       <!-- 右:动态(寄样/视频/投流/合作/留痕) -->
       <el-col :span="14">
         <el-card>
           <el-tabs v-model="tab">
-            <el-tab-pane :label="`寄样 ${act.samples.length}`" name="samples">
+            <el-tab-pane name="samples">
+              <template #label>
+                <span class="tab-label-badge">
+                  寄样 {{ act.samples.length }}
+                  <el-badge v-if="sampleAttention" :value="sampleAttention" type="danger" />
+                </span>
+              </template>
               <div v-if="isStaff" class="tab-toolbar">
                 <el-button size="small" type="primary" @click="openQuick('sample')">+ 新建寄样</el-button>
               </div>
@@ -142,12 +163,18 @@
                   </el-timeline-item>
                 </el-timeline>
                 <div v-else-if="s.tracking_no && !lastEvent(s)" class="logi-empty muted">
-                  暂无轨迹明细<span v-if="isStaff">,点「刷新物流」拉取</span>
+                  数据不完整:暂无轨迹明细<span v-if="isStaff">,请确认快递公司/单号/收件手机号并点「刷新物流」</span>
                 </div>
               </div>
             </el-tab-pane>
 
-            <el-tab-pane :label="`视频 ${act.videos.length}`" name="videos">
+            <el-tab-pane name="videos">
+              <template #label>
+                <span class="tab-label-badge">
+                  视频 {{ act.videos.length }}
+                  <el-badge v-if="videoAttention" :value="videoAttention" type="danger" />
+                </span>
+              </template>
               <div v-if="isStaff" class="tab-toolbar">
                 <el-button size="small" type="primary" @click="openQuick('video')">+ 登记视频</el-button>
               </div>
@@ -164,7 +191,13 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane :label="`投流 ${act.promotions.length}`" name="promotions">
+            <el-tab-pane name="promotions">
+              <template #label>
+                <span class="tab-label-badge">
+                  投流 {{ act.promotions.length }}
+                  <el-badge v-if="promoAttention" :value="promoAttention" type="danger" />
+                </span>
+              </template>
               <el-empty v-if="!act.promotions.length" description="暂无投流" :image-size="60" />
               <div v-for="p in act.promotions" :key="p.id" class="row-card">
                 <div class="rc-main">
@@ -176,7 +209,7 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane label="合作轮次" name="coop">
+            <el-tab-pane :label="`合作轮次 ${d.cooperations.length}`" name="coop">
               <el-timeline>
                 <el-timeline-item v-for="c in d.cooperations" :key="c.id" :timestamp="ft(c.created_at)">
                   第{{ c.round_no }}轮 · {{ c.level_snapshot }} · 佣金{{ c.commission_tier_snapshot }}% · {{ c.status }}
@@ -184,7 +217,7 @@
               </el-timeline>
             </el-tab-pane>
 
-            <el-tab-pane label="变更记录" name="logs">
+            <el-tab-pane :label="`变更记录 ${d.change_logs.length}`" name="logs">
               <el-empty v-if="!d.change_logs.length" description="暂无变更" :image-size="60" />
               <el-timeline>
                 <el-timeline-item v-for="(l, i) in d.change_logs" :key="i" :timestamp="ft(l.at)">
@@ -220,7 +253,7 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { Van } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
@@ -232,6 +265,7 @@ const route = useRoute()
 const router = useRouter()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isStaff = user.role === 'admin' || user.role === 'bd'
+const isAdmin = user.role === 'admin'
 const d = ref(null)
 const act = ref({ samples: [], videos: [], promotions: [] })
 const edit = reactive({})
@@ -247,8 +281,11 @@ const quickForm = reactive({ product_id: null, dy_url: '' })
 const editVisible = ref(false)
 const editForm = reactive({})
 const categoryText = ref('')
+const adminNote = ref('')
+const savingAdminNote = ref(false)
 const EDIT_FIELDS = ['nickname', 'douyin_id', 'douyin_uid', 'cooperation_code',
-  'real_name', 'phone', 'fans_count', 'homepage_url', 'default_address']
+  'real_name', 'phone', 'fans_count', 'homepage_url', 'default_address',
+  'data_source', 'source_note']
 
 function openEdit() {
   EDIT_FIELDS.forEach((k) => { editForm[k] = d.value[k] })
@@ -296,6 +333,15 @@ const expandedSample = ref(null)
 const trackingId = ref(null)
 const events = (s) => s.logistics_status?.events || []
 const lastEvent = (s) => s.logistics_status?.last_event || events(s)[0] || null
+const sampleAttention = computed(() => act.value.samples.filter((s) => (
+  ['pending', 'approved'].includes(s.status) || (s.tracking_no && !lastEvent(s))
+)).length)
+const videoAttention = computed(() => act.value.videos.filter((v) => (
+  ['submitted', 'blocked'].includes(v.status)
+)).length)
+const promoAttention = computed(() => act.value.promotions.filter((p) => (
+  ['pending_request', 'pending_confirm', 'failed'].includes(p.auth_status)
+)).length)
 
 async function refreshTrack(s) {
   trackingId.value = s.id
@@ -313,6 +359,7 @@ async function refreshTrack(s) {
 
 async function load() {
   d.value = await api.get(`/api/influencers/${route.params.id}`)
+  if (isAdmin) adminNote.value = d.value.admin_note || ''
   tags.value = d.value.tags || []
   Object.assign(edit, {
     level: d.value.level, commission_tier: d.value.commission_tier,
@@ -325,6 +372,18 @@ async function save() {
   await api.patch(`/api/influencers/${route.params.id}`, edit)
   ElMessage.success('已保存')
   load()
+}
+async function saveAdminNote() {
+  savingAdminNote.value = true
+  try {
+    await api.patch(`/api/influencers/${route.params.id}`, { admin_note: adminNote.value })
+    ElMessage.success('备注已保存')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  } finally {
+    savingAdminNote.value = false
+  }
 }
 async function saveTags() { await api.patch(`/api/influencers/${route.params.id}`, { tags: tags.value }) }
 function addTag() {
@@ -390,7 +449,9 @@ onMounted(async () => {
 .kv-grid .full { grid-column: 1 / -1; }
 .kv { display: flex; align-items: center; gap: 10px; padding: 6px 0; min-width: 0; }
 .kv .k { color: #8a93a6; font-size: 13px; min-width: 48px; flex-shrink: 0; }
+.note-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
 .tab-toolbar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.tab-label-badge { display: inline-flex; align-items: center; gap: 6px; }
 .raw { white-space: pre-wrap; margin: 0; font-size: 13px; color: #5a6072; }
 .row-card { padding: 10px 0; border-bottom: 1px solid #f2f3f7; }
 .row-card:last-child { border-bottom: none; }
