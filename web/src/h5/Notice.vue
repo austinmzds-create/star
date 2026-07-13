@@ -1,7 +1,7 @@
 <template>
   <div class="h5-wrap">
     <div class="topbar">
-      <el-button size="small" type="primary" plain @click="$router.push('/h5')">← 返回产品列表</el-button>
+      <el-button size="small" type="primary" plain @click="$router.push('/h5')">← 返回首页</el-button>
     </div>
     <h2>拍摄前必读</h2>
     <p class="sub">以下为近期卡审/违规案例,加星为高频重点,拍摄前请逐条规避。</p>

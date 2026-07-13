@@ -1,7 +1,7 @@
 <template>
   <div class="h5-wrap" v-if="d">
     <div class="topbar">
-      <el-button size="small" type="primary" plain @click="$router.push('/h5')">← 返回产品列表</el-button>
+      <el-button size="small" type="primary" plain @click="$router.push('/h5/products')">← 返回产品列表</el-button>
       <el-select v-model="curId" placeholder="选择产品" size="large" class="product-picker" filterable @change="goProduct">
         <el-option v-for="p in productList" :key="p.id" :label="p.name" :value="p.id" />
       </el-select>

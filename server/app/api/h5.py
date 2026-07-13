@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_influencer, make_token
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      MaterialDownloadLog, Product, SampleOrder)
+                      MaterialDownloadLog, Product, SampleOrder, VideoTask)
 from ..services import storage
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -139,6 +139,50 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
             setattr(inf, field, f[field])
     db.commit()
     return {"ok": True, "parsed": f}
+
+
+VIDEO_STATUS_LABEL = {
+    "submitted": "审核中", "approved": "已通过",
+    "rejected": "未通过", "blocked": "卡审",
+}
+
+
+def _video_feedback(v: VideoTask) -> tuple[str | None, list]:
+    """从 audit_result 提取给达人看的反馈:仅未通过/卡审时给出最近一次原因;时间点评论始终返回。"""
+    ar = v.audit_result or {}
+    reason = None
+    if v.status in ("rejected", "blocked"):
+        for rec in reversed(ar.get("records") or []):
+            if rec.get("reason"):
+                reason = rec["reason"]
+                break
+    return reason, list(ar.get("time_comments") or [])
+
+
+@router.get("/videos")
+def my_videos(inf: Influencer = Depends(current_influencer), db: Session = Depends(get_db)):
+    """达人自己的视频审核情况(数据隔离:仅本人)。卡审/未通过带原因 + 时间点评论,便于自查整改。"""
+    coop_ids = db.scalars(select(Cooperation.id)
+                          .where(Cooperation.influencer_id == inf.id)).all() or [0]
+    rows = db.execute(
+        select(VideoTask, Product).join(Product, VideoTask.product_id == Product.id)
+        .where(VideoTask.cooperation_id.in_(coop_ids))
+        .order_by(VideoTask.created_at.desc())
+    ).all()
+    out = []
+    for v, prod in rows:
+        reason, time_comments = _video_feedback(v)
+        out.append({
+            "id": v.id, "product_name": prod.name,
+            "product_image": storage.signed_url(prod.product_image) if prod.product_image else None,
+            "dy_url": v.dy_url, "status": v.status,
+            "status_label": VIDEO_STATUS_LABEL.get(v.status, v.status),
+            "blocked": v.blocked,
+            "need_fix": v.status in ("rejected", "blocked"),
+            "reject_reason": reason, "time_comments": time_comments,
+            "created_at": v.created_at.isoformat(),
+        })
+    return out
 
 
 @router.post("/samples/{order_id}/track")

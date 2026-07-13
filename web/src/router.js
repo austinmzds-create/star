@@ -15,7 +15,10 @@ import Videos from './views/Videos.vue'
 import Workbench from './views/Workbench.vue'
 
 // 达人端 H5(task.jisheng.yun)
-import H5Entry from './h5/Entry.vue'
+import H5Layout from './h5/H5Layout.vue'
+import H5Home from './h5/Home.vue'
+import H5ProductList from './h5/ProductList.vue'
+import H5Me from './h5/Me.vue'
 import H5Materials from './h5/Materials.vue'
 import H5Notice from './h5/Notice.vue'
 
@@ -38,8 +41,17 @@ const routes = [
       { path: 'settings', component: Settings, meta: { adminOnly: true } },
     ],
   },
-  // 达人 H5:发朋友圈的入口
-  { path: '/h5', component: H5Entry },
+  // 达人 H5:底部 tab(首页/产品/个人),布局内嵌登录门禁与手机/电脑切换
+  {
+    path: '/h5',
+    component: H5Layout,
+    children: [
+      { path: '', component: H5Home },
+      { path: 'products', component: H5ProductList },
+      { path: 'me', component: H5Me },
+    ],
+  },
+  // 详情类页面(全屏,自带返回):产品资料中心 / 拍摄前必读
   { path: '/h5/products/:id', component: H5Materials },
   { path: '/h5/notice', component: H5Notice },
 ]
