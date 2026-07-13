@@ -9,14 +9,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
 from ..deps import current_user, make_token
 from ..models import Influencer, User
-from ..security import verify_password
+from ..security import verify_login_password
 from ..services.sms import SmsError, send_code, verify_code
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -90,6 +90,18 @@ def _influencer_result(influencer: Influencer) -> dict:
                      "role": "influencer"}}
 
 
+def _password_matches(account: User | Influencer | None, password: str,
+                      db: Session) -> bool:
+    matched, upgraded_hash = verify_login_password(
+        password,
+        account.password_hash if account else None,
+    )
+    if account and matched and upgraded_hash:
+        account.password_hash = upgraded_hash
+        db.commit()
+    return matched
+
+
 class DevSwitchIn(BaseModel):
     role: Literal["admin", "bd", "influencer"]
 
@@ -130,13 +142,13 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    user = db.scalars(
-        select(User).where(
-            or_(User.username == body.username, User.phone == body.username)
-        )
-    ).first()
+    is_phone = (len(body.username) == 11 and body.username.isascii()
+                and body.username.isdigit()
+                and body.username.startswith("1"))
+    user_identifier = User.phone if is_phone else User.username
+    user = db.scalars(select(User).where(user_identifier == body.username)).first()
     if user:
-        if not user.password_hash or not verify_password(body.password, user.password_hash):
+        if not _password_matches(user, body.password, db):
             raise HTTPException(401, "账号或密码错误")
         if not user.is_active:
             raise HTTPException(403, "账号已停用")
@@ -147,8 +159,7 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         .where(Influencer.phone == body.username)
         .order_by(Influencer.id)
     ).first()
-    if (not influencer or not influencer.password_hash
-            or not verify_password(body.password, influencer.password_hash)):
+    if not _password_matches(influencer, body.password, db):
         raise HTTPException(401, "账号或密码错误")
     if influencer.archived:
         raise HTTPException(403, "账号已停用")

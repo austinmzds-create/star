@@ -10,8 +10,10 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db import Base  # noqa: E402
+from app import security  # noqa: E402
 from app.api.auth import LoginIn, login  # noqa: E402
+from app.db import Base  # noqa: E402
+from app.deps import _load_token  # noqa: E402
 from app.models import Influencer, User  # noqa: E402
 from app.security import hash_password, verify_password  # noqa: E402
 
@@ -160,6 +162,7 @@ def test_explicit_admin_can_still_log_in_with_username(db):
 
     assert result["kind"] == "staff"
     assert result["user"]["role"] == "admin"
+    assert _load_token(result["token"], "staff") == admin.id
 
 
 def test_business_user_can_log_in_with_phone_and_default_password(db):
@@ -171,6 +174,7 @@ def test_business_user_can_log_in_with_phone_and_default_password(db):
 
     assert result["kind"] == "staff"
     assert result["user"]["role"] == "bd"
+    assert _load_token(result["token"], "staff") == user.id
 
 
 def test_influencer_can_log_in_with_phone_and_default_password(db):
@@ -182,6 +186,7 @@ def test_influencer_can_log_in_with_phone_and_default_password(db):
 
     assert result["kind"] == "influencer"
     assert result["user"]["role"] == "influencer"
+    assert _load_token(result["token"], "influencer") == influencer.id
 
 
 def test_staff_account_wins_when_phone_matches_both_account_types(db):
@@ -194,6 +199,122 @@ def test_staff_account_wins_when_phone_matches_both_account_types(db):
 
     assert result["kind"] == "staff"
     assert result["user"]["id"] == user.id
+    assert _load_token(result["token"], "staff") == user.id
+
+
+def test_phone_login_uses_phone_owner_when_another_username_matches(db):
+    username_owner = User(
+        username="13900001234",
+        password_hash=hash_password("username-password"),
+        display_name="用户名账号",
+        role="admin",
+    )
+    phone_owner = User(phone="13900001234", display_name="手机号账号", role="bd")
+    db.add_all([username_owner, phone_owner])
+    db.commit()
+
+    result = login(LoginIn(username="13900001234", password="001234"), db)
+
+    assert result["user"]["id"] == phone_owner.id
+    assert result["user"]["role"] == "bd"
+    assert _load_token(result["token"], "staff") == phone_owner.id
+
+
+def test_non_phone_login_still_uses_username(db):
+    username_owner = User(
+        username="business-alias",
+        password_hash=hash_password("alias-password"),
+        display_name="别名账号",
+        role="admin",
+    )
+    db.add(username_owner)
+    db.commit()
+
+    result = login(LoginIn(username="business-alias", password="alias-password"), db)
+
+    assert result["user"]["id"] == username_owner.id
+    assert _load_token(result["token"], "staff") == username_owner.id
+
+
+def test_duplicate_influencer_phone_login_uses_smallest_id(db):
+    first = Influencer(phone="15095037973", nickname="首个达人")
+    second = Influencer(phone="15095037973", nickname="第二个达人")
+    db.add_all([first, second])
+    db.commit()
+
+    result = login(LoginIn(username="15095037973", password="037973"), db)
+
+    assert result["user"]["id"] == first.id
+    assert _load_token(result["token"], "influencer") == first.id
+
+
+@pytest.mark.parametrize(
+    "account",
+    [None, User(username="no-password", display_name="无密码商务")],
+    ids=["unknown-account", "account-without-hash"],
+)
+def test_unknown_or_hashless_login_consumes_standard_bcrypt_cost(db, account):
+    if account is not None:
+        db.add(account)
+        db.commit()
+
+    with patch.object(
+        security.bcrypt,
+        "checkpw",
+        wraps=security.bcrypt.checkpw,
+    ) as checkpw_spy:
+        with pytest.raises(HTTPException):
+            login(LoginIn(username="no-password", password="anything"), db)
+
+    checked_costs = [
+        int(call.args[1].decode().split("$")[2])
+        for call in checkpw_spy.call_args_list
+    ]
+    assert any(cost >= 12 for cost in checked_costs)
+
+
+def test_wrong_default_password_consumes_standard_bcrypt_cost(db):
+    user = User(phone="13900001234", display_name="商务")
+    db.add(user)
+    db.commit()
+
+    with patch.object(
+        security.bcrypt,
+        "checkpw",
+        wraps=security.bcrypt.checkpw,
+    ) as checkpw_spy:
+        with pytest.raises(HTTPException):
+            login(LoginIn(username="13900001234", password="wrong-password"), db)
+
+    checked_costs = [
+        int(call.args[1].decode().split("$")[2])
+        for call in checkpw_spy.call_args_list
+    ]
+    assert 4 in checked_costs
+    assert any(cost >= 12 for cost in checked_costs)
+
+
+def test_correct_default_password_is_rehashed_and_persisted_at_standard_cost(db):
+    user = User(phone="13900001234", display_name="商务")
+    db.add(user)
+    db.commit()
+    assert int(user.password_hash.split("$")[2]) == 4
+
+    with patch.object(
+        security.bcrypt,
+        "hashpw",
+        wraps=security.bcrypt.hashpw,
+    ) as hashpw_spy:
+        login(LoginIn(username="13900001234", password="001234"), db)
+
+    generated_costs = [
+        int(call.args[1].decode().split("$")[2])
+        for call in hashpw_spy.call_args_list
+    ]
+    db.refresh(user)
+    assert any(cost >= 12 for cost in generated_costs)
+    assert int(user.password_hash.split("$")[2]) >= 12
+    assert verify_password("001234", user.password_hash)
 
 
 @pytest.mark.parametrize(
