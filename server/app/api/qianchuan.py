@@ -11,9 +11,20 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_user
 from ..models import Product, ProductQianchuanBinding, QianchuanShopAuth, User
-from ..services import qianchuan
+from ..services import crypto, qianchuan
 
 router = APIRouter(prefix="/api/qianchuan", tags=["qianchuan"])
+
+_TOKEN_KEYS = {"access_token", "accessToken", "refresh_token", "refreshToken"}
+
+
+def _scrub_tokens(payload):
+    """从 raw_payload 里移除明文 token,避免绕过加密留下明文副本。"""
+    if isinstance(payload, dict):
+        return {k: ("***" if k in _TOKEN_KEYS else _scrub_tokens(v)) for k, v in payload.items()}
+    if isinstance(payload, list):
+        return [_scrub_tokens(v) for v in payload]
+    return payload
 
 
 class OAuthStartIn(BaseModel):
@@ -119,11 +130,11 @@ async def oauth_callback(code: str | None = None, state: str | None = None,
     if isinstance(scopes, str):
         scopes = [s.strip() for s in scopes.replace(",", " ").split() if s.strip()]
     shop.scopes = scopes if isinstance(scopes, list) else None
-    shop.access_token = token_data.get("access_token")
-    shop.refresh_token = token_data.get("refresh_token")
+    shop.access_token = crypto.encrypt(token_data.get("access_token"))
+    shop.refresh_token = crypto.encrypt(token_data.get("refresh_token"))
     shop.expires_at = token_data.get("expires_at")
     shop.refresh_expires_at = token_data.get("refresh_expires_at")
-    shop.raw_payload = token_data.get("raw_payload")
+    shop.raw_payload = _scrub_tokens(token_data.get("raw_payload"))
     shop.last_error = None
     shop.authorized_by = state_data.get("user_id")
     db.flush()

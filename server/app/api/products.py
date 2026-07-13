@@ -14,7 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       QianchuanCooperationBinding, QianchuanShopAuth,
                       SampleOrder, User,
                       VideoTask)
-from ..services import storage
+from ..services import crypto, storage
 from ..services import qianchuan as qianchuan_service
 from ..services.sample_orders import dedupe_sample_rows
 
@@ -452,7 +452,7 @@ async def sync_qianchuan_cooperation(product_id: int, body: QianchuanCooperation
         "remark": _clean_text(body.remark, 1000, "备注"),
     }
     try:
-        result = await qianchuan_service.sync_cooperation(shop_auth.access_token, payload)
+        result = await qianchuan_service.sync_cooperation(crypto.decrypt(shop_auth.access_token), payload)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
