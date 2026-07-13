@@ -4,7 +4,7 @@
       <div class="brand">
         <div class="logo">达</div>
         <h2>达人管理平台</h2>
-        <p class="sub">手机号验证码或内部账号登录</p>
+        <p class="sub">手机号验证码或账号密码登录</p>
       </div>
       <el-tabs v-model="activeMode" stretch class="login-tabs">
         <el-tab-pane label="手机号登录" name="phone">

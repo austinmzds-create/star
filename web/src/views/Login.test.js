@@ -52,6 +52,7 @@ describe('Login', () => {
 
     expect(wrapper.text()).toContain('手机号登录')
     expect(wrapper.text()).toContain('账号密码登录')
+    expect(wrapper.text()).toContain('手机号验证码或账号密码登录')
     expect(wrapper.find('input[placeholder="手机号"]').exists()).toBe(true)
   })
 
