@@ -79,11 +79,17 @@ async def send_code(db: Session, phone: str) -> None:
     db.add(SmsCode(phone=phone, code=code,
                    expires_at=datetime.now() + timedelta(minutes=CODE_TTL_MINUTES)))
     db.commit()
-    # 未配齐(AK/签名/模板)时降级为日志,方便本地联调
+    # 未配齐(AK/签名/模板)时,仅开发环境降级为日志;生产必须明确失败,
+    # 避免前端提示“已发送”但用户实际收不到短信。
     if not (settings.sms_access_key_id and settings.sms_sign_name and settings.sms_template_code):
-        logger.warning("[DEV] 短信验证码 %s -> %s", phone, code)
-        return
-    await _send_aliyun(phone, code)
+        if settings.debug:
+            logger.warning("[DEV] 短信验证码 %s -> %s", phone, code)
+            return
+        raise SmsError("短信服务未配置,请先配置阿里云短信 AK/签名/模板")
+    try:
+        await _send_aliyun(phone, code)
+    except RuntimeError as exc:
+        raise SmsError(str(exc)) from exc
 
 
 def verify_code(db: Session, phone: str, code: str) -> bool:
