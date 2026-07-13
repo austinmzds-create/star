@@ -44,7 +44,7 @@
           </template>
           <el-input
             v-model="username"
-            placeholder="账号"
+            placeholder="账号或手机号"
             size="large"
             class="fld"
             @keyup.enter="passwordLogin"
@@ -68,7 +68,7 @@
           >
             登录
           </el-button>
-          <p class="hint">仅管理员和商务使用账号密码登录</p>
+          <p class="hint">管理员、商务、达人均可使用账号密码登录</p>
         </el-tab-pane>
       </el-tabs>
     </div>

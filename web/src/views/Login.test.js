@@ -58,6 +58,8 @@ describe('Login', () => {
   it('does not request password login when credentials are missing', async () => {
     const wrapper = await openPasswordLogin()
 
+    expect(wrapper.text()).toContain('管理员、商务、达人均可使用账号密码登录')
+
     await wrapper.get('[data-testid="password-submit"]').trigger('click')
 
     expect(mocks.warning).toHaveBeenCalledWith('请填写账号和密码')
@@ -71,7 +73,7 @@ describe('Login', () => {
       user: { id: 1, name: '管理员', role: 'admin' },
     })
     const wrapper = await openPasswordLogin()
-    await wrapper.get('input[placeholder="账号"]').setValue('admin')
+    await wrapper.get('input[placeholder="账号或手机号"]').setValue('admin')
     await wrapper.get('input[placeholder="密码"]').setValue('admin123')
 
     await wrapper.get('[data-testid="password-submit"]').trigger('click')
@@ -90,12 +92,36 @@ describe('Login', () => {
     expect(mocks.push).toHaveBeenCalledWith('/workbench')
   })
 
+  it('submits influencer credentials and enters the H5 app', async () => {
+    const user = { id: 3, name: '达人', role: 'influencer' }
+    mocks.post.mockResolvedValue({
+      token: 'influencer-token',
+      kind: 'influencer',
+      user,
+    })
+    const wrapper = await openPasswordLogin()
+    await wrapper.get('input[placeholder="账号或手机号"]').setValue('15095037973')
+    await wrapper.get('input[placeholder="密码"]').setValue('037973')
+
+    await wrapper.get('[data-testid="password-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.post).toHaveBeenCalledWith('/api/auth/login', {
+      username: '15095037973',
+      password: '037973',
+    })
+    expect(localStorage.getItem('token')).toBe('influencer-token')
+    expect(localStorage.getItem('h5_token')).toBe('influencer-token')
+    expect(localStorage.getItem('user')).toBe(JSON.stringify(user))
+    expect(mocks.push).toHaveBeenCalledWith('/h5')
+  })
+
   it('shows the backend error and restores the submit button', async () => {
     mocks.post.mockRejectedValue({
       response: { data: { detail: '用户名或密码错误' } },
     })
     const wrapper = await openPasswordLogin()
-    await wrapper.get('input[placeholder="账号"]').setValue('admin')
+    await wrapper.get('input[placeholder="账号或手机号"]').setValue('admin')
     await wrapper.get('input[placeholder="密码"]').setValue('wrong')
 
     await wrapper.get('[data-testid="password-submit"]').trigger('click')
@@ -112,7 +138,7 @@ describe('Login', () => {
       user: { id: 2, name: '商务', role: 'bd' },
     })
     const wrapper = await openPasswordLogin()
-    await wrapper.get('input[placeholder="账号"]').setValue('business')
+    await wrapper.get('input[placeholder="账号或手机号"]').setValue('business')
     const passwordInput = wrapper.get('input[placeholder="密码"]')
     await passwordInput.setValue('secret')
 
