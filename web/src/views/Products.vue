@@ -154,87 +154,13 @@
           </el-tab-pane>
 
           <!-- 素材 -->
-          <el-tab-pane :label="`素材 ${posts.length}`" name="materials">
-            <!-- 发布素材:直接上传多附件 + 写文案,无需先选类型 -->
+          <el-tab-pane :label="`素材 ${materialCount}`" name="materials">
+            <!-- 统一上传入口:点开在弹框里选类型,传完直接进对应类型 tab -->
             <div class="tab-toolbar">
-              <el-button size="small" type="primary" @click="openPostDialog()">+ 发布素材</el-button>
+              <el-button size="small" type="primary" @click="openUpload()">+ 上传素材</el-button>
             </div>
-            <el-empty v-if="!posts.length" description="还没有素材,点「发布素材」直接上传" :image-size="50" />
-            <div v-for="post in posts" :key="post.id" class="post-card">
-              <div class="post-head">
-                <strong>{{ post.title || POST_CAT_LABEL[post.category] || '内容帖' }}</strong>
-                <el-tag v-if="post.status === 'draft'" size="small" type="info">草稿</el-tag>
-                <span class="muted post-meta">{{ post.author_name }} · {{ ft(post.created_at) }}</span>
-                <div class="post-ops">
-                  <el-button size="small" text @click="openPostDialog(post)">编辑</el-button>
-                  <el-button size="small" text :type="post.status === 'published' ? 'info' : 'success'"
-                    @click="togglePost(post)">{{ post.status === 'published' ? '下架' : '发布' }}</el-button>
-                  <el-button size="small" text type="danger" @click="delPost(post)">删除</el-button>
-                </div>
-              </div>
-              <div v-if="post.assets.length" class="post-assets">
-                <template v-for="a in post.assets" :key="a.id">
-                  <el-image v-if="a.type === 'image'" :src="a.thumb || a.url" fit="cover" class="post-img"
-                    :preview-src-list="[a.url]" preview-teleported />
-                  <a v-else :href="a.url" target="_blank" class="post-file">
-                    <el-icon><Link v-if="a.type === 'link'" /><VideoCamera v-else-if="a.type === 'video'" /><Document v-else /></el-icon>
-                    {{ a.filename || a.source_link || a.type }}
-                  </a>
-                </template>
-              </div>
-              <div class="post-caption">{{ post.caption }}</div>
-              <div class="post-foot muted">
-                <el-button size="small" text @click="copyText(post.caption)">复制文案</el-button>
-                <span v-if="!post.downloadable">· 仅查看不可下载</span>
-              </div>
-            </div>
-
-            <el-divider content-position="left">
-              <span class="muted" style="font-size:12px">按类型归档(旧素材)</span>
-            </el-divider>
             <el-tabs v-model="mtype" tab-position="left" class="mat-tabs">
               <el-tab-pane v-for="t in MAT_TYPES" :key="t.v" :label="`${t.l} ${countOf(t.v)}`" :name="t.v">
-                <!-- 添加区 -->
-                <div class="mat-add">
-                  <template v-if="t.v === 'video_hot'">
-                    <el-upload
-                      :show-file-list="false"
-                      :disabled="matUploading"
-                      :before-upload="() => true"
-                      :http-request="uploadMat"
-                      accept="video/*"
-                    >
-                      <el-button size="small" :loading="matUploading" :disabled="matUploading">上传视频</el-button>
-                    </el-upload>
-                    <el-input v-model="matForm.source_link" placeholder="爆款抖音链接" style="flex:1" />
-                    <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
-                  </template>
-                  <template v-else-if="t.v === 'copy'">
-                    <el-input v-model="matForm.parsed_text" type="textarea" :rows="2" placeholder="文案内容" style="flex:1" />
-                  </template>
-                  <template v-else>
-                    <el-upload
-                      :show-file-list="false"
-                      :disabled="matUploading"
-                      :before-upload="() => true"
-                      :http-request="uploadMat"
-                      :accept="acceptOf(t.v)"
-                    >
-                      <el-button size="small" :loading="matUploading" :disabled="matUploading">上传文件</el-button>
-                    </el-upload>
-                    <el-input v-model="matForm.title" placeholder="标题(可选，默认文件名)" style="width:180px" />
-                    <el-input v-if="t.v === 'pdf'" v-model="matForm.report_id" placeholder="报告ID(可选)" style="width:130px" />
-                  </template>
-                  <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
-                  <el-button
-                    v-if="t.v === 'video_hot' || t.v === 'copy'"
-                    type="primary"
-                    size="small"
-                    @click="addMaterial"
-                  >
-                    添加
-                  </el-button>
-                </div>
                 <!-- 列表 -->
                 <div v-for="m in materialsOf(t.v)" :key="m.id" class="material-card">
                   <div class="material-card-head">
@@ -259,7 +185,6 @@
             </el-tabs>
           </el-tab-pane>
 
-          <!-- 朋友圈内容帖(标题 + 说明文案 + 多附件,达人端同款) -->
           <!-- 授权达人 -->
           <el-tab-pane label="授权达人" name="grants">
             <div class="mat-add">
@@ -400,44 +325,52 @@
       </template>
     </el-drawer>
 
-    <!-- 发布/编辑内容帖 -->
-    <el-dialog v-model="postDialogVisible" :title="postForm.id ? '编辑内容帖' : '发布素材'" width="560px" append-to-body>
-      <el-form label-width="72px">
-        <el-form-item label="标题"><el-input v-model="postForm.title" placeholder="可选,达人端显示" /></el-form-item>
-        <el-form-item label="附件">
-          <div class="post-upload">
-            <div v-for="(a, i) in postForm.assets" :key="i" class="pa-chip">
-              <el-image v-if="a.type === 'image'" :src="a.thumb || a.url" fit="cover" class="pa-thumb" />
-              <span v-else class="pa-file"><el-icon><Document /></el-icon>{{ a.filename || a.source_link || a.type }}</span>
-              <el-icon class="pa-del" @click="removeAsset(i)"><Close /></el-icon>
-            </div>
-            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadAsset"
-              :disabled="assetUploading">
-              <div class="pa-add"><el-icon><Plus /></el-icon></div>
+    <!-- 上传素材:先选类型,再传文件/填内容,传完进对应类型 tab -->
+    <el-dialog v-model="uploadVisible" title="上传素材" width="480px" append-to-body>
+      <el-form label-width="64px">
+        <el-form-item label="类型">
+          <el-select v-model="uploadForm.type" style="width:100%">
+            <el-option v-for="t in MAT_TYPES" :key="t.v" :label="t.l" :value="t.v" />
+          </el-select>
+        </el-form-item>
+        <!-- 爆款参考:抖音链接 或 上传视频 -->
+        <template v-if="uploadForm.type === 'video_hot'">
+          <el-form-item label="抖音链接"><el-input v-model="uploadForm.source_link" placeholder="爆款视频链接(可选)" /></el-form-item>
+          <el-form-item label="或视频">
+            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMat"
+              :disabled="matUploading" accept="video/*">
+              <el-button size="small" :loading="matUploading">选择视频上传</el-button>
             </el-upload>
-          </div>
-          <div class="post-link-add">
-            <el-input v-model="linkInput" size="small" placeholder="或粘贴外链(抖音/网盘)后回车" @keyup.enter="addLink" />
-          </div>
+          </el-form-item>
+        </template>
+        <!-- 文案:纯文本 -->
+        <el-form-item v-else-if="uploadForm.type === 'copy'" label="文案">
+          <el-input v-model="uploadForm.parsed_text" type="textarea" :rows="4" placeholder="文案内容" />
         </el-form-item>
-        <el-form-item label="说明文案" required>
-          <el-input v-model="postForm.caption" type="textarea" :rows="4" placeholder="必填,达人端可复制的完整文案" />
+        <!-- 其余:上传文件 -->
+        <el-form-item v-else label="文件">
+          <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMat"
+            :disabled="matUploading" :accept="acceptOf(uploadForm.type)">
+            <el-button size="small" :loading="matUploading">选择文件上传</el-button>
+          </el-upload>
+          <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
         </el-form-item>
-        <el-form-item label="允许下载">
-          <el-switch v-model="postForm.downloadable" />
+        <el-form-item v-if="uploadForm.type === 'pdf'" label="报告ID">
+          <el-input v-model="uploadForm.report_id" placeholder="可选" />
         </el-form-item>
+        <el-form-item label="标题"><el-input v-model="uploadForm.title" placeholder="可选,默认文件名" /></el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="postDialogVisible = false">取消</el-button>
-        <el-button @click="savePost('draft')">存草稿</el-button>
-        <el-button type="primary" :loading="savingPost" @click="savePost('published')">发布</el-button>
+        <el-button @click="uploadVisible = false">关闭</el-button>
+        <el-button v-if="uploadForm.type === 'video_hot' || uploadForm.type === 'copy'"
+          type="primary" @click="addMaterial">添加</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { Close, Delete, Document, Edit, Link, Plus, VideoCamera } from '@element-plus/icons-vue'
+import { Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -483,7 +416,6 @@ const drawer = ref(false)
 const detail = ref(null)
 const dtab = ref('info')
 const mtype = ref('video_ai')
-const matForm = reactive({})
 const matUploading = ref(false)
 const matProgress = ref(0)
 const renamingId = ref(null)
@@ -601,109 +533,21 @@ async function open(row, tabName = 'info') {
   drawer.value = true; dtab.value = targetTab; mtype.value = 'video_ai'
   resetQianchuan(detail.value.qianchuan_binding || {})
   await loadShopAuths()
-  Object.keys(matForm).forEach((k) => delete matForm[k])
   grants.value = await api.get(`/api/products/${row.id}/grants`)
   act.value = await api.get(`/api/products/${row.id}/activity`)
   orders.value = await api.get(`/api/products/${row.id}/orders`)
   qianchuanCoops.value = await api.get(`/api/products/${row.id}/qianchuan-cooperations`)
   Object.assign(qcCoopForm, { influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
-  await loadPosts()
 }
 
-// ---- 朋友圈内容帖(方案B 需求3) ----
-const POST_CAT_LABEL = { image: '图片', video: '视频', doc: '文档', copy: '文案' }
-const posts = ref([])
-const postDialogVisible = ref(false)
-const savingPost = ref(false)
-const assetUploading = ref(false)
-const linkInput = ref('')
-const postForm = reactive({ id: null, category: 'image', title: '', caption: '', downloadable: true, assets: [] })
+// ---- 素材上传:顶部一个入口,弹框选类型,传完进对应类型 tab ----
+const uploadVisible = ref(false)
+const uploadForm = reactive({ type: 'video_ai', title: '', source_link: '', parsed_text: '', report_id: '' })
+const materialCount = computed(() => (detail.value?.materials || []).length)
 
-async function loadPosts() {
-  posts.value = await api.get(`/api/products/${detail.value.id}/material-posts`)
-}
-function openPostDialog(post = null) {
-  linkInput.value = ''
-  if (post) {
-    Object.assign(postForm, {
-      id: post.id, category: post.category, title: post.title || '',
-      caption: post.caption, downloadable: post.downloadable,
-      assets: post.assets.map((a) => ({ ...a })),
-    })
-  } else {
-    Object.assign(postForm, { id: null, category: 'image', title: '', caption: '', downloadable: true, assets: [] })
-  }
-  postDialogVisible.value = true
-}
-function inferAssetType(name) {
-  const n = (name || '').toLowerCase()
-  if (/\.(jpg|jpeg|png|gif|webp|bmp)$/.test(n)) return 'image'
-  if (/\.(mp4|mov|avi|mkv|webm)$/.test(n)) return 'video'
-  if (/\.pdf$/.test(n)) return 'pdf'
-  return 'file'
-}
-async function uploadAsset({ file }) {
-  assetUploading.value = true
-  try {
-    const fd = new FormData()
-    fd.append('file', file)
-    const r = await api.post('/api/upload?prefix=materials', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
-    postForm.assets.push({ type: inferAssetType(file.name), oss_key: r.key, filename: file.name,
-      url: r.url || `/api/files/${r.key}`, thumb: r.url || `/api/files/${r.key}` })
-  } catch (e) {
-    ElMessage.error('上传失败')
-  } finally {
-    assetUploading.value = false
-  }
-}
-function addLink() {
-  const v = (linkInput.value || '').trim()
-  if (!v) return
-  postForm.assets.push({ type: 'link', source_link: v, filename: v })
-  linkInput.value = ''
-}
-function removeAsset(i) { postForm.assets.splice(i, 1) }
-function inferCategory(assets) {
-  const types = assets.map((a) => a.type)
-  if (types.includes('video')) return 'video'
-  if (types.includes('image')) return 'image'
-  if (types.some((t) => ['pdf', 'file', 'link'].includes(t))) return 'doc'
-  return 'copy'
-}
-async function savePost(status) {
-  if (!postForm.caption || !postForm.caption.trim()) return ElMessage.warning('说明文案必填')
-  savingPost.value = true
-  try {
-    const payload = {
-      category: inferCategory(postForm.assets), title: postForm.title || null, caption: postForm.caption,
-      downloadable: postForm.downloadable, status,
-      assets: postForm.assets.map((a) => ({ type: a.type, oss_key: a.oss_key || null,
-        source_link: a.source_link || null, filename: a.filename || null })),
-    }
-    if (postForm.id) await api.patch(`/api/products/material-posts/${postForm.id}`, payload)
-    else await api.post(`/api/products/${detail.value.id}/material-posts`, payload)
-    postDialogVisible.value = false
-    ElMessage.success(status === 'draft' ? '已存草稿' : '已发布')
-    await loadPosts()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '保存失败')
-  } finally {
-    savingPost.value = false
-  }
-}
-async function togglePost(post) {
-  await api.patch(`/api/products/material-posts/${post.id}`, { status: post.status === 'published' ? 'draft' : 'published' })
-  await loadPosts()
-}
-async function delPost(post) {
-  await ElMessageBox.confirm('确认删除该内容帖?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/material-posts/${post.id}`)
-  ElMessage.success('已删除')
-  await loadPosts()
-}
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text || ''); ElMessage.success('文案已复制') }
-  catch (e) { ElMessage.warning('复制失败,请手动选择') }
+function openUpload() {
+  Object.assign(uploadForm, { type: mtype.value || 'video_ai', title: '', source_link: '', parsed_text: '', report_id: '' })
+  uploadVisible.value = true
 }
 
 async function loadOrders() { orders.value = await api.get(`/api/products/${detail.value.id}/orders`) }
@@ -761,22 +605,24 @@ function updateMaterialLocal(materialId, patch) {
 async function uploadMat({ file, onProgress, onSuccess, onError }) {
   matUploading.value = true
   matProgress.value = 0
+  const targetType = uploadForm.type
   try {
     const created = await uploadAndCreateMaterial(api, {
       productId: detail.value.id,
-      type: mtype.value,
+      type: targetType,
       file,
-      title: matForm.title,
-      reportId: matForm.report_id,
+      title: uploadForm.title,
+      reportId: uploadForm.report_id,
       onProgress: (percent) => {
         matProgress.value = percent
         onProgress?.({ percent })
       },
     })
-    ElMessage.success('上传成功，素材已添加')
+    ElMessage.success('上传成功,素材已添加')
     prependMaterial(created)
-    Object.keys(matForm).forEach((key) => delete matForm[key])
     onSuccess?.(created)
+    uploadVisible.value = false
+    mtype.value = targetType   // 传完切到对应类型 tab
     load()
     return created
   } catch (error) {
@@ -790,14 +636,15 @@ async function uploadMat({ file, onProgress, onSuccess, onError }) {
   }
 }
 async function addMaterial() {
-  const body = { type: mtype.value, title: matForm.title }
-  if (mtype.value === 'video_hot') body.source_link = matForm.source_link
-  else if (mtype.value === 'copy') body.parsed_text = matForm.parsed_text
+  const body = { type: uploadForm.type, title: uploadForm.title }
+  if (uploadForm.type === 'video_hot') body.source_link = uploadForm.source_link
+  else if (uploadForm.type === 'copy') body.parsed_text = uploadForm.parsed_text
   if (!body.source_link && !body.parsed_text) return ElMessage.warning('请填写内容')
   const created = await api.post(`/api/products/${detail.value.id}/materials`, body)
   ElMessage.success('已添加')
   prependMaterial(created)
-  Object.keys(matForm).forEach((k) => delete matForm[k])
+  uploadVisible.value = false
+  mtype.value = uploadForm.type   // 添加后切到对应类型 tab
   load()
 }
 async function delMaterial(m) {
@@ -989,29 +836,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 </script>
 
 <style scoped>
-/* 内容帖 */
 .tab-toolbar { display: flex; justify-content: flex-end; margin-bottom: 12px; }
-.post-card { border: 1px solid #eef0f5; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
-.post-head { display: flex; align-items: center; gap: 8px; }
-.post-head .post-meta { font-size: 12px; }
-.post-ops { margin-left: auto; display: flex; gap: 2px; }
-.post-assets { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
-.post-img { width: 88px; height: 88px; border-radius: 8px; }
-.post-file { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; background: #f6f8fc;
-  border-radius: 8px; font-size: 12px; color: #6b5cf6; text-decoration: none; max-width: 220px; }
-.post-caption { font-size: 13px; color: #3a4256; white-space: pre-wrap; line-height: 1.6; }
-.post-foot { font-size: 12px; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
-.post-upload { display: flex; flex-wrap: wrap; gap: 8px; }
-.pa-chip { position: relative; }
-.pa-thumb { width: 64px; height: 64px; border-radius: 8px; }
-.pa-file { display: inline-flex; align-items: center; gap: 4px; padding: 8px 10px; background: #f6f8fc;
-  border-radius: 8px; font-size: 12px; max-width: 180px; overflow: hidden; }
-.pa-del { position: absolute; top: -6px; right: -6px; background: rgba(0,0,0,.5); color: #fff;
-  border-radius: 50%; padding: 2px; cursor: pointer; font-size: 12px; }
-.pa-add { width: 64px; height: 64px; border: 1px dashed #cdd2de; border-radius: 8px;
-  display: flex; align-items: center; justify-content: center; color: #b3bac9; cursor: pointer; }
-.pa-add:hover { border-color: #6b5cf6; color: #6b5cf6; }
-.post-link-add { margin-top: 8px; }
 .prod-cell { display: flex; align-items: center; gap: 10px; }
 .prod-img { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; }
 .prod-img.placeholder { background: #eef0f5; }
