@@ -10,18 +10,10 @@ import {
   triggerAlbum,
 } from '@/lib/api';
 import { formatDec, formatRA } from '@/lib/format';
+import { exits, springs } from '@/lib/motionTokens';
 import { useUniverse } from '@/lib/store';
 
-const OCCASIONS = [
-  '情侣纪念',
-  '生日',
-  '婚礼',
-  '毕业',
-  '宝宝出生',
-  '宠物纪念',
-  '逝者纪念',
-  '其他',
-];
+const OCCASIONS = ['情侣纪念', '生日', '婚礼', '毕业', '宝宝出生', '宠物纪念', '逝者纪念', '其他'];
 
 /** 成功态：live = 服务端真实登记（带公开纪念页 slug）；demo = 本地演示回退。 */
 interface DoneState {
@@ -100,18 +92,16 @@ export function MemorialModal() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={{ opacity: 0, transition: exits.base }}
+          transition={springs.modal}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
         >
-          <div
-            className="absolute inset-0 bg-void/70 backdrop-blur-sm"
-            onClick={close}
-          />
+          <div className="absolute inset-0 bg-void/70 backdrop-blur-sm" onClick={close} />
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 12 }}
-            transition={{ type: 'spring', stiffness: 240, damping: 26 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12, transition: exits.base }}
+            transition={springs.modal}
             className="glass-strong relative z-10 w-[min(94vw,540px)] overflow-hidden rounded-3xl"
           >
             {!done ? (
@@ -123,24 +113,27 @@ export function MemorialModal() {
                   为 {star.nameZh} 登记一颗纪念星
                 </h3>
                 <p className="mt-2 text-[13px] text-nebula-200/60">
-                  基于真实星体坐标 {formatRA(star.raDeg)} / {formatDec(star.decDeg)} · {star.constellationZh}
+                  基于真实星体坐标 {formatRA(star.raDeg)} / {formatDec(star.decDeg)} ·{' '}
+                  {star.constellationZh}
                 </p>
 
                 <div className="mt-6 space-y-5">
                   <Field label="纪念场景">
                     <div className="flex flex-wrap gap-2">
                       {OCCASIONS.map((o) => (
-                        <button
+                        <motion.button
                           key={o}
+                          whileTap={{ scale: 0.96 }}
+                          transition={springs.chip}
                           onClick={() => setOccasion(o)}
-                          className={`rounded-full px-3 py-1.5 text-[13px] transition ${
+                          className={`tap-96 rounded-full px-3 py-1.5 text-[13px] transition ${
                             occasion === o
                               ? 'bg-nebula-500/40 text-white shadow-[inset_0_0_0_1px_rgba(140,155,255,0.5)]'
                               : 'border border-white/10 text-nebula-100/70 hover:bg-white/5'
                           }`}
                         >
                           {o}
-                        </button>
+                        </motion.button>
                       ))}
                     </div>
                   </Field>
@@ -208,20 +201,24 @@ export function MemorialModal() {
                 </div>
 
                 <div className="mt-7 flex gap-3">
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={close}
                     disabled={submitting}
-                    className="flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-60"
+                    className="tap-96 flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-60"
                   >
                     取消
-                  </button>
-                  <button
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={submit}
                     disabled={submitting}
-                    className="flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
+                    className="tap-96 flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
                   >
                     {submitting ? '正在登记…' : '生成纪念预览'}
-                  </button>
+                  </motion.button>
                 </div>
                 <p className="mt-4 text-center text-[11px] leading-relaxed text-nebula-200/40">
                   {isApiConfigured()

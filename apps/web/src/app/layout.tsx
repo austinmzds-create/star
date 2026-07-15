@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { ExperienceHydrator } from '@/components/ExperienceHydrator';
+import { MotionRoot } from '@/components/MotionRoot';
+import { OvertureOverlay } from '@/components/OvertureOverlay';
 import { RedLightOverlay } from '@/components/ui/RedLightOverlay';
 import './globals.css';
 
@@ -18,21 +20,24 @@ export const viewport: Viewport = {
   maximumScale: 1,
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh-CN">
       <body>
-        <main>{children}</main>
-        {/* 体验层（Phase 6B）：偏好水合 + 环境音手势恢复 + SW 注册；红光覆盖层
-            挂 body 级让所有路由（/almanac、/couple…）同享，multiply 混合天然
-            覆盖 WebGL canvas 与一切弹窗。两者均为 null/纯展示客户端叶子组件，
-            layout 本身保持 Server Component。 */}
-        <ExperienceHydrator />
-        <RedLightOverlay />
+        {/* MotionRoot（Phase 9A）：全局 MotionConfig reducedMotion="user"
+            + perfTier→CSS 桥（低档 glass blur 降载），一次挂载全站生效。 */}
+        <MotionRoot>
+          <main>{children}</main>
+          {/* 体验层（Phase 6B）：偏好水合 + 环境音手势恢复 + SW 注册；红光覆盖层
+              挂 body 级让所有路由（/almanac、/couple…）同享，multiply 混合天然
+              覆盖 WebGL canvas 与一切弹窗。均为 null/纯展示客户端叶子组件，
+              layout 本身保持 Server Component。 */}
+          <ExperienceHydrator />
+          {/* 开场序曲覆盖层（Phase 9A）：仅主页首访演出 6.5s，z-[80] 在红光
+              （z-[90]）之下；非 '/' 路由自动 null。 */}
+          <OvertureOverlay />
+          <RedLightOverlay />
+        </MotionRoot>
       </body>
     </html>
   );

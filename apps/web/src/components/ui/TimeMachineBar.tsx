@@ -2,6 +2,7 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
+import { exits, springs } from '@/lib/motionTokens';
 import { selectTimeTravel, useUniverse } from '@/lib/store';
 
 /**
@@ -119,8 +120,7 @@ export function TimeMachineBar() {
     }
   };
   const endSlide = () => {
-    if (anchorRef.current != null && slider !== 0)
-      travelTo(anchorRef.current + slider * 60_000);
+    if (anchorRef.current != null && slider !== 0) travelTo(anchorRef.current + slider * 60_000);
     anchorRef.current = null;
     setSlider(0); // 弹簧回中：可反复拖动累积微调
   };
@@ -137,8 +137,8 @@ export function TimeMachineBar() {
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 14 }}
-          transition={{ duration: 0.18 }}
+          exit={{ opacity: 0, y: 14, transition: exits.fast }}
+          transition={springs.panel}
           className="pointer-events-auto absolute bottom-20 left-1/2 z-20 w-[min(92vw,560px)] -translate-x-1/2"
         >
           <div className="glass space-y-2.5 rounded-2xl px-4 py-3">
@@ -147,17 +147,19 @@ export function TimeMachineBar() {
               <div className="flex items-center gap-1">
                 <StepBtn onClick={() => stepBy(-86_400_000)} label="◀ 1天" title="回退一天" />
                 <StepBtn onClick={() => stepBy(-3_600_000)} label="−1时" title="回退一小时" />
-                <button
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  transition={springs.chip}
                   onClick={() => setTimePlaying(!timePlaying)}
                   title={timePlaying ? '暂停' : '播放'}
-                  className={`mx-0.5 flex h-8 w-8 items-center justify-center rounded-full text-[13px] transition ${
+                  className={`tap-96 mx-0.5 flex h-8 w-8 items-center justify-center rounded-full text-[13px] transition ${
                     timePlaying
                       ? 'bg-amber-400/25 text-amber-100 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.4)]'
                       : 'bg-nebula-500/25 text-white hover:bg-nebula-500/40'
                   }`}
                 >
                   {timePlaying ? '⏸' : '▶'}
-                </button>
+                </motion.button>
                 <StepBtn onClick={() => stepBy(3_600_000)} label="+1时" title="前进一小时" />
                 <StepBtn onClick={() => stepBy(86_400_000)} label="1天 ▶" title="前进一天" />
               </div>
@@ -166,17 +168,19 @@ export function TimeMachineBar() {
 
               <div className="flex items-center gap-1">
                 {SPEEDS.map((s) => (
-                  <button
+                  <motion.button
                     key={s.value}
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={() => setTimeSpeed(s.value)}
-                    className={`rounded-full px-2 py-0.5 text-[11px] transition ${
+                    className={`tap-96 rounded-full px-2 py-0.5 text-[11px] transition ${
                       timeSpeed === s.value
                         ? 'bg-nebula-500/30 text-white shadow-[inset_0_0_0_1px_rgba(140,155,255,0.4)]'
                         : 'text-nebula-200/55 hover:bg-white/5'
                     }`}
                   >
                     {s.label}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
 
@@ -243,22 +247,16 @@ export function TimeMachineBar() {
   );
 }
 
-function StepBtn({
-  onClick,
-  label,
-  title,
-}: {
-  onClick: () => void;
-  label: string;
-  title: string;
-}) {
+function StepBtn({ onClick, label, title }: { onClick: () => void; label: string; title: string }) {
   return (
-    <button
+    <motion.button
+      whileTap={{ scale: 0.96 }}
+      transition={springs.chip}
       onClick={onClick}
       title={title}
-      className="rounded-full px-2 py-1 text-[11.5px] text-nebula-200/70 transition hover:bg-white/10 hover:text-white"
+      className="tap-96 rounded-full px-2 py-1 text-[11.5px] text-nebula-200/70 transition hover:bg-white/10 hover:text-white"
     >
       {label}
-    </button>
+    </motion.button>
   );
 }

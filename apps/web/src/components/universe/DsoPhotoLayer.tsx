@@ -1,7 +1,7 @@
 'use client';
 
 import { useFrame } from '@react-three/fiber';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { raDecToVector3 } from '@star/astro-core';
 import {
@@ -44,6 +44,31 @@ export function DsoPhotoLayer() {
     [tier],
   );
   const [started, setStarted] = useState(false);
+  // 淡入队列（Phase 9A GC 清理，r-perf §1.2/§4-14）：原先每张切平面各挂一个
+  // 常驻 useFrame（≤16 个回调/帧），合并为父层单回调——子平面纹理就绪时把
+  // 材质注册进来，淡入完成即移出（尾部交换删除，零分配）。
+  const fadingRef = useRef<THREE.MeshBasicMaterial[]>([]);
+
+  const registerFade = useCallback((mat: THREE.MeshBasicMaterial) => {
+    fadingRef.current.push(mat);
+    return () => {
+      const i = fadingRef.current.indexOf(mat);
+      if (i >= 0) fadingRef.current.splice(i, 1);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
+    const list = fadingRef.current;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const mat = list[i]!;
+      mat.opacity = Math.min(MAX_OPACITY, mat.opacity + (delta / FADE_IN_SEC) * MAX_OPACITY);
+      if (mat.opacity >= MAX_OPACITY) {
+        // 完成即移出：与队尾交换后 pop，不保持顺序（互不相干的独立淡入）
+        list[i] = list[list.length - 1]!;
+        list.pop();
+      }
+    }
+  });
 
   // 首帧后的空闲时机再开始（fallback 2s 定时器），不与首屏抢主线程。
   useEffect(() => {
@@ -67,13 +92,27 @@ export function DsoPhotoLayer() {
   return (
     <group>
       {metas.map((m, i) => (
-        <DsoPhotoPlane key={m.uid} meta={m} delayMs={i * LOAD_STAGGER_MS} />
+        <DsoPhotoPlane
+          key={m.uid}
+          meta={m}
+          delayMs={i * LOAD_STAGGER_MS}
+          registerFade={registerFade}
+        />
       ))}
     </group>
   );
 }
 
-function DsoPhotoPlane({ meta, delayMs }: { meta: DsoPhotoMeta; delayMs: number }) {
+function DsoPhotoPlane({
+  meta,
+  delayMs,
+  registerFade,
+}: {
+  meta: DsoPhotoMeta;
+  delayMs: number;
+  /** 纹理就绪后把材质交给父层统一推进淡入；返回注销函数（卸载时调用）。 */
+  registerFade: (mat: THREE.MeshBasicMaterial) => () => void;
+}) {
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
   const matRef = useRef<THREE.MeshBasicMaterial>(null);
 
@@ -110,12 +149,14 @@ function DsoPhotoPlane({ meta, delayMs }: { meta: DsoPhotoMeta; delayMs: number 
     };
   }, [meta]);
 
-  // 淡入（与程序 sprite 的淡出同步发生，视觉上是「照片浮现替换光斑」）
-  useFrame((_, delta) => {
+  // 淡入（与程序 sprite 的淡出同步发生，视觉上是「照片浮现替换光斑」）：
+  // 材质随纹理就绪同帧挂载（下方 return），commit 后注册进父层淡入队列
+  useEffect(() => {
+    if (!texture) return;
     const mat = matRef.current;
-    if (!mat || mat.opacity >= MAX_OPACITY) return;
-    mat.opacity = Math.min(MAX_OPACITY, mat.opacity + (delta / FADE_IN_SEC) * MAX_OPACITY);
-  });
+    if (!mat) return;
+    return registerFade(mat);
+  }, [texture, registerFade]);
 
   if (!texture) return null;
 

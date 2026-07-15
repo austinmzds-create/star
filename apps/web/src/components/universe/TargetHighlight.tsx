@@ -11,6 +11,21 @@ import { useUniverse } from '@/lib/store';
 import { spectralColor } from '@/lib/universe';
 import type { PickKind } from '@/lib/pickRegistry';
 
+/**
+ * 着陆脉冲起点（performance.now() 毫秒；-Infinity = 无脉冲）。
+ * 模块级而非 React 状态：CameraRig 飞行到达时每次触发都在帧循环消费，
+ * 与 hoverBus/pickRegistry 同一「模块单例」纪律，零重渲染。
+ */
+let pulseStartMs = -Infinity;
+
+/** 飞行到达反馈（审计 §2.5-5）：在呼吸动画之上叠 1s 强脉冲。无选中目标时无感。 */
+export function triggerArrivalPulse(): void {
+  pulseStartMs = performance.now();
+}
+
+/** 着陆脉冲时长（ms）。 */
+const PULSE_DUR_MS = 1000;
+
 function makeGlowTexture(): THREE.Texture {
   const size = 256;
   const canvas = document.createElement('canvas');
@@ -114,33 +129,45 @@ export function TargetHighlight() {
 
   const forward = useMemo(() => new THREE.Vector3(), []);
   const dir = useMemo(() => new THREE.Vector3(), []);
+  /** 名牌透明度上次写入值缓存：值没变不碰 DOM（审计 §1.5：每帧写同值 style 违规）。 */
+  const lastLabelOpacity = useRef('');
 
   useFrame((state) => {
     if (!target) return;
     const t = state.clock.elapsedTime;
     const breathe = 1 + 0.12 * Math.sin(t * 2.0);
+    // 着陆脉冲：飞行到达后 1s 内呼吸之上叠强脉冲（透明度冲到 ~0.9、环外扩），
+    // pulse 二次方缓出回常态；无脉冲时恒为 0，下方公式退化为原呼吸
+    const pulseLin = Math.max(0, 1 - (performance.now() - pulseStartMs) / PULSE_DUR_MS);
+    const pulse = pulseLin * pulseLin;
     // 行星坐标随 observeTime 变化：每帧从注册表引用同步（静态天体为零成本 copy）
     if (groupRef.current && entry) {
       groupRef.current.position.copy(entry.vec);
     }
     if (glowRef.current) {
-      const s = 62 * scale * breathe;
+      const s = 62 * scale * breathe * (1 + 0.18 * pulse);
       glowRef.current.scale.set(s, s, 1);
+      const base = 0.45 + 0.35 * (0.5 + 0.5 * Math.sin(t * 2.0));
       (glowRef.current.material as THREE.SpriteMaterial).opacity =
-        0.45 + 0.35 * (0.5 + 0.5 * Math.sin(t * 2.0));
+        base + (0.9 - base) * pulse;
     }
     if (ringRef.current) {
-      const s = 46 * scale * (2 - breathe);
+      const s = 46 * scale * (2 - breathe) * (1 + 0.3 * pulse);
       ringRef.current.scale.set(s, s, 1);
+      const base = 0.35 + 0.4 * (0.5 + 0.5 * Math.sin(t * 2.0 + 1));
       (ringRef.current.material as THREE.SpriteMaterial).opacity =
-        0.35 + 0.4 * (0.5 + 0.5 * Math.sin(t * 2.0 + 1));
+        base + (0.9 - base) * pulse;
     }
-    // 目标在相机背后时隐藏名牌
+    // 目标在相机背后时隐藏名牌（写 DOM 前先比对缓存，避免每帧同值 style 写入）
     if (labelRef.current && groupRef.current) {
       forward.set(0, 0, -1).applyQuaternion(camera.quaternion);
       dir.copy(groupRef.current.position).normalize();
       const facing = dir.dot(forward);
-      labelRef.current.style.opacity = showLabels && facing > 0.15 ? '1' : '0';
+      const next = showLabels && facing > 0.15 ? '1' : '0';
+      if (next !== lastLabelOpacity.current) {
+        lastLabelOpacity.current = next;
+        labelRef.current.style.opacity = next;
+      }
     }
   });
 

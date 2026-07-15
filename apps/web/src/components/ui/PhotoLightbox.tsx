@@ -8,6 +8,7 @@
  */
 import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect } from 'react';
+import { exits, springs } from '@/lib/motionTokens';
 
 export function PhotoLightbox({
   open,
@@ -42,8 +43,8 @@ export function PhotoLightbox({
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.2 }}
+          exit={{ opacity: 0, transition: exits.base }}
+          transition={springs.chip}
           onClick={onClose}
           className="fixed inset-0 z-[70] flex flex-col items-center justify-center bg-black/85 p-6 backdrop-blur"
         >
@@ -63,9 +64,7 @@ export function PhotoLightbox({
           <div className="mt-4 text-center" onClick={(e) => e.stopPropagation()}>
             <div className="text-[15px] text-white">{titleZh}</div>
             {credit && (
-              <div className="mt-1 text-[11px] text-nebula-200/50">
-                影像：{credit} · 仅供欣赏
-              </div>
+              <div className="mt-1 text-[11px] text-nebula-200/50">影像：{credit} · 仅供欣赏</div>
             )}
           </div>
         </motion.div>

@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { getDeviceTier } from '@/lib/deviceTier';
+import { fx, getGlobalFade } from '@/lib/fxBus';
 import { useUniverse } from '@/lib/store';
 
 /**
@@ -53,7 +54,16 @@ const MILKY_FRAGMENT = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uOpacity;
   uniform float uExposure;
+  uniform float uPipe;
   varying vec2 vUv;
+  vec3 srgbEncode(vec3 c) {
+    return mix(1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, c * 12.92,
+      vec3(lessThanEqual(c, vec3(0.0031308))));
+  }
+  vec3 srgbDecode(vec3 c) {
+    return mix(pow((c + 0.055) / 1.055, vec3(2.4)), c / 12.92,
+      vec3(lessThanEqual(c, vec3(0.04045))));
+  }
   void main() {
     // 水平翻转在此完成（等价于旧 repeat.x=-1，推导见组件头注释）
     vec3 c = texture2D(uMap, vec2(1.0 - vUv.x, vUv.y)).rgb;
@@ -63,6 +73,14 @@ const MILKY_FRAGMENT = /* glsl */ `
     vec3 cool = c * vec3(0.80, 0.90, 1.14);              // 外围冷蓝晕
     c = mix(cool, warm, smoothstep(0.10, 0.42, L));      // 按亮度分区调色
     c *= uExposure;
+    // 线性管线校色（Phase 9A）：直出路径的屏幕贡献是 encode(c)·uOpacity
+    // （alpha 加权发生在显示域）；composer 路径 alpha 加权发生在线性域、
+    // 链尾才统一编码——若不把 uOpacity 折进传递函数，同一画面会亮 ~30%。
+    // 此处解出 c'，使 encode(c'·uOpacity) === encode(c)·uOpacity，两条管线
+    // 逐像素一致（ACES 的残差另由 fx.grade 乘进 uExposure 补偿）。
+    if (uPipe > 0.5 && uOpacity > 0.001) {
+      c = srgbDecode(srgbEncode(c) * uOpacity) / uOpacity;
+    }
     gl_FragColor = vec4(c, uOpacity);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -84,6 +102,7 @@ const HAZE_VERTEX = /* glsl */ `
  */
 const HAZE_FRAGMENT = /* glsl */ `
   uniform float uFade;
+  uniform float uPipe;
   varying vec3 vWorldPos;
   void main() {
     // 项目约定 x=cosδcosα, y=sinδ, z=−cosδsinα 下的银道面法线（NGP）与银心方向
@@ -95,7 +114,17 @@ const HAZE_FRAGMENT = /* glsl */ `
     float bulge = exp(-pow(acos(clamp(dot(dir, GC), -1.0, 1.0)) / 0.42, 2.0));
     vec3 col = mix(vec3(0.35, 0.46, 0.72), vec3(0.86, 0.70, 0.50), bulge);
     float a = band * (0.055 + 0.075 * bulge) * uFade;
-    gl_FragColor = vec4(col * a, a);   // 预乘感的加色薄雾
+    vec3 rgb = col * a;   // 预乘感的加色薄雾
+    // 线性管线适配（同 TwinkleStars）：显示参考输出在 composer 激活时先反解
+    // 回线性域，链尾 ENCODE_OUTPUT 再统一编码，避免薄雾被二次编码提亮
+    if (uPipe > 0.5) {
+      rgb = mix(
+        pow((rgb + 0.055) / 1.055, vec3(2.4)),
+        rgb / 12.92,
+        vec3(lessThanEqual(rgb, vec3(0.04045)))
+      );
+    }
+    gl_FragColor = vec4(rgb, a);
   }
 `;
 
@@ -107,19 +136,22 @@ export function MilkyWayLayer() {
   const matRef = useRef<THREE.ShaderMaterial>(null);
   const hazeMeshRef = useRef<THREE.Mesh>(null);
   const hazeMatRef = useRef<THREE.ShaderMaterial>(null);
-  // 低档设备：2k 纹理 + 略低目标透明度 + 不挂薄雾带
+  // 中/低档：2k 纹理（Phase 9A 三档化，平板/中档填充率优先）；低档另降
+  // 目标透明度且不挂薄雾带。挂载时判定一次——异步 GPU 微调不重载已请求的纹理。
   const tierRef = useRef(getDeviceTier());
   // V4：高档目标透明度 0.55 → 0.62（色彩分级后信息密度更高，可承受）
   const targetOpacity = tierRef.current === 'low' ? 0.45 : 0.62;
+  // 内部淡入淡出状态（不含序曲 globalFade——两个系数各自独立推进再相乘）
+  const fadeRef = useRef(0);
 
   // 懒加载：首次开启（默认开）才 fetch 纹理；失败静默降级且不再重试。
   useEffect(() => {
     if (!showMilkyWay || texture || failedRef.current) return;
     let alive = true;
     const url =
-      tierRef.current === 'low'
-        ? '/textures/milkyway/starmap-2020-2k.jpg'
-        : '/textures/milkyway/starmap-2020-4k.jpg';
+      tierRef.current === 'high'
+        ? '/textures/milkyway/starmap-2020-4k.jpg'
+        : '/textures/milkyway/starmap-2020-2k.jpg';
     const loader = new THREE.TextureLoader();
     loader.load(
       url,
@@ -157,11 +189,12 @@ export function MilkyWayLayer() {
             uMap: { value: texture },
             uOpacity: { value: 0 },
             uExposure: { value: 1 },
+            uPipe: { value: 0 },
           }
         : null,
     [texture],
   );
-  const hazeUniforms = useMemo(() => ({ uFade: { value: 0 } }), []);
+  const hazeUniforms = useMemo(() => ({ uFade: { value: 0 }, uPipe: { value: 0 } }), []);
 
   // 透明度插值：开→缓缓淡入，关→快速淡出；淡到 0 后隐藏 mesh 省填充率。
   // 曝光自适应：fov 25（放大）→ 0.85，fov 60（广角）→ 1.30，防局部灰白。
@@ -169,29 +202,38 @@ export function MilkyWayLayer() {
     const mat = matRef.current;
     const mesh = meshRef.current;
     if (!mat || !mesh) return;
-    const uOpacity = mat.uniforms.uOpacity!;
     const target = showMilkyWay ? targetOpacity : 0;
-    const diff = target - uOpacity.value;
+    const diff = target - fadeRef.current;
     if (diff !== 0) {
       const step = delta / (diff > 0 ? FADE_IN_SEC : FADE_OUT_SEC);
-      uOpacity.value =
+      fadeRef.current =
         Math.abs(diff) <= step * targetOpacity
           ? target
-          : uOpacity.value + Math.sign(diff) * step * targetOpacity;
+          : fadeRef.current + Math.sign(diff) * step * targetOpacity;
     }
+    // 序曲全局亮度（跨域契约，lib/fxBus.ts）乘进最终透明度；加色混合下
+    // 乘 uOpacity 即乘亮度贡献
+    const globalFade = getGlobalFade();
+    const uOpacity = mat.uniforms.uOpacity!;
+    uOpacity.value = fadeRef.current * globalFade;
+    mat.uniforms.uPipe!.value = fx.linearPipe;
     const fov = (state.camera as THREE.PerspectiveCamera).fov;
-    mat.uniforms.uExposure!.value = THREE.MathUtils.lerp(
-      1.3,
-      0.85,
-      THREE.MathUtils.clamp((fov - 25) / (60 - 25), 0, 1),
-    );
+    // 曝光三项合成（Phase 9A，r-fx §3.c）：fov 自适应基线 × ACES 校色补偿
+    // （composer 激活时 fx.grade≈0.92，拉回 ACES 对中暗区的净提亮，见 PostFX.tsx）
+    // + 银河呼吸 ±0.05、周期 ~42s——与 PostFX 的 Bloom intensity 微调共用
+    // clock.elapsedTime，两处波形同相。全部 uniform 直写，零 React。
+    mat.uniforms.uExposure!.value =
+      THREE.MathUtils.lerp(1.3, 0.85, THREE.MathUtils.clamp((fov - 25) / (60 - 25), 0, 1)) *
+        fx.grade +
+      0.05 * Math.sin(state.clock.elapsedTime * 0.15);
     const visible = uOpacity.value > 0.001;
     mesh.visible = visible;
     // 薄雾带跟随贴图层的透明度系数（0–1）同步淡入淡出
     const hazeMat = hazeMatRef.current;
     const hazeMesh = hazeMeshRef.current;
     if (hazeMat && hazeMesh) {
-      hazeMat.uniforms.uFade!.value = uOpacity.value / targetOpacity;
+      hazeMat.uniforms.uFade!.value = (fadeRef.current / targetOpacity) * globalFade;
+      hazeMat.uniforms.uPipe!.value = fx.linearPipe;
       hazeMesh.visible = visible;
     }
   });

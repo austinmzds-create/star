@@ -1,7 +1,7 @@
 'use client';
 
 import { derivePhysical, type CelestialObject } from '@star/astro-data';
-import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import { motion, type Variants } from 'framer-motion';
 import { useMemo } from 'react';
 
 /**
@@ -55,7 +55,6 @@ export function StarArchiveSection({
   /** 由父卡片下发的 stagger 子项 variants，保证与其它分区同节奏入场。 */
   itemVariants: Variants;
 }) {
-  const reduce = useReducedMotion();
   const profile = useMemo(() => derivePhysical(obj), [obj]);
   if (!profile) return null;
 
@@ -102,14 +101,15 @@ export function StarArchiveSection({
       {ageFrac != null && (
         <div className="mt-3">
           <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+            {/* reduced-motion 由全局 MotionConfig 接管（scaleX 属 transform，
+                会被自动禁用直落终值），无需本地分支。0.9s 属 scenePace 场景层
+                节奏（数据可视化生长），不套小件 token。 */}
             <motion.div
               className="h-full w-full rounded-full bg-gradient-to-r from-nebula-500 to-gold"
               style={{ originX: 0 }}
-              initial={reduce ? false : { scaleX: 0 }}
+              initial={{ scaleX: 0 }}
               animate={{ scaleX: ageFrac }}
-              transition={
-                reduce ? { duration: 0 } : { duration: 0.9, delay: 0.35, ease: 'easeOut' }
-              }
+              transition={{ duration: 0.9, delay: 0.35, ease: 'easeOut' }}
             />
           </div>
           <div className="mt-1.5 flex justify-between text-[11px] text-nebula-200/55">

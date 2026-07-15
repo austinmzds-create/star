@@ -144,6 +144,12 @@ let satrecs: Map<string, SatRecSlot> | null = null;
 let lastCityId: string | null = null;
 
 /**
+ * 模块级单例 Date（GC 纪律：recomputeSatellites 每帧调用，帧内禁 new Date）。
+ * setTime 后传入 gstime/propagate——两者只读取时刻、不持引用，复用安全。
+ */
+const scratchDate = new Date(0);
+
+/**
  * 整批重算 3 颗卫星的站心 RA/Dec（每帧可调，内部对「相同 dateMs + 相同城市」去重）。
  */
 export function recomputeSatellites(dateMs: number, city: City): void {
@@ -151,8 +157,8 @@ export function recomputeSatellites(dateMs: number, city: City): void {
   lastCityId = city.id;
   if (!satrecs) satrecs = buildSatrecs();
 
-  const date = new Date(dateMs);
-  const gmst = gstime(date);
+  scratchDate.setTime(dateMs);
+  const gmst = gstime(scratchDate);
 
   // 观测者（城市，海拔取 0）→ ECF → ECI（绕 z 轴转 +gmst，即 eciToEcf 的逆旋转）
   const gd = {
@@ -173,7 +179,7 @@ export function recomputeSatellites(dateMs: number, city: City): void {
     let ok = false;
     if (slot.satrec && slot.satrec.error === 0) {
       try {
-        const pv = propagate(slot.satrec, date);
+        const pv = propagate(slot.satrec, scratchDate);
         const pos = pv?.position;
         if (pv && pos && typeof pos !== 'boolean' && slot.satrec.error === 0) {
           // 站心矢量（TEME）→ RA/Dec

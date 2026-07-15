@@ -36,6 +36,28 @@ const TIME_JUMP_MS = 10 * 60 * 1000;
 
 const SAT_COUNT = SATELLITE_DEFS.length;
 
+/** 尾迹环形缓冲容量（样点数上限 = TRAIL_SAMPLES + 1，与旧 push/shift 语义一致）。 */
+const TRAIL_CAP = TRAIL_SAMPLES + 1;
+
+/**
+ * 每星尾迹环形缓冲（GC 纪律：Vector3 全部预分配，push 时 copy 原地覆盖最旧，
+ * 替代旧版 st.vec.clone()——尾迹推进 400ms×3 星的稳态分配归零）。
+ * head 指向最旧样点，逻辑序第 j 个样点 = buf[(head + j) % TRAIL_CAP]。
+ */
+interface TrailRing {
+  buf: THREE.Vector3[];
+  head: number;
+  len: number;
+}
+
+function makeTrailRing(): TrailRing {
+  return {
+    buf: Array.from({ length: TRAIL_CAP }, () => new THREE.Vector3()),
+    head: 0,
+    len: 0,
+  };
+}
+
 /** 圆形光点纹理（Points 默认方块难看）。 */
 function makeDotTexture(): THREE.CanvasTexture {
   const size = 64;
@@ -58,10 +80,8 @@ export function SatellitesLayer() {
   const lastSimMsRef = useRef<number | null>(null);
   const lastCityIdRef = useRef<string | null>(null);
   const pendingFocusRef = useRef(true);
-  // 每星尾迹历史（世界坐标环形队列，最新在尾部）
-  const historiesRef = useRef<THREE.Vector3[][]>(
-    SATELLITE_DEFS.map(() => []),
-  );
+  // 每星尾迹历史（世界坐标环形缓冲，预分配 Vector3 池，最新在逻辑尾部）
+  const trailRings = useMemo<TrailRing[]>(() => SATELLITE_DEFS.map(makeTrailRing), []);
 
   const built = useMemo(() => {
     const dotTex = makeDotTexture();
@@ -146,7 +166,10 @@ export function SatellitesLayer() {
     lastSimMsRef.current = simMs;
     lastCityIdRef.current = s.city.id;
     if (jumped) {
-      for (const h of historiesRef.current) h.length = 0;
+      for (const r of trailRings) {
+        r.head = 0;
+        r.len = 0;
+      }
     }
 
     // 搜索联动：用户从搜索点进来时层可能刚挂载，首帧计算完成后补飞一次
@@ -187,25 +210,28 @@ export function SatellitesLayer() {
       let k = 0;
       for (const def of SATELLITE_DEFS) {
         const st = sats.states.get(def.uid);
-        const hist = historiesRef.current[k]!;
+        const ring = trailRings[k]!;
         if (st && st.valid) {
-          hist.push(st.vec.clone());
-          if (hist.length > TRAIL_SAMPLES + 1) hist.shift();
+          // 环形写入：满则覆盖最旧（head 前移），Vector3 原地 copy 零分配
+          ring.buf[(ring.head + ring.len) % TRAIL_CAP]!.copy(st.vec);
+          if (ring.len < TRAIL_CAP) ring.len++;
+          else ring.head = (ring.head + 1) % TRAIL_CAP;
         } else {
-          hist.length = 0;
+          ring.head = 0;
+          ring.len = 0;
         }
         k++;
       }
       // 重写全部尾迹段（≤240 顶点，顶点色随 age 衰减，Additive 下自然渐隐）
       let seg = 0;
       let sIdx = 0;
-      for (const hist of historiesRef.current) {
+      for (const ring of trailRings) {
         const color = built.colors[sIdx]!;
-        const segCount = Math.max(0, hist.length - 1);
+        const segCount = Math.max(0, ring.len - 1);
         for (let j = 0; j < segCount; j++) {
-          const a = hist[j]!;
-          const b = hist[j + 1]!;
-          const w = 0.5 * ((j + 1) / hist.length); // 越旧越暗
+          const a = ring.buf[(ring.head + j) % TRAIL_CAP]!;
+          const b = ring.buf[(ring.head + j + 1) % TRAIL_CAP]!;
+          const w = 0.5 * ((j + 1) / ring.len); // 越旧越暗
           const base = seg * 6;
           built.tPos[base] = a.x;
           built.tPos[base + 1] = a.y;

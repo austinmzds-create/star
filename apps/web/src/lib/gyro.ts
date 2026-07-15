@@ -26,6 +26,12 @@ const PITCH_LIMIT = (85 * Math.PI) / 180;
 /** 低通平滑系数。 */
 const SMOOTH = 0.15;
 
+/**
+ * 模块级单例 Date（GC 纪律：deviceorientation ~60Hz 帧率级触发，禁 new Date）。
+ * setTime 后传入 horizontalToEquatorial——内部仅读时刻算恒星时、不持引用，复用安全。
+ */
+const scratchDate = new Date(0);
+
 /** 是否值得展示「指向天空」入口：粗指针（触屏）且有方向事件 API。桌面自然隐藏。 */
 export function isGyroCandidate(): boolean {
   return (
@@ -64,11 +70,11 @@ function handleOrientation(e: DeviceOrientationEvent, absolute: boolean): void {
   const look = deviceOrientationToLookDirection(alpha, e.beta, e.gamma);
 
   const s = useUniverse.getState();
-  const date = new Date(s.timeFollowsNow ? Date.now() : (s.observeTime ?? Date.now()));
+  scratchDate.setTime(s.timeFollowsNow ? Date.now() : (s.observeTime ?? Date.now()));
   const eq = horizontalToEquatorial(
     look,
     { latitudeDeg: s.city.latitudeDeg, longitudeDeg: s.city.longitudeDeg },
-    date,
+    scratchDate,
   );
 
   // 与 lib/universe.directionToYawPitch 同约定：pitch=asin(y)、yaw=atan2(−x,−z)。

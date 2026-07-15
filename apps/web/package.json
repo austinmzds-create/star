@@ -13,11 +13,14 @@
   "dependencies": {
     "@react-three/drei": "^10.0.6",
     "@react-three/fiber": "^9.1.2",
+    "@react-three/postprocessing": "3.0.4",
     "@star/astro-core": "workspace:*",
     "@star/astro-data": "workspace:*",
     "@star/astro-ephem": "workspace:*",
     "framer-motion": "^12.4.7",
+    "maath": "^0.10.8",
     "next": "^15.2.3",
+    "postprocessing": "6.39.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "satellite.js": "^6.0.0",
@@ -31,6 +34,7 @@
     "@types/three": "^0.174.0",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.5.3",
+    "r3f-perf": "7.2.3",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.3"
   }

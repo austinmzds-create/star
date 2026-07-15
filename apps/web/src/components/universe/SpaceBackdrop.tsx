@@ -1,7 +1,9 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
+import { fx } from '@/lib/fxBus';
 
 const SKY_VERTEX = /* glsl */ `
   varying float vY;
@@ -12,6 +14,7 @@ const SKY_VERTEX = /* glsl */ `
 `;
 
 const SKY_FRAGMENT = /* glsl */ `
+  uniform float uPipe;
   varying float vY;
   void main() {
     float t = clamp(vY * 0.5 + 0.5, 0.0, 1.0);
@@ -21,6 +24,17 @@ const SKY_FRAGMENT = /* glsl */ `
     vec3 bottom = vec3(0.006, 0.009, 0.024);
     vec3 col = mix(bottom, mid, smoothstep(0.0, 0.5, t));
     col = mix(col, top, smoothstep(0.5, 1.0, t));
+    // 线性管线适配（Phase 9A 后处理域，同 TwinkleStars.tsx）：上面三档色是
+    // 「显示参考」调校值；composer 激活时（uPipe=1）链尾会统一 linear→sRGB
+    // 编码，不先反解回线性域，0.044 的档色会被编码抬到 ~0.23——整片天穹
+    // 变灰蓝，深邃底黑直接失守（实测踩坑）。行内为 sRGB EOTF 精确式。
+    if (uPipe > 0.5) {
+      col = mix(
+        pow((col + 0.055) / 1.055, vec3(2.4)),
+        col / 12.92,
+        vec3(lessThanEqual(col, vec3(0.04045)))
+      );
+    }
     gl_FragColor = vec4(col, 1.0);
   }
 `;
@@ -75,12 +89,23 @@ const BLOBS: NebulaBlob[] = [
 /** 渐变天穹 + 数团极淡氛围光斑（低端设备只留前 2 团）。 */
 export function SpaceBackdrop({ blobCount = BLOBS.length }: { blobCount?: number }) {
   const nebulaTex = useMemo(() => makeNebulaTexture(), []);
+  const skyUniforms = useMemo(() => ({ uPipe: { value: 0 } }), []);
+  const skyMatRef = useRef<THREE.ShaderMaterial>(null);
+
+  // 氛围 blob 是内建 SpriteMaterial（three 自带色彩管理，两条管线一致），
+  // 只有手写天穹 shader 需要跟随后处理管线标志（模块总线直读，零 React）
+  useFrame(() => {
+    const u = skyMatRef.current?.uniforms;
+    if (u) u.uPipe!.value = fx.linearPipe;
+  });
 
   return (
     <group>
       <mesh scale={[-1, 1, 1]}>
         <sphereGeometry args={[1800, 48, 32]} />
         <shaderMaterial
+          ref={skyMatRef}
+          uniforms={skyUniforms}
           vertexShader={SKY_VERTEX}
           fragmentShader={SKY_FRAGMENT}
           side={THREE.BackSide}

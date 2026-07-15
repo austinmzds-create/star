@@ -42,9 +42,15 @@ function ConstellationLayerInner() {
   // 各座点亮进度（0..1）：ref 内原地推进，shader/子组件按帧读取。
   const progressRef = useRef<Float32Array>(new Float32Array(data.cons.length));
 
-  // 「进度 > 0 的座」列表（低频 React state：仅集合变化时 set，动画帧内零更新）。
+  // 「进度 > 0 的座」列表（低频 React state：仅集合/排序变化时 set，动画帧内零更新）。
   const [visibleAbbrs, setVisibleAbbrs] = useState<string[]>([]);
-  const visibleKeyRef = useRef('');
+  // 变更检测缓冲（GC 纪律：帧内禁新数组/字符串）：预分配定长索引数组，
+  // 每帧把「进度降序的可见座索引」写进 curVisIdx，与上帧 prevVisIdx 逐元素比较——
+  // 等价于旧版 join(',') 字符串键（abbr↔index 双射且同为顺序敏感），但零分配。
+  // 不用纯位掩码：移动端艺术图只取 top-1，两座进度交叉（集合不变、排序变）也必须触发更新。
+  const curVisIdx = useRef(new Int32Array(data.cons.length));
+  const prevVisIdx = useRef(new Int32Array(data.cons.length));
+  const prevVisCount = useRef(0);
 
   // ── 注视判定内部状态（全部 ref，不触 React） ──
   const gazeAccum = useRef(0);
@@ -109,19 +115,37 @@ function ConstellationLayerInner() {
       }
     }
 
-    // ── 3. 可见座列表维护（集合变化才 setState；实际同时 ≤2：新亮 + 旧淡出） ──
-    const nowVisible: string[] = [];
+    // ── 3. 可见座列表维护（集合/排序变化才 setState；实际同时 ≤2：新亮 + 旧淡出）──
+    // 默认路径（无激活座 / 单座稳定点亮）逐帧零分配；仅变化那一帧才构建字符串数组。
+    const cur = curVisIdx.current;
+    let visCount = 0;
     for (let i = 0; i < data.cons.length; i++) {
-      if ((progress[i] ?? 0) > 0.005) nowVisible.push(data.cons[i]!.abbr);
+      if ((progress[i] ?? 0) > 0.005) cur[visCount++] = i;
     }
-    // 按进度降序，名称/艺术图取前几个。
-    nowVisible.sort(
-      (a, b) =>
-        (progress[data.byAbbr.get(b)!.index] ?? 0) - (progress[data.byAbbr.get(a)!.index] ?? 0),
-    );
-    const key = nowVisible.join(',');
-    if (key !== visibleKeyRef.current) {
-      visibleKeyRef.current = key;
+    // 按进度降序原地插入排序（可见座个位数，稳定、零分配；等值保持索引序，同旧版稳定 sort）。
+    for (let i = 1; i < visCount; i++) {
+      const idx = cur[i]!;
+      const p = progress[idx] ?? 0;
+      let j = i - 1;
+      while (j >= 0 && (progress[cur[j]!] ?? 0) < p) {
+        cur[j + 1] = cur[j]!;
+        j--;
+      }
+      cur[j + 1] = idx;
+    }
+    // 顺序敏感比较：数量或任一位次不同才重建列表。
+    const prev = prevVisIdx.current;
+    let changed = visCount !== prevVisCount.current;
+    for (let i = 0; !changed && i < visCount; i++) {
+      if (cur[i] !== prev[i]) changed = true;
+    }
+    if (changed) {
+      prevVisCount.current = visCount;
+      const nowVisible: string[] = [];
+      for (let i = 0; i < visCount; i++) {
+        prev[i] = cur[i]!;
+        nowVisible.push(data.cons[cur[i]!]!.abbr);
+      }
       setVisibleAbbrs(nowVisible);
     }
   });

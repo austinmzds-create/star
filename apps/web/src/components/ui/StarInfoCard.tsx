@@ -12,10 +12,11 @@ import {
   moonPhaseName,
   uidToBodyId,
 } from '@star/astro-ephem';
-import { AnimatePresence, motion, useReducedMotion, type Variants } from 'framer-motion';
+import { AnimatePresence, motion, type Variants } from 'framer-motion';
 import dynamic from 'next/dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import { StarArchiveSection } from './StarArchiveSection';
+import { exits, springs, stagger } from '@/lib/motionTokens';
 import { ObjectVisualThumb } from '@/components/viewer/ObjectVisualThumb';
 import { CITIES, type City } from '@/lib/cities';
 import { isSatelliteUid } from '@/lib/satellites/tles';
@@ -185,40 +186,28 @@ export function StarInfoCard() {
   const isStar = obj?.type === 'star';
   const badge = obj ? primaryBadgeZh(obj) : null;
 
-  // ── 入场动画（Phase 7）：卡片 spring 弹出 + 分区 stagger；系统减动效时
-  // 退化为纯透明度 0.2s、无 stagger（前庭安全）。variants 依 reduce 二选一，
-  // 帧循环外的一次性对象构造，无渲染开销。──
-  const reduceMotion = useReducedMotion();
-  const cardVariants: Variants = reduceMotion
-    ? {
-        hidden: { opacity: 0 },
-        show: { opacity: 1, transition: { duration: 0.2 } },
-        exit: { opacity: 0, transition: { duration: 0.2 } },
-      }
-    : {
-        hidden: { opacity: 0, x: 56, scale: 0.9 },
-        show: {
-          opacity: 1,
-          x: 0,
-          scale: 1,
-          transition: {
-            type: 'spring',
-            stiffness: 320,
-            damping: 26,
-            mass: 0.9,
-            when: 'beforeChildren',
-            staggerChildren: 0.055,
-            delayChildren: 0.05,
-          },
-        },
-        exit: { opacity: 0, x: 28, scale: 0.96, transition: { duration: 0.18, ease: 'easeIn' } },
-      };
-  const itemVariants: Variants = reduceMotion
-    ? { hidden: {}, show: {} }
-    : {
-        hidden: { opacity: 0, y: 14 },
-        show: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 420, damping: 32 } },
-      };
+  // ── 入场动画（Phase 7 → 9A tokens 化）：卡片 spring 弹出 + 分区 stagger。
+  // reduced-motion 由全局 MotionConfig reducedMotion="user" 统一接管
+  // （x/scale/y 位移自动禁用，opacity 保留），不再逐组件判断。──
+  const cardVariants: Variants = {
+    hidden: { opacity: 0, x: 56, scale: 0.9 },
+    show: {
+      opacity: 1,
+      x: 0,
+      scale: 1,
+      transition: {
+        ...springs.modal,
+        when: 'beforeChildren',
+        staggerChildren: stagger.item,
+        delayChildren: 0.05,
+      },
+    },
+    exit: { opacity: 0, x: 28, scale: 0.96, transition: exits.base },
+  };
+  const itemVariants: Variants = {
+    hidden: { opacity: 0, y: 14 },
+    show: { opacity: 1, y: 0, transition: springs.chip },
+  };
 
   // ── 分享海报（Phase 6B 目标 5）：posterGenerator 动态 chunk，点击才加载 ──
   const [posterBusy, setPosterBusy] = useState(false);
@@ -442,41 +431,49 @@ export function StarInfoCard() {
               <motion.div variants={itemVariants}>
                 {obj.isNamable ? (
                   coupleMode ? (
-                    <button
+                    <motion.button
+                      whileTap={{ scale: 0.96 }}
+                      transition={springs.chip}
                       onClick={() => addStarToCouple(obj.objectUid)}
-                      className={`mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
+                      className={`tap-96 mt-5 w-full rounded-2xl py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 ${
                         inCouple
                           ? 'border border-nebula-400/40 bg-nebula-500/20'
                           : 'bg-gradient-to-r from-nebula-500 to-nebula-700'
                       }`}
                     >
                       {inCouple ? '✓ 已加入双星 · 点此移出' : '✦ 加入双星纪念'}
-                    </button>
+                    </motion.button>
                   ) : (
-                    <button
+                    <motion.button
+                      whileTap={{ scale: 0.96 }}
+                      transition={springs.chip}
                       onClick={openMemorial}
-                      className="mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
+                      className="tap-96 mt-5 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110"
                     >
                       为这颗星创建纪念命名
-                    </button>
+                    </motion.button>
                   )
                 ) : (
                   // 不可命名（著名星 / DSO / 行星日月）：次级引导回命名池
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={resetView}
-                    className="mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
+                    className="tap-96 mt-5 w-full rounded-2xl border border-nebula-400/30 bg-white/[0.04] py-3 text-[15px] font-medium text-nebula-100 transition hover:bg-white/[0.08] hover:text-white"
                   >
                     ✦ 探索可命名的星空
-                  </button>
+                  </motion.button>
                 )}
                 {/* 分享海报：纯欣赏动作，可命名与否都显示；坐标未就绪（卫星懒 chunk）时禁用 */}
-                <button
+                <motion.button
+                  whileTap={{ scale: 0.96 }}
+                  transition={springs.chip}
                   onClick={() => void onSharePoster()}
                   disabled={posterBusy || !coords}
-                  className="mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
+                  className="tap-96 mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.03] py-2.5 text-[13px] text-nebula-100/85 transition hover:bg-white/[0.08] disabled:opacity-50"
                 >
                   {posterBusy ? '正在绘制海报…' : '⤓ 生成分享海报'}
-                </button>
+                </motion.button>
                 {posterError && (
                   <p className="mt-1.5 text-center text-[11px] text-red-300/80">
                     海报生成失败，请重试

@@ -23,6 +23,14 @@ function constellationAbbrOfUid(uid: string): string | null {
 /** 星座被激活的来源：注视扫过 / 点选恒星联动 / 搜索星座。 */
 export type ConstellationSource = 'gaze' | 'select' | 'search';
 
+/**
+ * 开场序曲阶段（Phase 9A 动效序曲）：'playing' 期间首屏 UI（BrandMark/
+ * SearchPanel/ControlBar 等）保持隐藏待命，转 'done' 时按 stagger 依次入场。
+ * 'idle' 是 SSR/未决初值——UI 侧只把 'playing' 当隐藏信号，其余一律可见，
+ * 保证非主页路由与序曲被禁用的场景永不因此丢 UI。
+ */
+export type OverturePhase = 'idle' | 'playing' | 'done';
+
 interface UniverseState {
   /** 当前选中的星体 objectUid。 */
   selectedUid: string | null;
@@ -126,6 +134,8 @@ interface UniverseState {
   ambientVolume: number;
   /** 陀螺仪指星模式是否激活（仅移动端；高频姿态走 cameraBus，不进 store）。 */
   gyroActive: boolean;
+  /** 开场序曲阶段（低频，仅 lib/overture 写；UI stagger 消费）。 */
+  overturePhase: OverturePhase;
 
   selectStar: (uid: string | null) => void;
   focusStar: (uid: string) => void;
@@ -201,6 +211,8 @@ interface UniverseState {
   setAmbientVolume: (v: number) => void;
   /** 置 true 时顺带关闭自动旋转（指星模式下两者互斥）。 */
   setGyroActive: (active: boolean) => void;
+  /** 序曲阶段写入口（仅 lib/overture 调用；同值去重防 React 抖动）。 */
+  setOverturePhase: (phase: OverturePhase) => void;
 }
 
 export const useUniverse = create<UniverseState>((set) => ({
@@ -245,6 +257,7 @@ export const useUniverse = create<UniverseState>((set) => ({
   ambientOn: false,
   ambientVolume: 0.5,
   gyroActive: false,
+  overturePhase: 'idle',
 
   selectStar: (uid) =>
     set((s) => {
@@ -408,6 +421,8 @@ export const useUniverse = create<UniverseState>((set) => ({
   },
   setGyroActive: (active) =>
     set(active ? { gyroActive: true, autoRotate: false } : { gyroActive: false }),
+  setOverturePhase: (phase) =>
+    set((s) => (s.overturePhase === phase ? {} : { overturePhase: phase })),
 }));
 
 /**

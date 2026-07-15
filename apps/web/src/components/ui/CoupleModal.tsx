@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
 import { createCoupleRegistration } from '@/lib/api';
 import { formatDec, formatRA } from '@/lib/format';
+import { exits, springs } from '@/lib/motionTokens';
 import { useUniverse } from '@/lib/store';
 
 // 情侣双星命名表单：两槽皆满后由 CoupleTray 打开。
@@ -99,15 +100,16 @@ export function CoupleModal() {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
+          exit={{ opacity: 0, transition: exits.base }}
+          transition={springs.modal}
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
         >
           <div className="absolute inset-0 bg-void/70 backdrop-blur-sm" onClick={close} />
           <motion.div
             initial={{ opacity: 0, scale: 0.96, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.96, y: 12 }}
-            transition={{ type: 'spring', stiffness: 240, damping: 26 }}
+            exit={{ opacity: 0, scale: 0.96, y: 12, transition: exits.base }}
+            transition={springs.modal}
             className="glass-strong relative z-10 w-[min(94vw,560px)] overflow-hidden rounded-3xl"
           >
             {!done ? (
@@ -144,17 +146,19 @@ export function CoupleModal() {
                   <Field label="关系">
                     <div className="flex flex-wrap gap-2">
                       {RELATIONS.map((r) => (
-                        <button
+                        <motion.button
                           key={r}
+                          whileTap={{ scale: 0.96 }}
+                          transition={springs.chip}
                           onClick={() => setRelation(r)}
-                          className={`rounded-full px-3 py-1.5 text-[13px] transition ${
+                          className={`tap-96 rounded-full px-3 py-1.5 text-[13px] transition ${
                             relation === r
                               ? 'bg-nebula-500/40 text-white shadow-[inset_0_0_0_1px_rgba(140,155,255,0.5)]'
                               : 'border border-white/10 text-nebula-100/70 hover:bg-white/5'
                           }`}
                         >
                           {r}
-                        </button>
+                        </motion.button>
                       ))}
                     </div>
                   </Field>
@@ -181,20 +185,24 @@ export function CoupleModal() {
                 </div>
 
                 <div className="mt-7 flex gap-3">
-                  <button
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={close}
                     disabled={submitting}
-                    className="flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-60"
+                    className="tap-96 flex-1 rounded-2xl border border-white/10 py-3 text-[15px] text-nebula-100/70 transition hover:bg-white/5 disabled:cursor-wait disabled:opacity-60"
                   >
                     返回选星
-                  </button>
-                  <button
+                  </motion.button>
+                  <motion.button
+                    whileTap={{ scale: 0.96 }}
+                    transition={springs.chip}
                     onClick={submit}
                     disabled={submitting}
-                    className="flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
+                    className="tap-96 flex-[1.6] rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
                   >
                     {submitting ? '正在登记双星…' : '生成情侣纪念'}
-                  </button>
+                  </motion.button>
                 </div>
                 <p className="mt-4 text-center text-[11px] leading-relaxed text-nebula-200/40">
                   提交后将生成一个情侣纪念页，可分享给彼此。
@@ -215,7 +223,9 @@ export function CoupleModal() {
                     <span className="text-gold">✦</span>
                     <span className="max-w-[42%] truncate">{displayB}</span>
                   </div>
-                  {relation && <div className="mt-1 text-[13px] text-nebula-200/70">{relation}</div>}
+                  {relation && (
+                    <div className="mt-1 text-[13px] text-nebula-200/70">{relation}</div>
+                  )}
 
                   <div className="mx-auto my-5 h-px w-24 bg-gradient-to-r from-transparent via-nebula-300/50 to-transparent" />
 

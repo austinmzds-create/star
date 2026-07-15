@@ -8,6 +8,7 @@ import {
   stopAmbient,
 } from '@/lib/audioEngine';
 import { CITIES } from '@/lib/cities';
+import { exits, springs } from '@/lib/motionTokens';
 import { promptInstall, subscribeInstallable } from '@/lib/pwaInstall';
 import { useUniverse } from '@/lib/store';
 
@@ -80,8 +81,8 @@ export function DisplaySettings() {
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 12 }}
-            transition={{ duration: 0.16 }}
+            exit={{ opacity: 0, y: 12, transition: exits.fast }}
+            transition={springs.panel}
             className="pointer-events-auto absolute bottom-20 left-1/2 z-30 w-[min(92vw,340px)] -translate-x-1/2 sm:left-auto sm:right-[max(1.5rem,calc(50%-280px))] sm:w-[300px] sm:translate-x-0"
           >
             <div className="glass-strong max-h-[min(70vh,520px)] overflow-y-auto rounded-2xl p-4">
@@ -99,7 +100,11 @@ export function DisplaySettings() {
               <Section title="氛围">
                 <SwitchRow label="银河" checked={showMilkyWay} onToggle={toggleMilkyWay} />
                 <SwitchRow label="名称标签" checked={showLabels} onToggle={toggleLabels} />
-                <SwitchRow label="星座" checked={showConstellations} onToggle={toggleConstellations} />
+                <SwitchRow
+                  label="星座"
+                  checked={showConstellations}
+                  onToggle={toggleConstellations}
+                />
                 <SwitchRow label="自动旋转" checked={autoRotate} onToggle={toggleAutoRotate} />
               </Section>
 
@@ -264,10 +269,11 @@ function SwitchRow({
           checked ? 'bg-nebula-500/70' : 'bg-white/10'
         }`}
       >
-        <span
-          className={`absolute top-[2px] h-[14px] w-[14px] rounded-full bg-white transition-all ${
-            checked ? 'left-[16px]' : 'left-[2px]'
-          }`}
+        {/* 拨钮走 chip token（r-fx §3.d）：x 位移 spring，替代 CSS left 过渡 */}
+        <motion.span
+          animate={{ x: checked ? 14 : 0 }}
+          transition={springs.chip}
+          className="absolute left-[2px] top-[2px] h-[14px] w-[14px] rounded-full bg-white"
         />
       </span>
     </button>

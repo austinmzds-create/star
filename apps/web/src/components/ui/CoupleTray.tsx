@@ -2,6 +2,7 @@
 
 import { getCelestialByUid } from '@star/astro-data';
 import { AnimatePresence, motion } from 'framer-motion';
+import { exits, springs } from '@/lib/motionTokens';
 import { useUniverse } from '@/lib/store';
 
 // 情侣双星挑选托盘：进入双星模式后常驻底部，展示两个槽位。
@@ -24,19 +25,21 @@ export function CoupleTray() {
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 24 }}
-          transition={{ type: 'spring', stiffness: 260, damping: 28 }}
+          exit={{ opacity: 0, y: 24, transition: exits.base }}
+          transition={springs.panel}
           className="pointer-events-auto absolute bottom-24 left-1/2 z-30 w-[min(94vw,520px)] -translate-x-1/2"
         >
           <div className="glass-strong rounded-3xl p-5">
             <div className="flex items-center justify-between">
               <div className="text-[13px] font-medium text-white">情侣双星 · 选择两颗星</div>
-              <button
+              <motion.button
+                whileTap={{ scale: 0.96 }}
+                transition={springs.chip}
                 onClick={exitCoupleMode}
-                className="rounded-full border border-white/10 px-2.5 py-0.5 text-[12px] text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
+                className="tap-96 rounded-full border border-white/10 px-2.5 py-0.5 text-[12px] text-nebula-200/60 transition hover:bg-white/10 hover:text-white"
               >
                 退出
-              </button>
+              </motion.button>
             </div>
 
             <div className="mt-4 grid grid-cols-2 gap-3">
@@ -48,13 +51,15 @@ export function CoupleTray() {
               在星图中点选星星，从右侧信息卡「加入双星纪念」依次填入两个槽位。
             </p>
 
-            <button
+            <motion.button
+              whileTap={{ scale: 0.96 }}
+              transition={springs.chip}
               onClick={openCoupleForm}
               disabled={!bothFilled}
-              className="mt-4 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+              className="tap-96 mt-4 w-full rounded-2xl bg-gradient-to-r from-nebula-500 to-nebula-700 py-3 text-[15px] font-medium text-white shadow-[0_8px_30px_rgba(107,115,255,0.35)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {bothFilled ? '填写双纪念名 →' : '请先选满两颗星'}
-            </button>
+            </motion.button>
           </div>
         </motion.div>
       )}
@@ -78,7 +83,9 @@ function Slot({
   return (
     <div
       className={`relative rounded-2xl border p-3 ${
-        star ? 'border-nebula-400/40 bg-nebula-500/10' : 'border-dashed border-white/15 bg-white/[0.02]'
+        star
+          ? 'border-nebula-400/40 bg-nebula-500/10'
+          : 'border-dashed border-white/15 bg-white/[0.02]'
       }`}
     >
       <div className="text-[10.5px] uppercase tracking-[0.2em] text-gold/70">{label}</div>

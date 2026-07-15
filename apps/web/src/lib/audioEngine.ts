@@ -154,3 +154,51 @@ export function setAmbientVolume(v: number): void {
 export function isAmbientRunning(): boolean {
   return wantRunning;
 }
+
+/** 提示音尾音计时器：奏鸣结束后若环境音未开，把 ctx 归还 suspend 省电。 */
+let chimeTimer: number | undefined;
+
+/**
+ * 一次性提示音（Phase 9A 相机手感·审计 §3.4）：飞行到达 / 点选命中的双泛音
+ * chime——660Hz + 990Hz 纯五度 sine，~10ms 起音、指数衰减尾。
+ *
+ * 约束：
+ * - 复用现有 ctx；未初始化（用户从未手势启动过环境音）则静默跳过——
+ *   绝不在手势栈外创建 AudioContext，尊重自动播放政策。
+ * - 不走 master（那是环境音音量，可能为 0）：自带包络直连 destination，
+ *   峰值 0.5×CEIL（≈0.03），远低于环境音硬上限，绝无炸耳。
+ * - 环境音关着时 ctx 处于 suspended：临时 resume 奏鸣，尾音后归还 suspend。
+ * - select 比 arrive 更短更轻（悬停频率不挂音效，14–25Hz 会烦）。
+ */
+export function playChime(kind: 'arrive' | 'select'): void {
+  if (!ctx) return;
+  const ac = ctx;
+  if (ac.state === 'suspended') void ac.resume();
+  const now = ac.currentTime;
+  const peak = (kind === 'arrive' ? 0.5 : 0.3) * CEIL;
+  const decayTau = kind === 'arrive' ? 0.16 : 0.07; // setTargetAtTime 时间常数，尾长≈3τ
+  const dur = kind === 'arrive' ? 1.4 : 0.7;
+  const env = ac.createGain();
+  env.gain.value = 0;
+  env.connect(ac.destination);
+  env.gain.setTargetAtTime(peak, now, 0.01); // ~10ms 起音
+  env.gain.setTargetAtTime(0, now + 0.06, decayTau);
+  const partial = (freq: number, g: number): void => {
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const og = ac.createGain();
+    og.gain.value = g;
+    osc.connect(og).connect(env);
+    osc.start(now);
+    osc.stop(now + dur); // stop 后节点自动回收，无需手动 disconnect
+  };
+  partial(660, 0.7);
+  partial(990, 0.3);
+  if (chimeTimer !== undefined) window.clearTimeout(chimeTimer);
+  chimeTimer = window.setTimeout(() => {
+    chimeTimer = undefined;
+    // 用户此间若重新打开环境音（wantRunning=true），保持 running 不动
+    if (!wantRunning && ctx) void ctx.suspend();
+  }, dur * 1000 + 150);
+}
