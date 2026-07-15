@@ -11,8 +11,10 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_influencer, make_token
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      MaterialDownloadLog, Product, SampleOrder, VideoTask)
+                      MaterialDownloadLog, MaterialPost, Product, SampleOrder,
+                      VideoTask)
 from ..services import storage
+from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
 from ..services.sms import SmsError, send_code, verify_code
@@ -253,6 +255,18 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
         .where(Material.product_id == product_id)
         .order_by(Material.created_at.desc(), Material.id.desc())
     ).all()
+    posts = db.scalars(
+        select(MaterialPost)
+        .where(MaterialPost.product_id == product_id, MaterialPost.status == "published")
+        .order_by(MaterialPost.created_at.desc(), MaterialPost.id.desc())
+    ).all()
+
+    def _asset(a):
+        return {"id": a.id, "type": a.type,
+                "url": storage.signed_url(a.oss_key) if a.oss_key else a.source_link,
+                "thumb": storage.thumbnail_url(a.oss_key, 200) if (a.type == "image" and a.oss_key) else None,
+                "filename": a.filename, "source_link": a.source_link}
+
     return {"id": p.id, "name": p.name,
             "product_image": storage.thumbnail_url(p.product_image, 160),
             "price_text": p.price_text,
@@ -260,11 +274,33 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "promo_remark": p.promo_remark,
             "sample": sample,
+            "material_posts": [{"id": post.id, "category": post.category, "title": post.title,
+                                "caption": post.caption, "downloadable": post.downloadable,
+                                "author_name": post.author_name,
+                                "created_at": post.created_at.isoformat(),
+                                "assets": [_asset(a) for a in post.assets]}
+                               for post in posts],
             "materials": [{"id": m.id, "type": m.type, "title": m.title,
                            "url": storage.signed_url(m.oss_key) if m.oss_key else None,
                            "source_link": m.source_link, "parsed_text": m.parsed_text,
                            "report_id": m.report_id, "downloadable": m.downloadable}
                           for m in materials]}
+
+
+@router.post("/material-posts/{post_id}/download")
+def log_post_download(post_id: int, inf: Influencer = Depends(current_influencer),
+                      db: Session = Depends(get_db)):
+    """内容帖下载留痕:校验授权 + 写统一操作日志(达人视角,进达人时间轴)。"""
+    post = db.get(MaterialPost, post_id)
+    if not post or post.status != "published" or not post.downloadable:
+        raise HTTPException(403, "素材不可下载")
+    _assert_granted(db, inf.id, post.product_id)
+    label = post.title or (post.caption[:20] if post.caption else "内容帖")
+    log_op(db, influencer_id=inf.id, product_id=post.product_id,
+           event_type="material_downloaded", actor=inf,
+           summary=f"{inf.nickname} 下载素材:{label}")
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/materials/{material_id}/download")

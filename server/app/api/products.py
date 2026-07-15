@@ -10,10 +10,9 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      OrderRecord, Product, ProductQianchuanBinding,
-                      QianchuanCooperationBinding, QianchuanShopAuth,
-                      SampleOrder, User,
-                      VideoTask)
+                      MaterialAsset, MaterialPost, OrderRecord, Product,
+                      ProductQianchuanBinding, QianchuanCooperationBinding,
+                      QianchuanShopAuth, SampleOrder, User, VideoTask)
 from ..services import crypto, storage
 from ..services import qianchuan as qianchuan_service
 from ..services.oplog import log_op
@@ -260,6 +259,129 @@ def _material_dict(m: Material) -> dict:
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
             "starred": m.starred, "created_at": m.created_at.isoformat()}
+
+
+MATERIAL_POST_CATEGORIES = {"video", "image", "doc", "copy"}
+MATERIAL_ASSET_TYPES = {"image", "video", "pdf", "file", "link"}
+
+
+def _asset_dict(a: MaterialAsset) -> dict:
+    is_img = a.type == "image"
+    return {"id": a.id, "type": a.type, "oss_key": a.oss_key,
+            "filename": a.filename, "source_link": a.source_link, "sort_order": a.sort_order,
+            "url": storage.signed_url(a.oss_key) if a.oss_key else a.source_link,
+            "thumb": storage.thumbnail_url(a.oss_key, 200) if (is_img and a.oss_key) else None}
+
+
+def _material_post_dict(post: MaterialPost) -> dict:
+    return {"id": post.id, "product_id": post.product_id, "category": post.category,
+            "title": post.title, "caption": post.caption, "downloadable": post.downloadable,
+            "status": post.status, "author_name": post.author_name,
+            "created_at": post.created_at.isoformat(),
+            "assets": [_asset_dict(a) for a in post.assets]}
+
+
+class MaterialAssetIn(BaseModel):
+    type: str
+    oss_key: str | None = None
+    source_link: str | None = None
+    filename: str | None = None
+
+
+class MaterialPostIn(BaseModel):
+    category: str = "image"
+    title: str | None = None
+    caption: str
+    downloadable: bool = True
+    status: str = "published"
+    assets: list[MaterialAssetIn] = []
+
+
+def _apply_assets(post: MaterialPost, assets: list[MaterialAssetIn]) -> None:
+    post.assets.clear()
+    for i, a in enumerate(assets):
+        atype = a.type if a.type in MATERIAL_ASSET_TYPES else "file"
+        post.assets.append(MaterialAsset(
+            type=atype, oss_key=(a.oss_key or None), source_link=(a.source_link or None),
+            filename=(a.filename or None), sort_order=i))
+
+
+@router.get("/{product_id}/material-posts")
+def list_material_posts(product_id: int, user: User = Depends(current_user),
+                        db: Session = Depends(get_db)):
+    """管理端:某产品的内容帖(含草稿)。"""
+    posts = db.scalars(select(MaterialPost).where(MaterialPost.product_id == product_id)
+                       .order_by(MaterialPost.created_at.desc(), MaterialPost.id.desc())).all()
+    return [_material_post_dict(p) for p in posts]
+
+
+@router.post("/{product_id}/material-posts")
+def create_material_post(product_id: int, body: MaterialPostIn,
+                         user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not db.get(Product, product_id):
+        raise HTTPException(404, "产品不存在")
+    caption = (body.caption or "").strip()
+    if not caption:
+        raise HTTPException(400, "说明文案必填")
+    from ..models import now as _now
+    category = body.category if body.category in MATERIAL_POST_CATEGORIES else "image"
+    status = "draft" if body.status == "draft" else "published"
+    post = MaterialPost(product_id=product_id, category=category, title=(body.title or None),
+                        caption=caption, downloadable=body.downloadable, status=status,
+                        author_id=user.id, author_name=user.display_name,
+                        published_at=_now() if status == "published" else None)
+    _apply_assets(post, body.assets)
+    db.add(post)
+    db.commit()
+    return {"id": post.id}
+
+
+class MaterialPostEditIn(BaseModel):
+    category: str | None = None
+    title: str | None = None
+    caption: str | None = None
+    downloadable: bool | None = None
+    status: str | None = None
+    assets: list[MaterialAssetIn] | None = None
+
+
+@router.patch("/material-posts/{post_id}")
+def edit_material_post(post_id: int, body: MaterialPostEditIn,
+                       user: User = Depends(current_user), db: Session = Depends(get_db)):
+    post = db.get(MaterialPost, post_id)
+    if not post:
+        raise HTTPException(404, "内容帖不存在")
+    if body.category is not None and body.category in MATERIAL_POST_CATEGORIES:
+        post.category = body.category
+    if body.title is not None:
+        post.title = body.title or None
+    if body.caption is not None:
+        caption = body.caption.strip()
+        if not caption:
+            raise HTTPException(400, "说明文案不能清空")
+        post.caption = caption
+    if body.downloadable is not None:
+        post.downloadable = body.downloadable
+    if body.status is not None:
+        from ..models import now as _now
+        new_status = "draft" if body.status == "draft" else "published"
+        if new_status == "published" and post.status != "published":
+            post.published_at = _now()
+        post.status = new_status
+    if body.assets is not None:
+        _apply_assets(post, body.assets)
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/material-posts/{post_id}")
+def delete_material_post(post_id: int, user: User = Depends(current_user),
+                         db: Session = Depends(get_db)):
+    post = db.get(MaterialPost, post_id)
+    if post:
+        db.delete(post)
+        db.commit()
+    return {"ok": True}
 
 
 class QianchuanBindingIn(BaseModel):

@@ -47,6 +47,33 @@
           <el-empty v-else description="暂无商品详情" :image-size="54" />
         </template>
 
+        <template v-else-if="activeTab === 'posts'">
+          <div v-if="posts.length" class="material-list">
+            <section v-for="post in posts" :key="post.id" class="material-card post-card">
+              <div class="mat-head">
+                <el-tag size="small">{{ POST_CAT_LABEL[post.category] || '内容' }}</el-tag>
+                <span v-if="post.title" class="mtitle">{{ post.title }}</span>
+              </div>
+              <div v-if="post.assets.length" class="post-assets">
+                <template v-for="a in post.assets" :key="a.id">
+                  <el-image v-if="a.type === 'image'" :src="a.thumb || a.url" fit="cover" class="post-img"
+                    :preview-src-list="postImages(post)" preview-teleported />
+                  <a v-else :href="a.url" target="_blank" class="post-file">
+                    <el-icon><Van /></el-icon>{{ a.filename || a.source_link || a.type }}
+                  </a>
+                </template>
+              </div>
+              <p class="post-caption">{{ post.caption }}</p>
+              <div class="mat-actions">
+                <el-button size="small" plain @click="copyCaption(post.caption)">复制文案</el-button>
+                <el-button v-if="post.downloadable && firstDownloadable(post)" size="small" type="primary" plain
+                  @click="downloadPost(post, firstDownloadable(post))">下载素材</el-button>
+              </div>
+            </section>
+          </div>
+          <el-empty v-else description="暂无内容帖" :image-size="54" />
+        </template>
+
         <template v-else-if="activeTab === 'sample'">
           <section v-if="d.sample" class="panel-block">
             <div class="samp-head">
@@ -121,6 +148,7 @@ const TYPE_LABEL = {
 }
 const tabs = [
   { key: 'detail', label: '商品详情' },
+  { key: 'posts', label: '内容帖' },
   { key: 'video_ai', label: 'AI视频', types: ['video_ai'] },
   { key: 'video_hot', label: '爆款参考', types: ['video_hot'] },
   { key: 'video_output', label: '达人成片', types: ['video_output'] },
@@ -171,10 +199,26 @@ const logisticsMessage = computed(() => {
   return '暂无轨迹明细,请稍后刷新'
 })
 
+const posts = computed(() => d.value?.material_posts || [])
+const POST_CAT_LABEL = { image: '图片', video: '视频', doc: '文档', copy: '文案' }
+
 function countOf(tab) {
   if (tab.key === 'detail') return detailItems.value.length
   if (tab.key === 'sample') return d.value?.sample ? 1 : 0
+  if (tab.key === 'posts') return posts.value.length
   return matsOf(tab.types).length
+}
+
+const postImages = (post) => post.assets.filter((a) => a.type === 'image').map((a) => a.url)
+const firstDownloadable = (post) => post.assets.find((a) => a.url && a.type !== 'link') || null
+
+async function copyCaption(text) {
+  try { await navigator.clipboard.writeText(text || ''); ElMessage.success('文案已复制') }
+  catch (e) { ElMessage.warning('复制失败,请长按选择') }
+}
+async function downloadPost(post, asset) {
+  try { await api.post(`/api/h5/material-posts/${post.id}/download`) } catch (e) { /* 留痕失败不阻断 */ }
+  window.open(asset.url, '_blank')
 }
 
 function goProduct(id) {
@@ -296,7 +340,12 @@ onMounted(async () => {
 .muted { color: #8a93a6; }
 .mat-head { display: flex; align-items: center; gap: 8px; }
 .mtitle { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mat-actions { margin-top: 8px; display: flex; gap: 10px; align-items: center; }
+.mat-actions { margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.post-assets { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.post-img { width: 92px; height: 92px; border-radius: 8px; }
+.post-file { display: inline-flex; align-items: center; gap: 4px; padding: 6px 10px; background: #f6f8fc;
+  border-radius: 8px; font-size: 12px; color: #6b5cf6; text-decoration: none; max-width: 100%; }
+.post-caption { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.7; color: #4f566b; font-size: 13px; }
 .samp-head { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .reject { margin-top: 8px; font-size: 12px; color: #f56c6c; }
 .logi {

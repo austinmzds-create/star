@@ -276,6 +276,46 @@ class Material(Base, TimestampMixin):
     product: Mapped[Product] = relationship(back_populates="materials")
 
 
+class MaterialPost(Base):
+    """素材「朋友圈内容帖」(方案B 需求3):一帖 = 标题 + 必填说明文案 + 多个附件。
+
+    旧 Material 表保留只读兼容;新素材以帖为单位发布,管理端与达人端读同一份数据。
+    """
+    __tablename__ = "material_posts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    category: Mapped[str] = mapped_column(String(16), default="image")  # video/image/doc/copy
+    title: Mapped[str | None] = mapped_column(String(255))              # 可改名,可空
+    caption: Mapped[str] = mapped_column(Text)                          # 说明文案(必填)
+    downloadable: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(16), default="published")  # draft/published
+    author_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    author_name: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    assets: Mapped[list["MaterialAsset"]] = relationship(
+        back_populates="post", cascade="all, delete-orphan",
+        order_by="MaterialAsset.sort_order")
+
+
+class MaterialAsset(Base):
+    """内容帖里的单个附件(图/视频/附件/外链)。"""
+    __tablename__ = "material_assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    post_id: Mapped[int] = mapped_column(ForeignKey("material_posts.id"), index=True)
+    type: Mapped[str] = mapped_column(String(16))                       # image/video/pdf/file/link
+    oss_key: Mapped[str | None] = mapped_column(String(512))
+    source_link: Mapped[str | None] = mapped_column(String(512))
+    filename: Mapped[str | None] = mapped_column(String(255))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    post: Mapped[MaterialPost] = relationship(back_populates="assets")
+
+
 class AccessGrant(Base):
     """达人 × 产品 开放权限(等级默认之外的单独授权)"""
     __tablename__ = "access_grants"
