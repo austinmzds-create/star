@@ -84,8 +84,11 @@ async function load() {
   loading.value = true
   try {
     const status = tab.value === 'all' ? undefined : tab.value
-    rows.value = await api.get('/api/connection-requests', { params: { status } })
-    const r = await api.get('/api/connection-requests/pending-count')
+    const [nextRows, r] = await Promise.all([
+      api.get('/api/connection-requests', { params: { status } }),
+      api.get('/api/connection-requests/pending-count'),
+    ])
+    rows.value = nextRows
     pendingCount.value = r.count || 0
   } finally {
     loading.value = false

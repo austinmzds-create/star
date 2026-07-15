@@ -65,9 +65,13 @@ const followUpDays = ref(7)
 const newBd = reactive({ display_name: '', phone: '' })
 
 async function load() {
-  configs.value = await api.get('/api/admin/level-configs')
-  bds.value = await api.get('/api/admin/bd-users')
-  const fu = await api.get('/api/admin/system-configs/follow_up_days')
+  const [nextConfigs, nextBds, fu] = await Promise.all([
+    api.get('/api/admin/level-configs'),
+    api.get('/api/admin/bd-users'),
+    api.get('/api/admin/system-configs/follow_up_days'),
+  ])
+  configs.value = nextConfigs
+  bds.value = nextBds
   if (fu.value?.days) followUpDays.value = fu.value.days
 }
 

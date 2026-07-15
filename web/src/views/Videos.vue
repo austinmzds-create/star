@@ -248,12 +248,15 @@ const videoBadgeType = (k) => (['submitted', 'blocked'].includes(k) ? 'danger' :
 async function loadVideos() {
   vLoading.value = true
   try {
-    const r = await api.get('/api/videos', {
-      params: { status: vTab.value, q: vSearch.value || undefined, page: vPage.value, page_size: 50 },
-    })
+    const [r, nextCounts] = await Promise.all([
+      api.get('/api/videos', {
+        params: { status: vTab.value, q: vSearch.value || undefined, page: vPage.value, page_size: 50 },
+      }),
+      api.get('/api/videos/status-counts'),
+    ])
     videos.value = r.items
     vTotal.value = r.total
-    vCounts.value = await api.get('/api/videos/status-counts')
+    vCounts.value = nextCounts
   } finally {
     vLoading.value = false
   }
@@ -364,12 +367,15 @@ const promoBadgeType = (k) => (['pending_request', 'pending_confirm', 'failed'].
 async function loadPromotions() {
   pLoading.value = true
   try {
-    const r = await api.get('/api/promotions', {
-      params: { auth_status: pTab.value, q: pSearch.value || undefined, page: pPage.value, page_size: 50 },
-    })
+    const [r, nextCounts] = await Promise.all([
+      api.get('/api/promotions', {
+        params: { auth_status: pTab.value, q: pSearch.value || undefined, page: pPage.value, page_size: 50 },
+      }),
+      api.get('/api/promotions/status-counts'),
+    ])
     promotions.value = r.items
     pTotal.value = r.total
-    pCounts.value = await api.get('/api/promotions/status-counts')
+    pCounts.value = nextCounts
   } finally {
     pLoading.value = false
   }
@@ -411,7 +417,7 @@ function onMainTab(name) {
 }
 
 onMounted(async () => {
-  products.value = await api.get('/api/products')
+  api.get('/api/products').then((rows) => { products.value = rows }).catch(() => {})
   // 工作台待办深链:?main=promotion 进投流管理,?tab= 精确到子分栏
   if (route.query.main === 'promotion') mainTab.value = 'promotion'
   if (mainTab.value === 'video') {

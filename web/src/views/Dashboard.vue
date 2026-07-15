@@ -50,8 +50,12 @@ async function load() {
   loading.value = true
   try {
     const d = days.value || undefined
-    byBd.value = await api.get('/api/dashboard/by-bd', { params: { days: d } })
-    tiers.value = await api.get('/api/dashboard/by-tier')
+    const [nextByBd, nextTiers] = await Promise.all([
+      api.get('/api/dashboard/by-bd', { params: { days: d } }),
+      api.get('/api/dashboard/by-tier'),
+    ])
+    byBd.value = nextByBd
+    tiers.value = nextTiers
   } finally {
     loading.value = false
   }

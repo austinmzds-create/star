@@ -461,15 +461,6 @@ function logType(t) {
   return 'primary'
 }
 
-async function loadCollab() {
-  collabLoading.value = true
-  try {
-    const r = await api.get(`/api/influencers/${route.params.id}/collaborations`)
-    collab.value = r.items || []
-  } finally {
-    collabLoading.value = false
-  }
-}
 async function toggleCollab(pid) {
   if (expandedCollab.value === pid) { expandedCollab.value = null; return }
   expandedCollab.value = pid
@@ -540,16 +531,26 @@ async function refreshTrack(s) {
 }
 
 async function load() {
-  d.value = await api.get(`/api/influencers/${route.params.id}`)
-  if (isAdmin) adminNote.value = d.value.admin_note || ''
-  tags.value = d.value.tags || []
-  Object.assign(edit, {
-    level: d.value.level, commission_tier: d.value.commission_tier,
-    promo_mode: d.value.promo_mode, owner_bd_id: d.value.owner_bd_id, reason: '',
-  })
-  act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
-  await loadCollab()
-  if (tab.value === 'logs') await loadLogs()
+  collabLoading.value = true
+  try {
+    const [profile, activity, collabRes] = await Promise.all([
+      api.get(`/api/influencers/${route.params.id}`),
+      api.get(`/api/influencers/${route.params.id}/activity`),
+      api.get(`/api/influencers/${route.params.id}/collaborations`),
+    ])
+    d.value = profile
+    if (isAdmin) adminNote.value = d.value.admin_note || ''
+    tags.value = d.value.tags || []
+    Object.assign(edit, {
+      level: d.value.level, commission_tier: d.value.commission_tier,
+      promo_mode: d.value.promo_mode, owner_bd_id: d.value.owner_bd_id, reason: '',
+    })
+    act.value = activity
+    collab.value = collabRes.items || []
+    if (tab.value === 'logs') await loadLogs()
+  } finally {
+    collabLoading.value = false
+  }
 }
 
 async function save() {
@@ -618,8 +619,10 @@ async function delVideo(v) {
 onMounted(async () => {
   await load()
   if (isStaff) {
-    try { bds.value = await api.get('/api/admin/bd-users') } catch (e) { /* ignore */ }
-    try { products.value = await api.get('/api/products') } catch (e) { /* ignore */ }
+    Promise.allSettled([api.get('/api/admin/bd-users'), api.get('/api/products')]).then(([bdRes, productRes]) => {
+      if (bdRes.status === 'fulfilled') bds.value = bdRes.value
+      if (productRes.status === 'fulfilled') products.value = productRes.value
+    })
   }
 })
 </script>

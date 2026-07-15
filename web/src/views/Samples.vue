@@ -199,12 +199,15 @@ function logisticsMessage(row) {
 async function load() {
   loading.value = true
   try {
-    const r = await api.get('/api/samples', {
-      params: { status: tab.value, q: search.value || undefined, page: page.value, page_size: pageSize },
-    })
+    const [r, nextCounts] = await Promise.all([
+      api.get('/api/samples', {
+        params: { status: tab.value, q: search.value || undefined, page: page.value, page_size: pageSize },
+      }),
+      api.get('/api/samples/status-counts'),
+    ])
     rows.value = r.items
     total.value = r.total
-    counts.value = await api.get('/api/samples/status-counts')
+    counts.value = nextCounts
   } finally {
     loading.value = false
   }
@@ -270,10 +273,16 @@ async function refreshTrack(row) {
 onMounted(async () => {
   // 工作台待办可带 ?tab= 精确进入对应状态分栏
   if (route.query.tab && TABS.some((t) => t.key === route.query.tab)) tab.value = route.query.tab
-  reasons.value = await api.get('/api/samples/reject-reasons')
-  couriers.value = await api.get('/api/samples/couriers')
-  products.value = await api.get('/api/products')
   load()
+  Promise.all([
+    api.get('/api/samples/reject-reasons'),
+    api.get('/api/samples/couriers'),
+    api.get('/api/products'),
+  ]).then(([nextReasons, nextCouriers, nextProducts]) => {
+    reasons.value = nextReasons
+    couriers.value = nextCouriers
+    products.value = nextProducts
+  }).catch(() => {})
 })
 </script>
 

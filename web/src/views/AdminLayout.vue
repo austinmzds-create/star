@@ -80,16 +80,18 @@ async function refreshBadges() {
   }
   refreshingBadges = true
   try {
-    const r = await api.get('/api/dashboard/workbench')
-    todos.value = r.todos || {}
-    followupCount.value = Number(todos.value.followup || 0)
+    const [workbenchRes, connectionRes] = await Promise.allSettled([
+      api.get('/api/dashboard/workbench'),
+      isAdmin.value ? api.get('/api/connection-requests/pending-count') : Promise.resolve({ count: 0 }),
+    ])
+    if (workbenchRes.status === 'fulfilled') {
+      todos.value = workbenchRes.value.todos || {}
+      followupCount.value = Number(todos.value.followup || 0)
+    }
+    if (isAdmin.value && connectionRes.status === 'fulfilled') {
+      connectionCount.value = Number(connectionRes.value.count || 0)
+    }
   } catch (e) { /* ignore */ }
-  if (isAdmin.value) {
-    try {
-      const r = await api.get('/api/connection-requests/pending-count')
-      connectionCount.value = Number(r.count || 0)
-    } catch (e) { /* ignore */ }
-  }
   refreshingBadges = false
   if (refreshAgain) {
     refreshAgain = false
