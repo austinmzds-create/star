@@ -94,10 +94,11 @@
       <el-form label-width="80px">
         <el-form-item v-if="matEdit.type !== 'copy'" label="文件">
           <div class="file-edit-row">
-            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadEditMatFile"
-              :disabled="matUploading" :accept="acceptOf(matEdit.type)">
-              <el-button size="small" :loading="matUploading">{{ matEdit.oss_key ? '替换文件' : '上传文件' }}</el-button>
-            </el-upload>
+            <input ref="editFileInput" class="native-file-input" type="file"
+              :accept="acceptOf(matEdit.type)" @change="handleEditFileChange" />
+            <el-button size="small" :loading="matUploading" @click="triggerEditFile">
+              {{ matEdit.oss_key ? '替换文件' : '上传文件' }}
+            </el-button>
             <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
             <el-button v-if="matEdit.oss_key" size="small" text type="danger" @click="clearEditFile">移除文件</el-button>
           </div>
@@ -117,8 +118,9 @@
     </el-dialog>
 
     <!-- 产品详情抽屉 -->
-    <el-drawer v-model="drawer" :title="detail?.name" size="760px">
-      <template v-if="detail">
+    <el-drawer v-model="drawer" :title="detail?.name || '产品详情'" size="760px">
+      <el-skeleton v-if="detailLoading && !detail" :rows="8" animated />
+      <template v-else-if="detail">
         <!-- 商品卡 -->
         <div class="prod-head">
           <el-image v-if="detail.product_image" :src="detail.product_image" fit="cover" class="head-img" />
@@ -340,12 +342,11 @@
         </el-form-item>
         <el-form-item v-if="uploadForm.type !== 'copy'" label="文件">
           <div class="upload-file-box">
-            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMatFile"
-              :disabled="matUploading" :accept="acceptOf(uploadForm.type)">
-              <el-button size="small" :loading="matUploading">
-                {{ uploadForm.oss_key ? '重新上传文件' : '选择文件上传' }}
-              </el-button>
-            </el-upload>
+            <input ref="uploadFileInput" class="native-file-input" type="file"
+              :accept="acceptOf(uploadForm.type)" @change="handleUploadFileChange" />
+            <el-button size="small" :loading="matUploading" @click="triggerUploadFile">
+              {{ uploadForm.oss_key ? '重新上传文件' : '选择文件上传' }}
+            </el-button>
             <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
             <template v-if="uploadForm.oss_key">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
@@ -415,11 +416,14 @@ const pageSize = 50
 const createVisible = ref(false)
 const form = reactive({})
 const drawer = ref(false)
+const detailLoading = ref(false)
 const detail = ref(null)
 const dtab = ref('info')
 const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
+const uploadFileInput = ref(null)
+const editFileInput = ref(null)
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
@@ -527,17 +531,59 @@ function applyShopAuth(id) {
   if (qianchuan.bind_status === 'draft') qianchuan.bind_status = 'configured'
 }
 
+let openSeq = 0
 async function open(row, tabName = 'info') {
   const targetTab = typeof tabName === 'string' ? tabName : 'info'
-  detail.value = await api.get(`/api/products/${row.id}`)
-  drawer.value = true; dtab.value = targetTab; mtype.value = 'video_ai'
-  resetQianchuan(detail.value.qianchuan_binding || {})
-  await loadShopAuths()
-  grants.value = await api.get(`/api/products/${row.id}/grants`)
-  act.value = await api.get(`/api/products/${row.id}/activity`)
-  orders.value = await api.get(`/api/products/${row.id}/orders`)
-  qianchuanCoops.value = await api.get(`/api/products/${row.id}/qianchuan-cooperations`)
+  const productId = Number(row.id)
+  const seq = ++openSeq
+  drawer.value = true
+  detailLoading.value = true
+  detail.value = null
+  dtab.value = targetTab
+  mtype.value = 'video_ai'
+  grants.value = []
+  act.value = { samples: [], videos: [] }
+  orders.value = []
+  qianchuanCoops.value = []
+  qianchuanShopAuths.value = []
   Object.assign(qcCoopForm, { influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
+
+  const detailReq = api.get(`/api/products/${productId}`)
+  const relatedReq = Promise.allSettled([
+    api.get('/api/qianchuan/shop-auths'),
+    api.get(`/api/products/${productId}/grants`),
+    api.get(`/api/products/${productId}/activity`),
+    api.get(`/api/products/${productId}/orders`),
+    api.get(`/api/products/${productId}/qianchuan-cooperations`),
+  ])
+
+  try {
+    const product = await detailReq
+    if (seq !== openSeq) return
+    detail.value = product
+    resetQianchuan(product.qianchuan_binding || {})
+  } catch (e) {
+    if (seq === openSeq) {
+      drawer.value = false
+      ElMessage.error(e.response?.data?.detail || '产品详情加载失败')
+    }
+    return
+  } finally {
+    if (seq === openSeq) detailLoading.value = false
+  }
+
+  relatedReq.then((results) => {
+    if (seq !== openSeq) return
+    const [shopAuths, grantsRes, actRes, ordersRes, coopsRes] = results
+    qianchuanShopAuths.value = shopAuths.status === 'fulfilled' ? shopAuths.value : []
+    grants.value = grantsRes.status === 'fulfilled' ? grantsRes.value : []
+    act.value = actRes.status === 'fulfilled' ? actRes.value : { samples: [], videos: [] }
+    orders.value = ordersRes.status === 'fulfilled' ? ordersRes.value : []
+    qianchuanCoops.value = coopsRes.status === 'fulfilled' ? coopsRes.value : []
+    if (results.some((item) => item.status === 'rejected')) {
+      ElMessage.warning('部分关联数据加载失败,可切换 tab 后重试')
+    }
+  })
 }
 
 // ---- 素材上传:顶部一个入口,弹框选类型,传完进对应类型 tab ----
@@ -575,6 +621,7 @@ function hasMaterialContent(form) {
 function clearUploadFile() {
   uploadForm.oss_key = ''
   uploadForm.file_name = ''
+  if (uploadFileInput.value) uploadFileInput.value.value = ''
 }
 
 function onUploadTypeChange(type) {
@@ -582,6 +629,7 @@ function onUploadTypeChange(type) {
   uploadForm.source_link = ''
   uploadForm.report_id = ''
   if (type === 'copy') uploadForm.parsed_text = ''
+  if (uploadFileInput.value) uploadFileInput.value.value = ''
 }
 
 async function loadOrders() { orders.value = await api.get(`/api/products/${detail.value.id}/orders`) }
@@ -636,27 +684,44 @@ function updateMaterialLocal(materialId, patch) {
   ))
 }
 
-async function uploadMatFile({ file, onProgress, onSuccess, onError }) {
+function triggerUploadFile() {
+  if (matUploading.value) return
+  uploadFileInput.value?.click()
+}
+
+function triggerEditFile() {
+  if (matUploading.value) return
+  editFileInput.value?.click()
+}
+
+async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   matUploading.value = true
   matProgress.value = 0
   try {
     const uploaded = await uploadMaterialFile(api, file, (percent) => {
       matProgress.value = percent
-      onProgress?.({ percent })
-    })
-    uploadForm.oss_key = uploaded.key
-    uploadForm.file_name = file.name || '已上传文件'
+    }, { direct: true })
+    target.oss_key = uploaded.key
+    target.file_name = file.name || '已上传文件'
+    if (syncTitle) target.title = file.name || '已上传文件'
+    if ('url' in target) target.url = uploaded.url
     ElMessage.success('文件已上传')
-    onSuccess?.(uploaded)
     return uploaded
   } catch (error) {
-    onError?.(error)
     ElMessage.error(error.response?.data?.detail || '文件上传失败')
-    throw error
+    return null
   } finally {
     matUploading.value = false
   }
 }
+
+async function handleUploadFileChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  await uploadSelectedFile(file, uploadForm)
+}
+
 async function addMaterial() {
   if (!hasMaterialContent(uploadForm)) return ElMessage.warning('请先上传文件、填写链接或填写文案')
   const body = {
@@ -685,36 +750,23 @@ async function delMaterial(m) {
 const editMatVisible = ref(false)
 const matEdit = reactive({})
 function openEditMat(m) {
-  Object.assign(matEdit, { id: m.id, type: m.type, title: m.title, oss_key: m.oss_key, url: m.url,
+  Object.assign(matEdit, { id: m.id, type: m.type, title: m.title, file_name: m.title || '', oss_key: m.oss_key, url: m.url,
     parsed_text: m.parsed_text, source_link: m.source_link,
     report_id: m.report_id, downloadable: m.downloadable })
   editMatVisible.value = true
 }
-async function uploadEditMatFile({ file, onProgress, onSuccess, onError }) {
-  matUploading.value = true
-  matProgress.value = 0
-  try {
-    const uploaded = await uploadMaterialFile(api, file, (percent) => {
-      matProgress.value = percent
-      onProgress?.({ percent })
-    })
-    matEdit.oss_key = uploaded.key
-    matEdit.url = uploaded.url
-    matEdit.title = file.name || '已上传文件'
-    ElMessage.success('文件已上传')
-    onSuccess?.(uploaded)
-  } catch (error) {
-    onError?.(error)
-    ElMessage.error(error.response?.data?.detail || '文件上传失败')
-    throw error
-  } finally {
-    matUploading.value = false
-  }
+async function handleEditFileChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  await uploadSelectedFile(file, matEdit, { syncTitle: true })
 }
 function clearEditFile() {
   matEdit.oss_key = ''
   matEdit.url = ''
   matEdit.title = ''
+  matEdit.file_name = ''
+  if (editFileInput.value) editFileInput.value.value = ''
 }
 async function saveMat() {
   if (!hasMaterialContent(matEdit)) return ElMessage.warning('请保留文件、链接或文案中的至少一项')
@@ -870,7 +922,6 @@ function onQianchuanMessage(event) {
 
 onMounted(async () => {
   await load()
-  loadShopAuths()
   window.addEventListener('message', onQianchuanMessage)
   // 从寄样/视频/达人详情"点产品名"深链进来:自动打开该产品抽屉
   if (route.query.open) {
@@ -894,6 +945,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .upload-progress { font-size: 12px; }
+.native-file-input { display: none; }
 .upload-file-box, .file-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .file-name, .material-file-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-name { max-width: 230px; }

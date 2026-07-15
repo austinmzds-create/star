@@ -165,7 +165,16 @@ def ensure_thumbnail(key: str, size: int) -> str:
         raise ValueError("not an image")
     src = local_path(key)
     if not os.path.isfile(src):
-        raise FileNotFoundError(key)
+        b = _bucket()
+        if not b:
+            raise FileNotFoundError(key)
+        obj = b.get_object(key)
+        try:
+            save_local(key, obj.read())
+        finally:
+            close = getattr(obj, "close", None)
+            if close:
+                close()
     dst = thumb_path(key, size)
     if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
         return dst
