@@ -23,7 +23,7 @@
       <iframe :src="material.url" title="质检报告预览" />
       <a :href="material.url" target="_blank" rel="noopener">新窗口打开报告</a>
     </div>
-    <div v-else-if="material.parsed_text" class="copy-preview">
+    <div v-else-if="material.type === 'copy' && material.parsed_text" class="copy-preview">
       <div class="copy-text">{{ material.parsed_text }}</div>
       <el-button size="small" @click="copy(material.parsed_text)">复制文案</el-button>
     </div>
@@ -39,6 +39,12 @@
     <a v-else-if="material.url" :href="material.url" target="_blank" rel="noopener">
       打开文件
     </a>
+
+    <div v-if="material.type !== 'copy' && material.parsed_text" class="material-caption">
+      <div class="caption-title">说明文案</div>
+      <div class="caption-text">{{ material.parsed_text }}</div>
+      <el-button size="small" text type="primary" @click="copy(material.parsed_text)">复制文案</el-button>
+    </div>
 
     <div v-if="material.report_id" class="report-id">
       报告ID: {{ material.report_id }}
@@ -108,5 +114,14 @@ async function copy(text) {
 }
 .copy-preview { padding: 12px; background: #f8f9fc; border-radius: 8px; }
 .copy-text { margin-bottom: 8px; white-space: pre-wrap; color: #4f566b; }
+.material-caption {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8f9fc;
+  border: 1px solid #eef0f5;
+}
+.caption-title { font-size: 12px; color: #8a93a6; margin-bottom: 4px; }
+.caption-text { white-space: pre-wrap; color: #4f566b; line-height: 1.55; }
 .report-id { margin-top: 8px; color: #8a93a6; font-size: 12px; }
 </style>

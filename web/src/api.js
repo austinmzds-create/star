@@ -11,7 +11,7 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => {
     const method = res.config?.method?.toLowerCase()
-    if (['post', 'put', 'patch', 'delete'].includes(method)) {
+    if (!res.config?.skipBadgeRefresh && ['post', 'put', 'patch', 'delete'].includes(method)) {
       setTimeout(() => window.dispatchEvent(new Event('nav-badge-refresh')), 0)
     }
     return res.data

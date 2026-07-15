@@ -7,7 +7,7 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(settings.database_url, echo=settings.debug, future=True)
+engine = create_engine(settings.database_url, echo=settings.sql_echo, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

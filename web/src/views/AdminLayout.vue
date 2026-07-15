@@ -57,6 +57,9 @@ const followupCount = ref(0)
 const connectionCount = ref(0)
 const todos = ref({})
 let badgeTimer = null
+let badgeDebounce = null
+let refreshingBadges = false
+let refreshAgain = false
 
 const samplesBadge = computed(() => (
   Number(todos.value.pending_sample || 0) + Number(todos.value.to_ship || 0)
@@ -71,6 +74,11 @@ function logout() {
 }
 
 async function refreshBadges() {
+  if (refreshingBadges) {
+    refreshAgain = true
+    return
+  }
+  refreshingBadges = true
   try {
     const r = await api.get('/api/dashboard/workbench')
     todos.value = r.todos || {}
@@ -82,15 +90,26 @@ async function refreshBadges() {
       connectionCount.value = Number(r.count || 0)
     } catch (e) { /* ignore */ }
   }
+  refreshingBadges = false
+  if (refreshAgain) {
+    refreshAgain = false
+    scheduleRefreshBadges()
+  }
+}
+
+function scheduleRefreshBadges() {
+  if (badgeDebounce) clearTimeout(badgeDebounce)
+  badgeDebounce = setTimeout(refreshBadges, 250)
 }
 
 onMounted(async () => {
   await refreshBadges()
-  window.addEventListener('nav-badge-refresh', refreshBadges)
+  window.addEventListener('nav-badge-refresh', scheduleRefreshBadges)
   badgeTimer = setInterval(refreshBadges, 30000)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('nav-badge-refresh', refreshBadges)
+  window.removeEventListener('nav-badge-refresh', scheduleRefreshBadges)
+  if (badgeDebounce) clearTimeout(badgeDebounce)
   if (badgeTimer) clearInterval(badgeTimer)
 })
 </script>

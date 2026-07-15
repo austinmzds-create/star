@@ -92,8 +92,20 @@
     <!-- 编辑素材 -->
     <el-dialog v-model="editMatVisible" title="编辑素材" width="480px" append-to-body>
       <el-form label-width="80px">
-        <el-form-item label="标题"><el-input v-model="matEdit.title" /></el-form-item>
-        <el-form-item v-if="matEdit.type === 'copy'" label="文案"><el-input v-model="matEdit.parsed_text" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item v-if="matEdit.type !== 'copy'" label="文件">
+          <div class="file-edit-row">
+            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadEditMatFile"
+              :disabled="matUploading" :accept="acceptOf(matEdit.type)">
+              <el-button size="small" :loading="matUploading">{{ matEdit.oss_key ? '替换文件' : '上传文件' }}</el-button>
+            </el-upload>
+            <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
+            <el-button v-if="matEdit.oss_key" size="small" text type="danger" @click="clearEditFile">移除文件</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item :label="matEdit.type === 'copy' ? '文案' : '说明文案'">
+          <el-input v-model="matEdit.parsed_text" type="textarea" :rows="4"
+            :placeholder="matEdit.type === 'copy' ? '文案内容' : '描述这个素材的用途、亮点或拍摄参考'" />
+        </el-form-item>
         <el-form-item v-if="matEdit.type === 'video_hot'" label="爆款链接"><el-input v-model="matEdit.source_link" /></el-form-item>
         <el-form-item v-if="matEdit.type === 'pdf'" label="报告ID"><el-input v-model="matEdit.report_id" /></el-form-item>
         <el-form-item label="允许下载"><el-switch v-model="matEdit.downloadable" /></el-form-item>
@@ -164,18 +176,11 @@
                 <!-- 列表 -->
                 <div v-for="m in materialsOf(t.v)" :key="m.id" class="material-card">
                   <div class="material-card-head">
-                    <template v-if="renamingId === m.id">
-                      <el-input v-model="renameTitle" size="small" class="rename-input" @keyup.enter="saveRename(m)" />
-                      <el-button size="small" text type="primary" @click="saveRename(m)">保存</el-button>
-                      <el-button size="small" text @click="cancelRename">取消</el-button>
-                    </template>
-                    <template v-else>
-                      <strong>{{ m.title || MAT_TYPES.find((item) => item.v === m.type)?.l }}</strong>
-                      <el-button size="small" text @click="startRename(m)">改名</el-button>
-                    </template>
+                    <el-tag size="small">{{ MAT_TYPES.find((item) => item.v === m.type)?.l }}</el-tag>
+                    <span v-if="m.title" class="muted material-file-name">{{ m.title }}</span>
                     <div class="mat-ops">
-                      <el-icon class="op" @click="openEditMat(m)"><Edit /></el-icon>
-                      <el-icon class="del" @click="delMaterial(m)"><Delete /></el-icon>
+                      <el-button size="small" text type="primary" @click="openEditMat(m)">编辑</el-button>
+                      <el-button size="small" text type="danger" @click="delMaterial(m)">删除</el-button>
                     </div>
                   </div>
                   <MaterialPreview :material="m" />
@@ -329,48 +334,45 @@
     <el-dialog v-model="uploadVisible" title="上传素材" width="480px" append-to-body>
       <el-form label-width="64px">
         <el-form-item label="类型">
-          <el-select v-model="uploadForm.type" style="width:100%">
+          <el-select v-model="uploadForm.type" style="width:100%" @change="onUploadTypeChange">
             <el-option v-for="t in MAT_TYPES" :key="t.v" :label="t.l" :value="t.v" />
           </el-select>
         </el-form-item>
-        <!-- 爆款参考:抖音链接 或 上传视频 -->
-        <template v-if="uploadForm.type === 'video_hot'">
-          <el-form-item label="抖音链接"><el-input v-model="uploadForm.source_link" placeholder="爆款视频链接(可选)" /></el-form-item>
-          <el-form-item label="或视频">
-            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMat"
-              :disabled="matUploading" accept="video/*">
-              <el-button size="small" :loading="matUploading">选择视频上传</el-button>
+        <el-form-item v-if="uploadForm.type !== 'copy'" label="文件">
+          <div class="upload-file-box">
+            <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMatFile"
+              :disabled="matUploading" :accept="acceptOf(uploadForm.type)">
+              <el-button size="small" :loading="matUploading">
+                {{ uploadForm.oss_key ? '重新上传文件' : '选择文件上传' }}
+              </el-button>
             </el-upload>
-          </el-form-item>
-        </template>
-        <!-- 文案:纯文本 -->
-        <el-form-item v-else-if="uploadForm.type === 'copy'" label="文案">
-          <el-input v-model="uploadForm.parsed_text" type="textarea" :rows="4" placeholder="文案内容" />
+            <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
+            <template v-if="uploadForm.oss_key">
+              <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
+              <el-button size="small" text type="danger" @click="clearUploadFile">移除</el-button>
+            </template>
+          </div>
         </el-form-item>
-        <!-- 其余:上传文件 -->
-        <el-form-item v-else label="文件">
-          <el-upload :show-file-list="false" :before-upload="() => true" :http-request="uploadMat"
-            :disabled="matUploading" :accept="acceptOf(uploadForm.type)">
-            <el-button size="small" :loading="matUploading">选择文件上传</el-button>
-          </el-upload>
-          <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
+        <el-form-item v-if="uploadForm.type === 'video_hot'" label="链接">
+          <el-input v-model="uploadForm.source_link" placeholder="可选,爆款视频链接" />
         </el-form-item>
         <el-form-item v-if="uploadForm.type === 'pdf'" label="报告ID">
           <el-input v-model="uploadForm.report_id" placeholder="可选" />
         </el-form-item>
-        <el-form-item label="标题"><el-input v-model="uploadForm.title" placeholder="可选,默认文件名" /></el-form-item>
+        <el-form-item :label="uploadForm.type === 'copy' ? '文案' : '说明文案'">
+          <el-input v-model="uploadForm.parsed_text" type="textarea" :rows="4"
+            :placeholder="uploadForm.type === 'copy' ? '可选,填写文案内容' : '可选,描述这个素材给达人看的用途、亮点或拍摄参考'" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="uploadVisible = false">关闭</el-button>
-        <el-button v-if="uploadForm.type === 'video_hot' || uploadForm.type === 'copy'"
-          type="primary" @click="addMaterial">添加</el-button>
+        <el-button type="primary" :disabled="matUploading" @click="addMaterial">添加</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -379,7 +381,7 @@ import CopyText from '../components/CopyText.vue'
 import InfluencerSelect from '../components/InfluencerSelect.vue'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import MultiUpload from '../components/MultiUpload.vue'
-import { uploadAndCreateMaterial } from '../services/materialUpload'
+import { uploadMaterialFile } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
 import { SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
@@ -418,8 +420,6 @@ const dtab = ref('info')
 const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
-const renamingId = ref(null)
-const renameTitle = ref('')
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
@@ -542,12 +542,46 @@ async function open(row, tabName = 'info') {
 
 // ---- 素材上传:顶部一个入口,弹框选类型,传完进对应类型 tab ----
 const uploadVisible = ref(false)
-const uploadForm = reactive({ type: 'video_ai', title: '', source_link: '', parsed_text: '', report_id: '' })
+const uploadForm = reactive({
+  type: 'video_ai',
+  oss_key: '',
+  file_name: '',
+  source_link: '',
+  parsed_text: '',
+  report_id: '',
+})
 const materialCount = computed(() => (detail.value?.materials || []).length)
 
 function openUpload() {
-  Object.assign(uploadForm, { type: mtype.value || 'video_ai', title: '', source_link: '', parsed_text: '', report_id: '' })
+  Object.assign(uploadForm, {
+    type: mtype.value || 'video_ai',
+    oss_key: '',
+    file_name: '',
+    source_link: '',
+    parsed_text: '',
+    report_id: '',
+  })
   uploadVisible.value = true
+}
+
+function cleanText(value) {
+  return (value || '').trim()
+}
+
+function hasMaterialContent(form) {
+  return Boolean(cleanText(form.oss_key) || cleanText(form.source_link) || cleanText(form.parsed_text))
+}
+
+function clearUploadFile() {
+  uploadForm.oss_key = ''
+  uploadForm.file_name = ''
+}
+
+function onUploadTypeChange(type) {
+  clearUploadFile()
+  uploadForm.source_link = ''
+  uploadForm.report_id = ''
+  if (type === 'copy') uploadForm.parsed_text = ''
 }
 
 async function loadOrders() { orders.value = await api.get(`/api/products/${detail.value.id}/orders`) }
@@ -602,45 +636,38 @@ function updateMaterialLocal(materialId, patch) {
   ))
 }
 
-async function uploadMat({ file, onProgress, onSuccess, onError }) {
+async function uploadMatFile({ file, onProgress, onSuccess, onError }) {
   matUploading.value = true
   matProgress.value = 0
-  const targetType = uploadForm.type
   try {
-    const created = await uploadAndCreateMaterial(api, {
-      productId: detail.value.id,
-      type: targetType,
-      file,
-      title: uploadForm.title,
-      reportId: uploadForm.report_id,
-      onProgress: (percent) => {
-        matProgress.value = percent
-        onProgress?.({ percent })
-      },
+    const uploaded = await uploadMaterialFile(api, file, (percent) => {
+      matProgress.value = percent
+      onProgress?.({ percent })
     })
-    ElMessage.success('上传成功,素材已添加')
-    prependMaterial(created)
-    onSuccess?.(created)
-    uploadVisible.value = false
-    mtype.value = targetType   // 传完切到对应类型 tab
-    load()
-    return created
+    uploadForm.oss_key = uploaded.key
+    uploadForm.file_name = file.name || '已上传文件'
+    ElMessage.success('文件已上传')
+    onSuccess?.(uploaded)
+    return uploaded
   } catch (error) {
     onError?.(error)
-    ElMessage.error(error.materialStage === 'create'
-      ? '文件已上传，但素材创建失败，请重试'
-      : (error.response?.data?.detail || '文件上传失败'))
+    ElMessage.error(error.response?.data?.detail || '文件上传失败')
     throw error
   } finally {
     matUploading.value = false
   }
 }
 async function addMaterial() {
-  const body = { type: uploadForm.type, title: uploadForm.title }
-  if (uploadForm.type === 'video_hot') body.source_link = uploadForm.source_link
-  else if (uploadForm.type === 'copy') body.parsed_text = uploadForm.parsed_text
-  if (!body.source_link && !body.parsed_text) return ElMessage.warning('请填写内容')
-  const created = await api.post(`/api/products/${detail.value.id}/materials`, body)
+  if (!hasMaterialContent(uploadForm)) return ElMessage.warning('请先上传文件、填写链接或填写文案')
+  const body = {
+    type: uploadForm.type,
+    title: uploadForm.file_name || undefined,
+    oss_key: cleanText(uploadForm.oss_key) || undefined,
+    parsed_text: cleanText(uploadForm.parsed_text) || undefined,
+    report_id: cleanText(uploadForm.report_id) || undefined,
+  }
+  if (uploadForm.type === 'video_hot') body.source_link = cleanText(uploadForm.source_link) || undefined
+  const created = await api.post(`/api/products/${detail.value.id}/materials`, body, { skipBadgeRefresh: true })
   ElMessage.success('已添加')
   prependMaterial(created)
   uploadVisible.value = false
@@ -649,7 +676,7 @@ async function addMaterial() {
 }
 async function delMaterial(m) {
   await ElMessageBox.confirm('确认删除该素材?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/materials/${m.id}`)
+  await api.delete(`/api/products/materials/${m.id}`, { skipBadgeRefresh: true })
   detail.value.materials = detail.value.materials.filter((item) => item.id !== m.id)
   ElMessage.success('已删除')
   load()
@@ -658,39 +685,57 @@ async function delMaterial(m) {
 const editMatVisible = ref(false)
 const matEdit = reactive({})
 function openEditMat(m) {
-  Object.assign(matEdit, { id: m.id, type: m.type, title: m.title, parsed_text: m.parsed_text,
-    source_link: m.source_link, report_id: m.report_id, downloadable: m.downloadable })
+  Object.assign(matEdit, { id: m.id, type: m.type, title: m.title, oss_key: m.oss_key, url: m.url,
+    parsed_text: m.parsed_text, source_link: m.source_link,
+    report_id: m.report_id, downloadable: m.downloadable })
   editMatVisible.value = true
 }
+async function uploadEditMatFile({ file, onProgress, onSuccess, onError }) {
+  matUploading.value = true
+  matProgress.value = 0
+  try {
+    const uploaded = await uploadMaterialFile(api, file, (percent) => {
+      matProgress.value = percent
+      onProgress?.({ percent })
+    })
+    matEdit.oss_key = uploaded.key
+    matEdit.url = uploaded.url
+    matEdit.title = file.name || '已上传文件'
+    ElMessage.success('文件已上传')
+    onSuccess?.(uploaded)
+  } catch (error) {
+    onError?.(error)
+    ElMessage.error(error.response?.data?.detail || '文件上传失败')
+    throw error
+  } finally {
+    matUploading.value = false
+  }
+}
+function clearEditFile() {
+  matEdit.oss_key = ''
+  matEdit.url = ''
+  matEdit.title = ''
+}
 async function saveMat() {
+  if (!hasMaterialContent(matEdit)) return ElMessage.warning('请保留文件、链接或文案中的至少一项')
   await api.put(`/api/products/materials/${matEdit.id}`, {
-    title: matEdit.title, parsed_text: matEdit.parsed_text, source_link: matEdit.source_link,
-    report_id: matEdit.report_id, downloadable: matEdit.downloadable,
-  })
+    title: matEdit.title || undefined,
+    oss_key: cleanText(matEdit.oss_key) || null,
+    parsed_text: cleanText(matEdit.parsed_text) || null,
+    source_link: cleanText(matEdit.source_link) || null,
+    report_id: cleanText(matEdit.report_id) || null,
+    downloadable: matEdit.downloadable,
+  }, { skipBadgeRefresh: true })
   updateMaterialLocal(matEdit.id, {
     title: matEdit.title,
-    parsed_text: matEdit.parsed_text,
-    source_link: matEdit.source_link,
-    report_id: matEdit.report_id,
+    oss_key: cleanText(matEdit.oss_key) || null,
+    url: matEdit.oss_key ? matEdit.url : null,
+    parsed_text: cleanText(matEdit.parsed_text) || null,
+    source_link: cleanText(matEdit.source_link) || null,
+    report_id: cleanText(matEdit.report_id) || null,
     downloadable: matEdit.downloadable,
   })
   editMatVisible.value = false; ElMessage.success('已保存')
-}
-function startRename(m) {
-  renamingId.value = m.id
-  renameTitle.value = m.title || ''
-}
-function cancelRename() {
-  renamingId.value = null
-  renameTitle.value = ''
-}
-async function saveRename(m) {
-  const title = renameTitle.value.trim()
-  if (!title) return ElMessage.warning('名称不能为空')
-  await api.put(`/api/products/materials/${m.id}`, { title })
-  updateMaterialLocal(m.id, { title })
-  cancelRename()
-  ElMessage.success('已改名')
 }
 async function removeProduct(row) {
   await ElMessageBox.confirm('确认删除该产品?(仅无寄样/视频/出单记录时可删)', '删除', { type: 'warning' })
@@ -849,14 +894,14 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .upload-progress { font-size: 12px; }
+.upload-file-box, .file-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.file-name, .material-file-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-name { max-width: 230px; }
+.material-file-name { max-width: 360px; }
 .material-card { padding: 12px; margin-bottom: 12px; border: 1px solid #eceef3; border-radius: 10px; }
 .material-card-head { display: flex; align-items: center; gap: 10px; }
 .mat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f4f5f8; }
 .mat-ops { margin-left: auto; display: flex; gap: 10px; }
-.rename-input { width: 220px; max-width: 42vw; }
-.material-card .op, .material-card .del { color: #c0c4cc; cursor: pointer; }
-.material-card .op:hover { color: #6b5cf6; }
-.material-card .del:hover { color: #f56c6c; }
 .qianchuan-head {
   display: flex;
   align-items: center;

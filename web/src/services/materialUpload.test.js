@@ -18,6 +18,7 @@ describe('uploadAndCreateMaterial', () => {
       type: 'video_ai',
       file,
       title: '',
+      parsedText: '这条视频用来给达人参考开头节奏',
       reportId: '',
     })
 
@@ -26,7 +27,12 @@ describe('uploadAndCreateMaterial', () => {
     expect(api.post.mock.calls[1][1].get('file')).toBe(file)
     expect(api.post.mock.calls[2]).toEqual([
       '/api/products/3/materials',
-      { type: 'video_ai', title: '带货视频.mp4', oss_key: 'materials/a.mp4' },
+      {
+        type: 'video_ai',
+        title: '带货视频.mp4',
+        oss_key: 'materials/a.mp4',
+        parsed_text: '这条视频用来给达人参考开头节奏',
+      },
     ])
   })
 
@@ -43,6 +49,7 @@ describe('uploadAndCreateMaterial', () => {
       type: 'pdf',
       file: new File(['pdf'], '报告.pdf'),
       title: '质检报告',
+      parsedText: '达人可引用这份质检报告里的成分和检测结论',
       reportId: 'REPORT-1',
     })
 
@@ -50,6 +57,7 @@ describe('uploadAndCreateMaterial', () => {
       type: 'pdf',
       title: '质检报告',
       oss_key: 'materials/a.pdf',
+      parsed_text: '达人可引用这份质检报告里的成分和检测结论',
       report_id: 'REPORT-1',
     })
   })

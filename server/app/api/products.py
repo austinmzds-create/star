@@ -121,9 +121,7 @@ def _grant_count(db: Session, pid: int) -> int:
 
 
 def _qianchuan_binding_dict(row: ProductQianchuanBinding | None) -> dict:
-    configured = bool(row and any([
-        row.shop_auth_id, row.shop_id, row.shop_name, row.advertiser_id, row.qianchuan_product_id,
-    ]))
+    configured = _qianchuan_binding_configured(row)
     return {
         "id": row.id if row else None,
         "shop_auth_id": row.shop_auth_id if row else None,
@@ -146,14 +144,24 @@ def _qianchuan_binding_dict(row: ProductQianchuanBinding | None) -> dict:
     }
 
 
-def _qianchuan_status(db: Session, product_id: int) -> str:
-    row = db.scalars(select(ProductQianchuanBinding)
-                     .where(ProductQianchuanBinding.product_id == product_id)).first()
+def _qianchuan_binding_configured(row: ProductQianchuanBinding | None) -> bool:
+    return bool(row and any([
+        row.shop_auth_id, row.shop_id, row.shop_name, row.advertiser_id, row.qianchuan_product_id,
+    ]))
+
+
+def _qianchuan_status_from_row(row: ProductQianchuanBinding | None) -> str:
     if not row:
         return "unconfigured"
     if row.bind_status == "disabled":
         return "disabled"
-    return "configured" if _qianchuan_binding_dict(row)["configured"] else "draft"
+    return "configured" if _qianchuan_binding_configured(row) else "draft"
+
+
+def _qianchuan_status(db: Session, product_id: int) -> str:
+    row = db.scalars(select(ProductQianchuanBinding)
+                     .where(ProductQianchuanBinding.product_id == product_id)).first()
+    return _qianchuan_status_from_row(row)
 
 
 @router.get("")
@@ -176,12 +184,34 @@ def list_products(q: str | None = None, status: str | None = None,
     if paged:
         q_stmt = q_stmt.offset((page - 1) * page_size).limit(page_size)
     rows = db.scalars(q_stmt).all()
+    product_ids = [p.id for p in rows]
+    material_counts = {}
+    grant_counts = {}
+    binding_by_product = {}
+    if product_ids:
+        material_counts = dict(db.execute(
+            select(Material.product_id, func.count(Material.id))
+            .where(Material.product_id.in_(product_ids))
+            .group_by(Material.product_id)
+        ).all())
+        grant_counts = dict(db.execute(
+            select(AccessGrant.product_id, func.count(AccessGrant.id))
+            .where(AccessGrant.product_id.in_(product_ids))
+            .group_by(AccessGrant.product_id)
+        ).all())
+        binding_by_product = {
+            row.product_id: row
+            for row in db.scalars(
+                select(ProductQianchuanBinding)
+                .where(ProductQianchuanBinding.product_id.in_(product_ids))
+            ).all()
+        }
     items = [{"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
               "product_image": storage.thumbnail_url(p.product_image, 96),
               "default_commission": float(p.default_commission) if p.default_commission else None,
-              "status": p.status, "material_count": len(p.materials),
-              "granted_count": _grant_count(db, p.id),
-              "qianchuan_status": _qianchuan_status(db, p.id),
+              "status": p.status, "material_count": int(material_counts.get(p.id, 0)),
+              "granted_count": int(grant_counts.get(p.id, 0)),
+              "qianchuan_status": _qianchuan_status_from_row(binding_by_product.get(p.id)),
               "created_at": p.created_at.isoformat()} for p in rows]
     return {"items": items, "total": total, "page": page, "page_size": page_size} if paged else items
 
@@ -196,17 +226,26 @@ class MaterialIn(BaseModel):
     downloadable: bool = True
 
 
-def _validate_material(body: MaterialIn):
-    if body.type not in MATERIAL_TYPES:
+def _normalized_material_data(data: dict, material_type: str) -> dict:
+    for key in ("title", "oss_key", "source_link", "parsed_text", "report_id"):
+        if isinstance(data.get(key), str):
+            data[key] = data[key].strip() or None
+    if material_type != "video_hot":
+        data["source_link"] = None
+    if material_type != "pdf":
+        data["report_id"] = None
+    return data
+
+
+def _validate_material_data(data: dict, material_type: str):
+    if material_type not in MATERIAL_TYPES:
         raise HTTPException(400, "素材类型不支持")
-    if body.type == "copy":
-        if not (body.parsed_text or "").strip():
-            raise HTTPException(400, "文案内容不能为空")
+    has_file = bool(data.get("oss_key"))
+    has_link = bool(data.get("source_link"))
+    has_text = bool(data.get("parsed_text"))
+    if has_file or has_link or has_text:
         return
-    if body.type == "video_hot" and (body.source_link or "").strip():
-        return
-    if not (body.oss_key or "").strip():
-        raise HTTPException(400, "请先上传文件")
+    raise HTTPException(400, "请先上传文件、填写链接或填写文案")
 
 
 @router.post("/{product_id}/materials")
@@ -214,8 +253,9 @@ def add_material(product_id: int, body: MaterialIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     if not db.get(Product, product_id):
         raise HTTPException(404, "产品不存在")
-    _validate_material(body)
-    m = Material(product_id=product_id, **body.model_dump())
+    data = _normalized_material_data(body.model_dump(), body.type)
+    _validate_material_data(data, body.type)
+    m = Material(product_id=product_id, **data)
     db.add(m)
     db.commit()
     db.refresh(m)
@@ -225,6 +265,7 @@ def add_material(product_id: int, body: MaterialIn,
 
 class MaterialEditIn(BaseModel):
     title: str | None = None
+    oss_key: str | None = None
     source_link: str | None = None
     parsed_text: str | None = None
     report_id: str | None = None
@@ -238,8 +279,14 @@ def edit_material(material_id: int, body: MaterialEditIn,
     m = db.get(Material, material_id)
     if not m:
         raise HTTPException(404, "素材不存在")
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = _normalized_material_data(body.model_dump(exclude_unset=True), m.type)
+    for k, v in data.items():
         setattr(m, k, v)
+    _validate_material_data({
+        "oss_key": m.oss_key,
+        "source_link": m.source_link,
+        "parsed_text": m.parsed_text,
+    }, m.type)
     db.commit()
     return {"ok": True}
 

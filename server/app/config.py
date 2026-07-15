@@ -7,8 +7,10 @@ class Settings(BaseSettings):
 
     app_name: str = "达人管理平台"
     # 安全默认:debug 默认 False(生产安全优先);开发/测试环境在 .env 显式设 DEBUG=true。
-    # debug=True 才启用:dev-switch 换角色、默认管理员 admin/admin123 种子、SQL echo。
+    # debug=True 才启用:dev-switch 换角色、默认管理员 admin/admin123 种子。
     debug: bool = False
+    # SQL 明细日志很重,本地测试默认关闭;需要排查 ORM 时显式 SQL_ECHO=true。
+    sql_echo: bool = False
     # 可在生产环境显式开放管理员测试切换；接口仍强制要求管理员 staff token。
     enable_test_role_switcher: bool = False
     secret_key: str = "change-me"

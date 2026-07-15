@@ -26,6 +26,17 @@ describe('MaterialPreview', () => {
     expect(image.props('previewSrcList')).toEqual(['/signed/image.jpg'])
   })
 
+  it('shows description text under uploaded media', () => {
+    const wrapper = mountPreview({
+      type: 'image',
+      url: '/signed/image.jpg',
+      parsed_text: '这张图用于展示使用前后对比',
+    })
+
+    expect(wrapper.text()).toContain('说明文案')
+    expect(wrapper.text()).toContain('这张图用于展示使用前后对比')
+  })
+
   it('offers a retry with a cache-busting URL after an image error', async () => {
     const wrapper = mountPreview({ type: 'image', url: '/signed/image.jpg?e=1&s=test' })
     const image = wrapper.getComponent({ name: 'ElImage' })
