@@ -66,8 +66,25 @@
         <el-alert v-if="parsed && parsed.duplicate && parsed.duplicate.owned_by_other_bd"
           type="error" :closable="false" style="margin: 12px 0"
           :title="`该账号已被商务 ${parsed.duplicate.owner_bd_name || '其他同事'} 对接,请勿重复建档`" />
-        <el-alert v-else-if="parsed && parsed.duplicate" type="warning" :closable="false" style="margin: 12px 0"
-          :title="`达人已存在:${parsed.duplicate.nickname},已合作 ${parsed.duplicate.round_count} 轮,请打开已有档案继续维护`" />
+        <template v-else-if="parsed && parsed.duplicate">
+          <el-alert type="warning" :closable="false" style="margin: 12px 0"
+            :title="`达人已存在:${parsed.duplicate.nickname}(已合作 ${parsed.duplicate.round_count} 轮)`"
+            :description="duplicateDiff.length ? '本次录入与已有档案有差异,勾选要更新的字段并填写原因,或直接打开已有档案。' : '本次录入无新差异,可直接打开已有档案继续维护。'" />
+          <div v-if="duplicateDiff.length" class="diff-box">
+            <div class="diff-head">
+              <span>字段差异对比</span>
+              <el-button link size="small" @click="toggleAllDiff">{{ allDiffSelected ? '全不选' : '全选' }}</el-button>
+            </div>
+            <div v-for="row in duplicateDiff" :key="row.field" class="diff-row">
+              <el-checkbox v-model="diffSelected[row.field]" />
+              <span class="diff-label">{{ row.label }}</span>
+              <span class="diff-old">{{ row.old || '空' }}</span>
+              <el-icon class="diff-arrow"><Right /></el-icon>
+              <span class="diff-new">{{ row.new || '空' }}</span>
+            </div>
+            <el-input v-model="updateReason" size="small" placeholder="变更原因(留痕,可选)" style="margin-top:8px" />
+          </div>
+        </template>
         <el-form label-width="90px" style="margin-top: 12px">
           <el-row :gutter="12">
             <el-col v-for="f in FIELDS" :key="f.key" :span="12">
@@ -92,7 +109,11 @@
 
       <template #footer>
         <el-button @click="showPaste = false">取消</el-button>
-        <el-button type="primary" :disabled="!canSave" @click="save">{{ saveLabel }}</el-button>
+        <el-button v-if="showUpdateButton" @click="openExisting">打开已有档案</el-button>
+        <el-button v-if="showUpdateButton" type="primary" :loading="updating" @click="applyUpdate">
+          更新选中字段并打开
+        </el-button>
+        <el-button v-else type="primary" :disabled="!canSave" @click="save">{{ saveLabel }}</el-button>
       </template>
     </el-dialog>
 
@@ -129,7 +150,8 @@
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { Right } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import { num } from '../utils/format'
@@ -176,12 +198,53 @@ const importResult = ref(null)
 const duplicate = computed(() => parsed.value?.duplicate || null)
 const duplicateOwnedByOther = computed(() => Boolean(duplicate.value?.owned_by_other_bd))
 const duplicateInScope = computed(() => Boolean(duplicate.value?.id && !duplicateOwnedByOther.value))
+const duplicateDiff = computed(() => duplicate.value?.diff || [])
+const showUpdateButton = computed(() => duplicateInScope.value)
 const saveLabel = computed(() => (duplicateInScope.value ? '打开已有档案' : '保存建档'))
 const canSave = computed(() => {
   if (duplicateOwnedByOther.value) return false
   if (duplicateInScope.value) return true
   return Boolean(form.nickname && form.douyin_id && (mode.value === 'manual' || parsed.value))
 })
+
+// 重复确认:每个差异字段是否勾选更新(默认全选)
+const diffSelected = reactive({})
+const updateReason = ref('')
+const updating = ref(false)
+const allDiffSelected = computed(() => duplicateDiff.value.length > 0
+  && duplicateDiff.value.every((r) => diffSelected[r.field]))
+watch(duplicateDiff, (rows) => {
+  Object.keys(diffSelected).forEach((k) => delete diffSelected[k])
+  rows.forEach((r) => { diffSelected[r.field] = true })
+  updateReason.value = ''
+})
+function toggleAllDiff() {
+  const to = !allDiffSelected.value
+  duplicateDiff.value.forEach((r) => { diffSelected[r.field] = to })
+}
+function openExisting() {
+  showPaste.value = false
+  router.push(`/influencers/${duplicate.value.id}`)
+}
+async function applyUpdate() {
+  const fields = {}
+  duplicateDiff.value.forEach((r) => {
+    if (diffSelected[r.field]) fields[r.field] = parsed.value.fields[r.field]
+  })
+  if (!Object.keys(fields).length) { openExisting(); return }
+  updating.value = true
+  try {
+    const r = await api.post(`/api/influencers/${duplicate.value.id}/apply-update`,
+      { fields, reason: updateReason.value || undefined })
+    ElMessage.success(`已更新 ${r.changed} 个字段`)
+    showPaste.value = false
+    router.push(`/influencers/${duplicate.value.id}`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '更新失败')
+  } finally {
+    updating.value = false
+  }
+}
 
 function resetDialog() {
   mode.value = 'paste'
@@ -294,4 +357,11 @@ onMounted(load)
 .low-conf :deep(.el-input__wrapper) { background: #fdf6ec; } /* LLM 低置信度标黄待确认 */
 .import-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .upload-text { color: #606266; font-size: 13px; }
+.diff-box { border: 1px solid #f0d8a8; background: #fffdf6; border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+.diff-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #8a6d3b; margin-bottom: 6px; }
+.diff-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; }
+.diff-label { min-width: 64px; color: #606266; }
+.diff-old { color: #b3bac9; text-decoration: line-through; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.diff-arrow { color: #e6a23c; }
+.diff-new { color: #1f2637; font-weight: 500; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

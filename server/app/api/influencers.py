@@ -58,6 +58,43 @@ class ParseIn(BaseModel):
     text: str
 
 
+# 可在「重复确认」里对比/更新的档案字段(排除归属、管理员备注等敏感/管控字段)
+DIFF_FIELDS = [
+    ("nickname", "昵称"), ("douyin_id", "抖音号"), ("douyin_uid", "UID"),
+    ("phone", "手机号"), ("real_name", "收件人"), ("default_address", "收件地址"),
+    ("homepage_url", "主页"), ("fans_count", "粉丝数"), ("gmv_30d", "近30天GMV"),
+    ("shoot_type", "拍摄类型"), ("cooperation_code", "合作码"),
+    ("data_source", "数据来源"), ("category_tags", "内容品类"),
+]
+
+
+def _norm_for_compare(field, value):
+    """把 None/空串/列表统一成可比较的展示值。"""
+    if field == "category_tags":
+        if isinstance(value, list):
+            return "、".join(str(v) for v in value)
+        return (value or "").strip() if isinstance(value, str) else (value or "")
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value)
+
+
+def _build_diff(existing: Influencer, incoming: dict) -> list[dict]:
+    """逐字段对比「已有档案」与「本次录入」,只返回本次有值且与已有不同的字段。"""
+    diff = []
+    for field, label in DIFF_FIELDS:
+        new_raw = incoming.get(field)
+        if new_raw is None or (isinstance(new_raw, str) and not new_raw.strip()):
+            continue
+        old_show = _norm_for_compare(field, getattr(existing, field, None))
+        new_show = _norm_for_compare(field, new_raw)
+        if old_show != new_show:
+            diff.append({"field": field, "label": label, "old": old_show, "new": new_show})
+    return diff
+
+
 def _identity_conditions(fields: dict, exclude_id: int | None = None):
     conds = []
     for field in IDENTITY_FIELDS:
@@ -289,7 +326,8 @@ async def parse(body: ParseIn, user: User = Depends(current_user), db: Session =
         if owns_or_admin(user, existing.owner_bd_id):
             dup = {"id": existing.id, "nickname": existing.nickname,
                    "round_count": len(existing.cooperations),
-                   "owner_bd_id": existing.owner_bd_id}
+                   "owner_bd_id": existing.owner_bd_id,
+                   "diff": _build_diff(existing, f)}
         else:
             # 已被其他商务对接:只提示归属,不泄漏其达人档案(数据隔离)
             owner = db.get(User, existing.owner_bd_id) if existing.owner_bd_id else None
@@ -632,6 +670,58 @@ def update(influencer_id: int, body: UpdateIn,
         inf.admin_note = body.admin_note
     db.commit()
     return {"ok": True}
+
+
+class ApplyUpdateIn(BaseModel):
+    fields: dict
+    reason: str | None = None
+
+
+@router.post("/{influencer_id}/apply-update")
+def apply_update(influencer_id: int, body: ApplyUpdateIn,
+                 user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """重复确认:按用户勾选的字段更新已有达人,逐字段落 OperationLog(方案B 需求2)。"""
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    allowed = {f for f, _ in DIFF_FIELDS}
+    updates = {k: v for k, v in (body.fields or {}).items() if k in allowed}
+    if not updates:
+        return {"ok": True, "changed": 0}
+    # 身份字段规范化 + 唯一校验(避免撞库产生重复达人)
+    identity_updates = {}
+    for field in IDENTITY_FIELDS:
+        if field in updates:
+            raw = updates[field]
+            val = normalize_douyin(raw) if field == "douyin_id" else _clean_identity(raw)
+            updates[field] = val
+            if val:
+                identity_updates[field] = val
+    if "douyin_id" in updates and not updates["douyin_id"]:
+        raise HTTPException(400, "抖音号不能为空")
+    if identity_updates:
+        clash = _find_duplicate(db, identity_updates, exclude_id=inf.id)
+        if clash and clash.archived is not True:
+            raise HTTPException(400, f"该达人已存在(ID {clash.id}),不能重复使用相同抖音号/UID/手机号/合作码")
+    changed = 0
+    for field, value in updates.items():
+        if field == "category_tags" and isinstance(value, str):
+            import re
+            value = [p.strip() for p in re.split(r"[,，;；、|\n]+", value) if p.strip()] or None
+        old_val = getattr(inf, field, None)
+        if _norm_for_compare(field, old_val) == _norm_for_compare(field, value):
+            continue
+        label = FIELD_LABELS.get(field, field)
+        log_op(db, influencer_id=inf.id, event_type="profile_changed", actor=user,
+               summary=f"{user.display_name} 修改{label}:{_norm_for_compare(field, old_val) or '空'}"
+                       f"→{_norm_for_compare(field, value) or '空'}"
+                       + (f"(原因:{body.reason})" if body.reason else ""),
+               detail={"field": field, "old": _norm_for_compare(field, old_val),
+                       "new": _norm_for_compare(field, value), "reason": body.reason})
+        setattr(inf, field, value)
+        changed += 1
+    db.commit()
+    return {"ok": True, "changed": changed}
 
 
 @router.delete("/{influencer_id}")
