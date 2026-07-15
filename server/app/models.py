@@ -342,6 +342,28 @@ class OrderRecord(Base, TimestampMixin):
     recorded_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
 
 
+# ---------- 统一操作日志(方案B 需求1/2:时间轴 + 变更记录同源) ----------
+
+class OperationLog(Base):
+    """一条业务动作的留痕:谁在什么时间对哪个达人(可关联产品)做了什么。
+
+    达人详情「产品合作」时间轴与「全部动态」都读它;逐字段变更把前后值写进 detail。
+    在各业务动作的同一事务里调 services.oplog.log_op 落库,刷新/重启后仍可从库恢复。
+    """
+    __tablename__ = "operation_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)  # 无产品的事件为空
+    event_type: Mapped[str] = mapped_column(String(32), index=True)
+    actor_id: Mapped[int | None] = mapped_column(Integer)          # 操作人 id(系统/回调为空)
+    actor_name: Mapped[str | None] = mapped_column(String(64))     # 操作人姓名快照(当时)
+    actor_role: Mapped[str] = mapped_column(String(16), default="system")  # admin/bd/influencer/system
+    summary: Mapped[str] = mapped_column(String(255))              # 一句中文摘要(可直接展示)
+    detail: Mapped[dict | None] = mapped_column(JSON)              # 可选:字段前后值 {field, old, new}
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+
+
 # ---------- 卡审知识库(P1) ----------
 
 class BlockRecord(Base, TimestampMixin):

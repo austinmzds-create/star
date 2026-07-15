@@ -16,6 +16,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       VideoTask)
 from ..services import crypto, storage
 from ..services import qianchuan as qianchuan_service
+from ..services.oplog import log_op
 from ..services.sample_orders import dedupe_sample_rows
 
 router = APIRouter(prefix="/api/products", tags=["products"])
@@ -535,9 +536,16 @@ def _assert_owns_influencer(db: Session, user: User, influencer_id: int) -> Infl
 @router.post("/{product_id}/grant")
 def grant(product_id: int, body: GrantIn,
           user: User = Depends(current_user), db: Session = Depends(get_db)):
-    _assert_owns_influencer(db, user, body.influencer_id)
+    inf = _assert_owns_influencer(db, user, body.influencer_id)
+    existed = db.scalars(select(AccessGrant).where(
+        AccessGrant.influencer_id == body.influencer_id,
+        AccessGrant.product_id == product_id)).first()
     db.merge(AccessGrant(influencer_id=body.influencer_id, product_id=product_id,
                          granted_by=user.id))
+    if not existed:
+        prod = db.get(Product, product_id)
+        log_op(db, influencer_id=inf.id, product_id=product_id, event_type="product_granted",
+               actor=user, summary=f"{user.display_name} 开放产品:{prod.name if prod else ''}")
     db.commit()
     return {"ok": True}
 
@@ -558,11 +566,14 @@ def list_grants(product_id: int, user: User = Depends(current_user), db: Session
 @router.delete("/{product_id}/grant/{influencer_id}")
 def remove_grant(product_id: int, influencer_id: int,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
-    _assert_owns_influencer(db, user, influencer_id)
+    inf = _assert_owns_influencer(db, user, influencer_id)
     row = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
                                                AccessGrant.influencer_id == influencer_id)).first()
     if row:
         db.delete(row)
+        prod = db.get(Product, product_id)
+        log_op(db, influencer_id=inf.id, product_id=product_id, event_type="product_revoked",
+               actor=user, summary=f"{user.display_name} 收回产品:{prod.name if prod else ''}")
         db.commit()
     return {"ok": True}
 
@@ -615,6 +626,10 @@ def record_order(product_id: int, body: OrderIn,
                     order_date=order_date,
                     amount=Decimal(str(body.amount)), note=body.note, recorded_by=user.id)
     db.add(o)
+    prod = db.get(Product, product_id)
+    log_op(db, influencer_id=body.influencer_id, product_id=product_id, event_type="order_recorded",
+           actor=user, summary=f"{user.display_name} 登记出单 ¥{body.amount}({prod.name if prod else ''})",
+           detail={"amount": float(body.amount), "order_date": order_date.date().isoformat()})
     db.commit()
     return {"id": o.id}
 
@@ -662,6 +677,8 @@ def edit_order(order_id: int, body: OrderEditIn,
         o.amount = Decimal(str(body.amount))
     if body.note is not None:
         o.note = body.note
+    log_op(db, influencer_id=o.influencer_id, product_id=o.product_id, event_type="order_updated",
+           actor=user, summary=f"{user.display_name} 修改出单记录 ¥{float(o.amount)}")
     db.commit()
     return {"ok": True}
 
@@ -669,6 +686,8 @@ def edit_order(order_id: int, body: OrderEditIn,
 @router.delete("/orders/{order_id}")
 def delete_order(order_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     o = _load_owned_order_record(db, user, order_id)
+    log_op(db, influencer_id=o.influencer_id, product_id=o.product_id, event_type="order_deleted",
+           actor=user, summary=f"{user.display_name} 删除出单记录 ¥{float(o.amount)}")
     db.delete(o)
     db.commit()
     return {"ok": True}

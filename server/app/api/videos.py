@@ -11,6 +11,7 @@ from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, Promotion, User,
                       VideoTask)
+from ..services.oplog import influencer_id_for_coop, log_op
 
 
 def _load_owned_task(db, user, task_id):
@@ -71,6 +72,10 @@ def create_video(body: CreateVideoIn,
     task = VideoTask(cooperation_id=coop.id, product_id=body.product_id, dy_url=body.dy_url)
     # TODO: 后台任务下载抖音原视频转存 OSS,回填 saved_oss_key(防链接失效/投流留证);此处不实现下载。
     db.add(task)
+    prod = db.get(Product, body.product_id)
+    log_op(db, influencer_id=coop.influencer_id, product_id=body.product_id,
+           event_type="video_registered", actor=user,
+           summary=f"{user.display_name} 登记视频:{prod.name if prod else ''}")
     db.commit()
     return {"id": task.id}
 
@@ -168,6 +173,17 @@ def audit_video(task_id: int, body: AuditVideoIn,
     if body.time_comments is not None:
         result["time_comments"] = body.time_comments
     task.audit_result = result
+    inf_id = influencer_id_for_coop(db, task.cooperation_id)
+    if inf_id:
+        event = {"approved": "video_approved", "rejected": "video_rejected",
+                 "blocked": "video_blocked"}[action]
+        verb = {"approved": "通过视频审核", "rejected": "驳回视频", "blocked": "标记视频卡审"}[action]
+        summary = f"{user.display_name} {verb}"
+        if action != "approved" and body.reject_reason:
+            summary += f":{body.reject_reason}"
+        log_op(db, influencer_id=inf_id, product_id=task.product_id, event_type=event,
+               actor=user, summary=summary,
+               detail={"reason": body.reject_reason} if body.reject_reason else None)
     db.commit()
     return {"ok": True, "status": task.status}
 
@@ -204,6 +220,9 @@ def create_promotion(body: CreatePromotionIn,
     promo = Promotion(video_task_id=task.id, mode_snapshot=inf.promo_mode,
                       auth_status="pending_request")
     db.add(promo)
+    log_op(db, influencer_id=inf.id, product_id=task.product_id,
+           event_type="promotion_started", actor=user,
+           summary=f"{user.display_name} 发起投流({'自投' if inf.promo_mode == 'self' else '商家投'})")
     db.commit()
     return {"id": promo.id, "auth_status": promo.auth_status,
             "mode_snapshot": promo.mode_snapshot}
@@ -228,6 +247,19 @@ def transition(promo_id: int, body: TransitionIn,
     if body.action == "mark_failed":
         promo.fail_reason = body.fail_reason
         promo.fail_proof_oss_key = body.fail_proof_oss_key
+    task = db.get(VideoTask, promo.video_task_id)
+    inf_id = influencer_id_for_coop(db, task.cooperation_id) if task else None
+    if inf_id:
+        ACTION_LABELS = {"request_auth": "发起授权", "confirm_auth": "确认授权",
+                         "refuse": "达人拒绝授权", "mark_promoted": "标记已投流",
+                         "mark_failed": "标记投流失败", "done": "投流完成"}
+        summary = f"{user.display_name} 投流{ACTION_LABELS.get(body.action, body.action)}"
+        if body.action == "mark_failed" and body.fail_reason:
+            summary += f":{body.fail_reason}"
+        log_op(db, influencer_id=inf_id, product_id=task.product_id if task else None,
+               event_type="promotion_changed", actor=user, summary=summary,
+               detail={"action": body.action, "status": promo.auth_status,
+                       "fail_reason": body.fail_reason})
     db.commit()
     return {"ok": True, "auth_status": promo.auth_status}
 

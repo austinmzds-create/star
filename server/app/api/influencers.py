@@ -13,6 +13,7 @@ from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, LevelChangeLog, Product,
                       Promotion, SampleOrder, User, VideoTask)
 from ..services import levels
+from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
 from ..services.tracking import refresh_if_needed
@@ -59,7 +60,8 @@ class ParseIn(BaseModel):
 def _identity_conditions(fields: dict, exclude_id: int | None = None):
     conds = []
     for field in IDENTITY_FIELDS:
-        value = _clean_identity(fields.get(field))
+        raw = fields.get(field)
+        value = normalize_douyin(raw) if field == "douyin_id" else _clean_identity(raw)
         if value:
             conds.append(getattr(Influencer, field) == value)
     stmt = select(Influencer)
@@ -83,10 +85,18 @@ def _clean_identity(value):
     return value or None
 
 
+def normalize_douyin(value):
+    """抖音号规范化:去首尾空格 + 去前导 @(方案B 需求2 唯一标识口径)。"""
+    v = _clean_identity(value)
+    if not v:
+        return None
+    return v.lstrip("@").strip() or None
+
+
 def _normalize_create(body) -> dict:
     data = body.model_dump()
     data["nickname"] = (data.get("nickname") or "").strip()
-    data["douyin_id"] = _clean_identity(data.get("douyin_id"))
+    data["douyin_id"] = normalize_douyin(data.get("douyin_id"))
     data["douyin_uid"] = _clean_identity(data.get("douyin_uid"))
     data["phone"] = _clean_identity(data.get("phone"))
     data["cooperation_code"] = _clean_identity(data.get("cooperation_code"))
@@ -208,7 +218,7 @@ def _owner_for_import(db: Session, user: User, row_data: dict) -> int | None:
 
 def _payload_from_import_row(db: Session, user: User, row_data: dict) -> tuple[dict, list[str] | None, int | None]:
     nickname = _cell_to_str(row_data.get("nickname"))
-    douyin_id = _clean_identity(_cell_to_str(row_data.get("douyin_id")))
+    douyin_id = normalize_douyin(_cell_to_str(row_data.get("douyin_id")))
     if not nickname:
         raise ValueError("昵称必填")
     if not douyin_id:
@@ -533,6 +543,24 @@ CORE_FIELDS = ("nickname", "douyin_id", "douyin_uid", "real_name", "phone",
                "default_address", "homepage_url", "data_source",
                "source_note", "archived")
 
+FIELD_LABELS = {
+    "level": "等级", "commission_tier": "佣金档", "promo_mode": "投流方式",
+    "owner_bd_id": "归属商务", "nickname": "昵称", "douyin_id": "抖音号",
+    "douyin_uid": "UID", "real_name": "收件人", "phone": "手机号",
+    "fans_count": "粉丝数", "category_tags": "内容品类", "cooperation_code": "合作码",
+    "default_address": "收件地址", "homepage_url": "主页", "data_source": "数据来源",
+    "source_note": "来源备注", "archived": "启用状态", "tags": "标签",
+    "gmv_30d": "近30天GMV", "shoot_type": "拍摄类型",
+}
+
+
+def _display(field, value):
+    if field == "archived":
+        return "停用" if value else "启用"
+    if value is None or value == "":
+        return "空"
+    return str(value)
+
 
 @router.patch("/{influencer_id}")
 def update(influencer_id: int, body: UpdateIn,
@@ -555,6 +583,15 @@ def update(influencer_id: int, body: UpdateIn,
                                   old_value=str(old_val), new_value=str(new_val),
                                   reason=body.reason, changed_by=user.id))
             setattr(inf, field, new_val if field != "commission_tier" else Decimal(str(new_val)))
+            # 统一时间轴留痕:佣金/归属为业务关键事件,其余定级/投流方式记为档案变更
+            label = FIELD_LABELS.get(field, field)
+            event = {"commission_tier": "commission_changed",
+                     "owner_bd_id": "owner_transferred"}.get(field, "profile_changed")
+            log_op(db, influencer_id=inf.id, event_type=event, actor=user,
+                   summary=f"{user.display_name} 修改{label}:{_display(field, old_val)}→{_display(field, new_val)}"
+                           + (f"(原因:{body.reason})" if body.reason else ""),
+                   detail={"field": field, "old": str(old_val), "new": str(new_val),
+                           "reason": body.reason})
         # 调级时联动默认佣金档(可再被单独覆盖)
         if field == "level" and body.commission_tier is None:
             cfg = levels.effective_config(db, str(new_val))
@@ -567,7 +604,8 @@ def update(influencer_id: int, body: UpdateIn,
     identity_updates = {}
     for field in IDENTITY_FIELDS:
         if getattr(body, field, None) is not None:
-            identity_updates[field] = _clean_identity(getattr(body, field))
+            raw = getattr(body, field)
+            identity_updates[field] = normalize_douyin(raw) if field == "douyin_id" else _clean_identity(raw)
     if "douyin_id" in identity_updates and not identity_updates["douyin_id"]:
         raise HTTPException(400, "抖音号不能为空")
     if identity_updates:
@@ -577,8 +615,17 @@ def update(influencer_id: int, body: UpdateIn,
     for field in CORE_FIELDS:
         if getattr(body, field) is not None:
             value = getattr(body, field)
-            if field in IDENTITY_FIELDS:
+            if field == "douyin_id":
+                value = normalize_douyin(value)
+            elif field in IDENTITY_FIELDS:
                 value = _clean_identity(value)
+            old_val = getattr(inf, field)
+            if str(old_val) != str(value):
+                label = FIELD_LABELS.get(field, field)
+                log_op(db, influencer_id=inf.id, event_type="profile_changed", actor=user,
+                       summary=f"{user.display_name} 修改{label}:{_display(field, old_val)}→{_display(field, value)}",
+                       detail={"field": field, "old": _display(field, old_val),
+                               "new": _display(field, value)})
             setattr(inf, field, value)
     if "admin_note" in body.model_fields_set:
         inf.admin_note = body.admin_note

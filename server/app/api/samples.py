@@ -11,6 +11,7 @@ from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, RejectReason,
                       SampleOrder, User)
 from ..services.logistics import COURIERS, get_provider
+from ..services.oplog import log_op
 from ..services.sample_orders import (OPEN_SAMPLE_STATUSES, dedupe_sample_rows,
                                       status_bucket, status_filter_values)
 from ..services.tracking import refresh_order_tracking
@@ -28,6 +29,11 @@ def _load_owned_order(db: Session, user: User, order_id: int) -> SampleOrder:
     if not owns_or_admin(user, inf.owner_bd_id if inf else None):
         raise HTTPException(403, "无权操作该寄样单")
     return order
+
+
+def _order_influencer_id(db: Session, order: SampleOrder) -> int | None:
+    coop = db.get(Cooperation, order.cooperation_id)
+    return coop.influencer_id if coop else None
 
 
 @router.get("")
@@ -125,6 +131,8 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
     order = SampleOrder(cooperation_id=coop.id, product_id=body.product_id,
                         address_snapshot=address)
     db.add(order)
+    log_op(db, influencer_id=inf.id, product_id=product.id, event_type="sample_created",
+           actor=user, summary=f"{user.display_name} 创建寄样单:{product.name}")
     db.commit()
     return {"id": order.id}
 
@@ -171,6 +179,17 @@ def audit(order_id: int, body: AuditIn,
     order.status = "approved" if body.approve else "rejected"
     order.reject_reason = None if body.approve else (body.reject_reason or "资质未达标,暂不寄样")
     order.approved_by = user.id
+    inf_id = _order_influencer_id(db, order)
+    if inf_id:
+        if body.approve:
+            log_op(db, influencer_id=inf_id, product_id=order.product_id,
+                   event_type="sample_approved", actor=user,
+                   summary=f"{user.display_name} 通过寄样审批")
+        else:
+            log_op(db, influencer_id=inf_id, product_id=order.product_id,
+                   event_type="sample_rejected", actor=user,
+                   summary=f"{user.display_name} 拒绝寄样:{order.reject_reason}",
+                   detail={"reject_reason": order.reject_reason})
     db.commit()
     return {"ok": True}
 
@@ -205,6 +224,12 @@ async def ship(order_id: int, body: ShipIn,
     order.tracking_no = tracking_no
     order.courier_company = courier
     order.status = "shipped"
+    inf_id = _order_influencer_id(db, order)
+    if inf_id:
+        log_op(db, influencer_id=inf_id, product_id=order.product_id,
+               event_type="sample_shipped", actor=user,
+               summary=f"{user.display_name} 发货:{courier} {tracking_no}",
+               detail={"courier": courier, "tracking_no": tracking_no})
     db.commit()
     tracking_status = await refresh_order_tracking(db, order)
     return {"ok": True, "courier": courier, "subscribed": ok, "message": msg,
@@ -263,6 +288,11 @@ async def kd100_callback(request: Request, db: Session = Depends(get_db)):
             if parsed["signed"] and not order.signed_at:
                 order.signed_at = datetime.now()  # 催拍计时起点(默认7天,可配)
                 order.status = "signed"
+                inf_id = _order_influencer_id(db, order)
+                if inf_id:
+                    log_op(db, influencer_id=inf_id, product_id=order.product_id,
+                           event_type="sample_signed", actor=None,
+                           summary=f"包裹已签收({order.courier_company or ''} {order.tracking_no or ''})".strip())
             elif order.status == "shipped":
                 order.status = parsed["status"]
             db.commit()
