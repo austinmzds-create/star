@@ -43,6 +43,14 @@ export interface CelestialObject {
   magnitude: number;
   /** 距离，单位光年；未知为 null。 */
   distanceLy: number | null;
+  /**
+   * 自行 RA 分量（mas/yr，已含 cosδ 因子——HYG 的 pmra 列约定，即切向真实角速率）。
+   * 供恒星自行时光机（Phase 9B 深时模式）做星座形变渲染。可选，向后兼容；
+   * 仅恒星携带（HYG 来源），深空/星历天体无此键。
+   */
+  pmRaMasYr?: number;
+  /** 自行 Dec 分量（mas/yr）。可选，向后兼容，与 pmRaMasYr 成对出现。 */
+  pmDecMasYr?: number;
   /** 光谱型，如 'A1V'。 */
   spectralType?: string;
   /** 各星表交叉编号，如 { hip: '32349', hd: '48915' }。 */

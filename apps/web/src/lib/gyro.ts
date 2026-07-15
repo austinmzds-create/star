@@ -15,8 +15,10 @@
 'use client';
 
 import { deviceOrientationToLookDirection, horizontalToEquatorial, raDecToVector3 } from '@star/astro-core';
+import * as THREE from 'three';
 import { releaseCamera, driveCamera, subscribeCameraRelease } from './cameraBus';
 import { isCoarsePointer } from './device';
+import { getSkyQuaternion } from './skyFrame';
 import { useUniverse } from './store';
 
 export type GyroStartResult = 'ok' | 'denied' | 'unsupported';
@@ -31,6 +33,9 @@ const SMOOTH = 0.15;
  * setTime 后传入 horizontalToEquatorial——内部仅读时刻算恒星时、不持引用，复用安全。
  */
 const scratchDate = new Date(0);
+
+/** 模块级方向 scratch（60Hz 事件路径零分配；天旋复合用）。 */
+const gyroDirScratch = new THREE.Vector3();
 
 /** 是否值得展示「指向天空」入口：粗指针（触屏）且有方向事件 API。桌面自然隐藏。 */
 export function isGyroCandidate(): boolean {
@@ -78,9 +83,13 @@ function handleOrientation(e: DeviceOrientationEvent, absolute: boolean): void {
   );
 
   // 与 lib/universe.directionToYawPitch 同约定：pitch=asin(y)、yaw=atan2(−x,−z)。
+  // 地平锁定（9B，只读 skyFrame）：earth 模式下天空层渲染位置 = 天旋 Q·v_eq，
+  // 相机目标须同乘 Q 才仍指向设备所指的那片天（链路 alt/az→赤道→天旋 复合后
+  // 恰好回到世界系地平方向）；free 模式 Q=I，行为与旧版逐位一致。
   const v = raDecToVector3(eq, 1);
-  const targetPitch = Math.asin(Math.max(-1, Math.min(1, v.y)));
-  const targetYaw = Math.atan2(-v.x, -v.z);
+  gyroDirScratch.set(v.x, v.y, v.z).applyQuaternion(getSkyQuaternion());
+  const targetPitch = Math.asin(Math.max(-1, Math.min(1, gyroDirScratch.y)));
+  const targetYaw = Math.atan2(-gyroDirScratch.x, -gyroDirScratch.z);
 
   if (!smInit) {
     smInit = true;

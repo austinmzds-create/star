@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { fx, getGlobalFade } from '@/lib/fxBus';
+import { useUniverse } from '@/lib/store';
 import type { StarAttributes } from '@/lib/universe';
 
 const VERTEX = /* glsl */ `
@@ -12,14 +13,39 @@ const VERTEX = /* glsl */ `
   uniform float uTwinkle;
   uniform float uPixelRatio;
   uniform float uSpike;
+  uniform float uEpochYr;      // 深时偏移年数（J2000 起算；常态 0，见 useFrame）
   attribute float aSize;
   attribute vec3 aColor;
   attribute float aPhase;
+  attribute vec2 aPm;          // 自行 (pmra*, pmdec)，rad/yr 预转（pmra 含 cosδ）
   varying vec3 vColor;
   varying float vTw;
   varying float vFaint;
   varying float vBoost;
   varying float vSpike;
+
+  // ── 恒星自行（Phase 9B 星座时光机，r-dyn §3c）────────────────────────
+  // east/north 切向量按仓库天球约定推导：y=北天极、RA 从 +x 向 −z 增
+  // （raDecToVector3）。east = ĵ×n̂ 指向 RA 增方向，north = n̂×east 指向北天极。
+  //【精确大圆旋转而非小角度近似】报告原式 normalize(p+tv) 只在 |pm·dt|≲5° 成立；
+  // 核心层实测最快星 Groombridge 1830（HIP57939）7.06″/yr × 10 万年 ≈ 196°，
+  // 小角度式在此偏差可达 122°（scratchpad/verify-pm.mjs 实跑核实 2026-07-15）。
+  // 改用罗德里格斯旋转的大圆退化式 p' = n̂·cosθ + t̂·sinθ（θ=|切向位移|），
+  // 全角度域成立，仅多一对 sin/cos——sin(θ)/θ 形式天然规避 θ→0 除零。
+  //【演示级近似（DeepTimeBar 注记同步声明）】把自行视为常角速率的大圆运动：
+  // 忽略视向速度带来的透视加速度与岁差（岁差是整体刚性旋转，不改变星座形状）。
+  vec3 properMotion(vec3 posIn) {
+    float r = length(posIn);
+    vec3 pn = posIn / r;
+    vec3 east = cross(vec3(0.0, 1.0, 0.0), pn);
+    // 极点退化保护：|east|→0 时（恰在天极的装饰星）除以下限，tv 随之为 0 向量
+    east /= max(length(east), 1e-6);
+    vec3 north = cross(pn, east);
+    vec3 tv = (east * aPm.x + north * aPm.y) * uEpochYr; // 切向位移（rad）
+    float theta = max(length(tv), 1e-12);
+    return (pn * cos(theta) + tv * (sin(theta) / theta)) * r;
+  }
+
   void main() {
     vColor = aColor;
     // 微弱星判定（宇宙 V4 §1.4）：aSize < 4.5px 视为暗视觉区，交给片元去饱和。
@@ -33,7 +59,8 @@ const VERTEX = /* glsl */ `
     float flicker = 0.5 + 0.5 * sin(uTime * 2.2 + aPhase);
     float tw = 1.0 - uTwinkle * flicker * 0.55;
     vTw = tw;
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    // 深时位移：常态（uEpochYr=0）θ=0 → 结果即原位，代价一对 sin/cos，无分支发散
+    vec4 mv = modelViewMatrix * vec4(properMotion(position), 1.0);
     gl_PointSize = aSize * uSize * uPixelRatio * (0.7 + 0.6 * tw);
     gl_Position = projectionMatrix * mv;
   }
@@ -118,6 +145,12 @@ export function TwinkleStars({
     geo.setAttribute('aColor', new THREE.BufferAttribute(attributes.colors, 3));
     geo.setAttribute('aSize', new THREE.BufferAttribute(attributes.sizes, 1));
     geo.setAttribute('aPhase', new THREE.BufferAttribute(attributes.phases, 1));
+    // 自行属性（9B 深时模式）：未提供的层（环境星场/星屑）零填充——
+    // shader 恒有 aPm 可读，装饰星在时光机里保持不动（一次性 64–96KB，非帧循环）。
+    geo.setAttribute(
+      'aPm',
+      new THREE.BufferAttribute(attributes.pms ?? new Float32Array(attributes.count * 2), 2),
+    );
     return geo;
   }, [attributes]);
 
@@ -131,6 +164,9 @@ export function TwinkleStars({
       uBoost: { value: 0 },
       uGlobalFade: { value: 1 },
       uPipe: { value: 0 },
+      // 深时偏移初值取挂载时刻 store 现值：扩展星层是懒加载的，若在时光机
+      // 开启期间才 fetch 完成挂载，首帧就要与其它星层同一历元，不能闪回 J2000
+      uEpochYr: { value: useUniverse.getState().deepTimeYears ?? 0 },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -149,6 +185,10 @@ export function TwinkleStars({
       u.uBoost!.value = fx.bloomBoost;
       u.uGlobalFade!.value = getGlobalFade();
       u.uPipe!.value = fx.linearPipe;
+      // 深时偏移（9B 契约：deepTimeYears 只读，getState 直读零 React）：
+      // null=时光机关闭 → 0（J2000 原位）。滑条拖动即帧级跟手；星座连线的
+      // CPU 重算走 100ms 节流（ConstellationLayer），瞬态错位 ≤ 一次节流窗。
+      u.uEpochYr!.value = useUniverse.getState().deepTimeYears ?? 0;
     }
   });
 

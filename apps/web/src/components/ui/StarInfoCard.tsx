@@ -2,6 +2,8 @@
 
 import { computeObservationSummary, computeVisibility } from '@star/astro-core';
 import {
+  computeBodyRiseSet,
+  computeCometTailGeometry,
   getEquatorial,
   getMinorBodyElements,
   getMinorBodyEquatorialByUid,
@@ -150,6 +152,21 @@ export function StarInfoCard() {
   // 卫星实时坐标（懒 chunk 动态取，未就绪时 null → 坐标区占位）
   const sat = useSatSnapshot(isSatellite && obj ? obj.objectUid : null, observeTime, city);
 
+  // 「今日 升/落/中天」（Phase 9B §3e-5）：仅太阳/月亮/行星显示。
+  // 日界取北京时区（全站时间展示统一北京时间）当日 00:00；dayStart 是
+  // 从 observeTime 折算的整数，只在跨日时变化——播放期 4Hz 写 observeTime
+  // 也不会高频触发 SearchRiseSet（单体 3 次搜索 ~几 ms）。
+  const riseSetDayStartMs = Math.floor(((observeTime ?? Date.now()) + 8 * 3_600_000) / 86_400_000) * 86_400_000 - 8 * 3_600_000;
+  const ephBodyId = eph?.bodyId ?? null;
+  const riseSet = useMemo(() => {
+    if (!ephBodyId) return null;
+    try {
+      return computeBodyRiseSet(ephBodyId, riseSetDayStartMs, city.latitudeDeg, city.longitudeDeg);
+    } catch {
+      return null; // astronomy-engine 极端参数异常时静默隐藏该行
+    }
+  }, [ephBodyId, riseSetDayStartMs, city]);
+
   // 小天体（MB-）：开普勒轨道同步计算（engine 已在依赖里，成本为零）
   const minorInfo = useMemo(() => {
     if (!obj || !isMinorBodyUid(obj.objectUid)) return null;
@@ -185,6 +202,25 @@ export function StarInfoCard() {
 
   const isStar = obj?.type === 'star';
   const badge = obj ? primaryBadgeZh(obj) : null;
+
+  // 彗尾徽章（Phase 9B）：与 CometTailLayer 同一纯函数按同一 1h 量化键推导
+  // （视角长+亮度双阈值，演示级）。刻意不读 minorRegistry.tailVisible——
+  // 该旗标由懒 chunk 的层在挂载后写入，而本卡只随 store 变化重渲染，
+  // 深链/暂停态（timeFollowsNow=false，observeTime 不再变）下会读到写入前
+  // 的旧值漏亮徽章。非彗星 computeCometTailGeometry 返回 null，恒 false。
+  const tailQuantKey = Math.floor((observeTime ?? Date.now()) / 3_600_000);
+  const tailVisible = useMemo(() => {
+    if (!obj || !isMinorBodyUid(obj.objectUid)) return false;
+    try {
+      const g = computeCometTailGeometry(
+        minorUidToId(obj.objectUid),
+        new Date(tailQuantKey * 3_600_000),
+      );
+      return g?.visible ?? false;
+    } catch {
+      return false; // 极端历元下星历异常时静默隐藏徽章
+    }
+  }, [obj, tailQuantKey]);
 
   // ── 入场动画（Phase 7 → 9A tokens 化）：卡片 spring 弹出 + 分区 stagger。
   // reduced-motion 由全局 MotionConfig reducedMotion="user" 统一接管
@@ -268,7 +304,10 @@ export function StarInfoCard() {
 
               <motion.div variants={itemVariants} className="mt-3 flex flex-wrap gap-2">
                 {badge && <Badge>{badge}</Badge>}
-                {obj.objectUid === 'MB-HALLEY' && <Badge>远日点附近 · 示意</Badge>}
+                {/* 远日点示意徽章与彗尾徽章互斥：时间机器拨回近日点段（如 1986）
+                  时彗尾可见，「远日点附近」的常态描述不再成立 */}
+                {obj.objectUid === 'MB-HALLEY' && !tailVisible && <Badge>远日点附近 · 示意</Badge>}
+                {tailVisible && <Badge>彗尾可见 · 演示级</Badge>}
                 {minorInfo && <Badge>演示级 ±0.5°</Badge>}
                 {!eph && <Badge>{obj.constellationZh}</Badge>}
                 {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
@@ -416,10 +455,19 @@ export function StarInfoCard() {
                             : '在地平线以下'
                         }
                       />
-                      <VisRow
-                        label="过中天"
-                        value={`${formatBeijingTime(visibility.summary.nextTransit)} 前后 · 最高 ${visibility.summary.maxAltitudeDeg.toFixed(0)}°`}
-                      />
+                      {/* 太阳/月亮/行星：当日升/落/中天（Phase 9B §3e-5，SearchRiseSet
+                        精确搜索，北京时间；「—」= 当日无该事件，如极昼极夜/月亮缺日） */}
+                      {riseSet ? (
+                        <VisRow
+                          label="今日"
+                          value={`升 ${riseSet.riseMs ? formatBeijingTime(new Date(riseSet.riseMs)) : '—'} · 落 ${riseSet.setMs ? formatBeijingTime(new Date(riseSet.setMs)) : '—'} · 中天 ${riseSet.transitMs ? formatBeijingTime(new Date(riseSet.transitMs)) : '—'}`}
+                        />
+                      ) : (
+                        <VisRow
+                          label="过中天"
+                          value={`${formatBeijingTime(visibility.summary.nextTransit)} 前后 · 最高 ${visibility.summary.maxAltitudeDeg.toFixed(0)}°`}
+                        />
+                      )}
                       {visibility.summary.isCircumpolar && (
                         <VisRow label="特性" value="拱极星 · 全天不落" />
                       )}

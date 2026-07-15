@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useEffect, useRef, useState } from 'react';
 import { exits, springs } from '@/lib/motionTokens';
 import { selectTimeTravel, useUniverse } from '@/lib/store';
+import { DeepTimeBar } from './DeepTimeBar';
 
 /**
  * 时间机器（宇宙 V3-E）。
@@ -20,6 +21,11 @@ import { selectTimeTravel, useUniverse } from '@/lib/store';
  *    自己上次写出的即以外部值重置累加基准，无环；
  *  - 实时模式（timeFollowsNow 且未播放）：60s 心跳对齐 Date.now()，
  *    顺带驱动 LST/晨昏缓慢演化，零额外定时器。
+ *
+ * 星座时光机入口（Phase 9B）：行1「万年」按钮进入 ±10 万年恒星自行模式
+ * （DeepTimeBar 替代本面板出现；deepTimeYears 非 null 期间本面板隐藏），
+ * 两套时间轴互斥——进入前先暂停普通播放（astronomy-engine 标称精度区间
+ * 约 1700–2200，行星星历不可外推数万年，故行星等层在深时模式各自淡出）。
  */
 
 /** 速度档位：模拟秒/真实秒。 */
@@ -51,6 +57,8 @@ export function TimeMachineBar() {
   const travelTo = useUniverse((s) => s.travelTo);
   const setObserveTime = useUniverse((s) => s.setObserveTime);
   const resetToNow = useUniverse((s) => s.resetToNow);
+  const deepTimeYears = useUniverse((s) => s.deepTimeYears);
+  const setDeepTimeYears = useUniverse((s) => s.setDeepTimeYears);
 
   // ── TimeController：初始化（接管 StarInfoCard 的兜底，保留其 effect 无害） ──
   useEffect(() => {
@@ -132,8 +140,12 @@ export function TimeMachineBar() {
   const t = observeTime ?? Date.now();
 
   return (
-    <AnimatePresence>
-      {timePanelOpen && (
+    <>
+      {/* 星座时光机（9B）：独立于 timePanelOpen 常驻判定——即使时间条收起，
+        模式激活期间也必须有可见的退出入口，绝不让用户困在形变星空里 */}
+      <DeepTimeBar />
+      <AnimatePresence>
+        {timePanelOpen && deepTimeYears == null && (
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
@@ -183,6 +195,23 @@ export function TimeMachineBar() {
                   </motion.button>
                 ))}
               </div>
+
+              <div className="mx-1 h-5 w-px bg-white/10" />
+
+              {/* 星座时光机入口（9B）：与普通播放互斥——先暂停再进模式，
+                deepTimeYears=0 起步（J2000 原位），DeepTimeBar 接管 UI */}
+              <motion.button
+                whileTap={{ scale: 0.96 }}
+                transition={springs.chip}
+                onClick={() => {
+                  setTimePlaying(false);
+                  setDeepTimeYears(0);
+                }}
+                title="星座时光机：拨动 ±10 万年，看恒星自行改变星座形状"
+                className="tap-96 rounded-full bg-violet-400/15 px-2.5 py-0.5 text-[11px] text-violet-100/90 shadow-[inset_0_0_0_1px_rgba(196,181,253,0.3)] transition hover:bg-violet-400/25"
+              >
+                ✦ 万年
+              </motion.button>
 
               <button
                 onClick={() => setTimePanelOpen(false)}
@@ -242,8 +271,9 @@ export function TimeMachineBar() {
             </div>
           </div>
         </motion.div>
-      )}
-    </AnimatePresence>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 

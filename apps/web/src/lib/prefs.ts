@@ -6,6 +6,8 @@
  *   star.redLight       boolean  红光护眼
  *   star.ambientOn      boolean  环境音开关
  *   star.ambientVolume  number   环境音音量 0–1
+ *   star.viewMode.v1    'free'|'earth'  观察模式（Phase 9B 地平锁定；带版本号
+ *                       ——若未来翻转默认值需换 v2 新键弃读旧键，见下）
  *
  * 显示类开关（showMinorBodies/showSatellites 等）刻意【不持久化】：
  * 默认值翻转（如 Phase 8 把 showMinorBodies 改为默认开）即对全量用户生效，

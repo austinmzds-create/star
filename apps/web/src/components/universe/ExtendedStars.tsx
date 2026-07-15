@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { raDecToVector3 } from '@star/astro-core';
 import type { DeviceTier } from '@/lib/deviceTier';
 import {
+  MAS_YR_TO_RAD_YR,
   magnitudeToSize,
   SPHERE_RADIUS,
   spectralColor,
@@ -31,6 +32,12 @@ interface ExtendedStarsJson {
   mag: number[];
   /** 长度 n 的字符串，每颗 1 字符光谱主类（OBAFGKM，未知 '?'）。 */
   spec: string;
+  /**
+   * 自行两列（9B 深时模式）：int16 语义整数，单位 0.5 mas/yr（解码 mas/yr =
+   * 值 × 0.5；缺测为 0）。可选——旧缓存 JSON 无此列时扩展星在时光机里不动。
+   */
+  pmra?: number[];
+  pmdec?: number[];
 }
 
 /** 列式数据 → TwinkleStars 属性（一次性，发生在 idle 回调内，非帧循环）。 */
@@ -40,6 +47,10 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
   const colors = new Float32Array(count * 3);
   const sizes = new Float32Array(count);
   const phases = new Float32Array(count);
+  const pms = new Float32Array(count * 2);
+  // 自行列解码（9B）：int16 语义 × 0.5 = mas/yr，再预转 rad/yr 供 aPm。
+  // 长度不齐/缺列（旧缓存）→ 全 0，星不动（isValidPayload 只强校验必需列）。
+  const hasPm = data.pmra?.length === count && data.pmdec?.length === count;
 
   for (let i = 0; i < count; i++) {
     const ra = data.ra[i] ?? 0;
@@ -49,6 +60,11 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
     positions[i * 3] = v.x;
     positions[i * 3 + 1] = v.y;
     positions[i * 3 + 2] = v.z;
+
+    if (hasPm) {
+      pms[i * 2] = (data.pmra![i] ?? 0) * 0.5 * MAS_YR_TO_RAD_YR;
+      pms[i * 2 + 1] = (data.pmdec![i] ?? 0) * 0.5 * MAS_YR_TO_RAD_YR;
+    }
 
     const [r, g, b] = spectralColor(data.spec[i]);
     // 比核心层更暗淡：整体压 0.8，视觉上明确是「更深一层」的星
@@ -61,7 +77,7 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
     phases[i] = (i * 2.399963) % (Math.PI * 2);
   }
 
-  return { positions, colors, sizes, phases, count };
+  return { positions, colors, sizes, phases, count, pms };
 }
 
 /** 结构校验：字段缺失/长度不齐时视为坏数据，静默放弃。 */

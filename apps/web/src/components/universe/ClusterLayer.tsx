@@ -20,6 +20,11 @@ import { TwinkleStars } from './TwinkleStars';
  * 【拾取取舍：星屑完全不进 pickRegistry。】它们是程序化装饰点、无真实
  * 坐标语义；星团本体的点击仍落在 DeepSkyLayer 对应的 featured DSO 上。
  *
+ * 【深时模式（9B 星座时光机）】复用 TwinkleStars shader 自动继承 aPm 通道，
+ * 本层不提供 pms → 零填充：星屑在 ±10 万年拨盘下保持原位。演示级取舍——
+ * 真实星团成员共享空间运动（如昴星团 ≈50 mas/yr），但星屑本就是程序化
+ * 装饰且 DeepSkyLayer 的星团柔光 sprite 同样不动，二者一致即无撕裂感。
+ *
  * 分布模型（useMemo 一次性构建，种子 = FNV-1a(objectUid)，会话间稳定）：
  *  - 球状星团（descriptionZh 含「球状」，Messier 全覆盖，其余按疏散处理）：
  *    半径按 u^2.2 分布——r^-2 式向心，边缘骤稀；成员整体偏老、色暖金。

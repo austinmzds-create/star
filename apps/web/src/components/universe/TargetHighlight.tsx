@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { getObjectByUid } from '@/lib/solarSystem';
 import { kindLabelZh } from '@/lib/objectPresenter';
 import { getPickEntry, resolveObjectPosition } from '@/lib/pickRegistry';
+import { getSkyQuaternion } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
 import { spectralColor } from '@/lib/universe';
 import type { PickKind } from '@/lib/pickRegistry';
@@ -161,7 +162,9 @@ export function TargetHighlight() {
     // 目标在相机背后时隐藏名牌（写 DOM 前先比对缓存，避免每帧同值 style 写入）
     if (labelRef.current && groupRef.current) {
       forward.set(0, 0, -1).applyQuaternion(camera.quaternion);
-      dir.copy(groupRef.current.position).normalize();
+      // 9B 地平锁定：本组件挂在天旋 group 下，position 是天球本地系坐标——
+      // 乘当帧天旋得世界方向再与相机前向点积（free 模式恒等，只读 skyFrame）
+      dir.copy(groupRef.current.position).normalize().applyQuaternion(getSkyQuaternion());
       const facing = dir.dot(forward);
       const next = showLabels && facing > 0.15 ? '1' : '0';
       if (next !== lastLabelOpacity.current) {

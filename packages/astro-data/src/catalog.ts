@@ -25,6 +25,13 @@ interface RawStar {
   hd?: string;
   aliases?: string[];
   desc?: string;
+  /**
+   * 自行（mas/yr，pmRa 含 cosδ）。绝大多数手写星不写——由下方「自行回填」按
+   * uid 从 HYG generated 行补齐；仅 generated 覆盖不到的暗星（比邻星 mag 11 >
+   * 核心层阈值 6.5）手写，取值同源 HYG v41 缓存 CSV。
+   */
+  pmRa?: number;
+  pmDec?: number;
 }
 
 const RAW_STARS: RawStar[] = [
@@ -85,7 +92,7 @@ const RAW_STARS: RawStar[] = [
   { uid: 'HIP3419', en: 'Diphda', zh: '土司空', bayer: 'β Cet', con: 'Cetus', ra: 10.897, dec: -17.987, mag: 2.04, dist: 96, spec: 'K0III', hip: '3419', hd: '4128', aliases: ['Beta Ceti', 'Deneb Kaitos'], desc: '鲸鱼座最亮星，秋季南天的橙色亮星。' },
   { uid: 'HIP50583', en: 'Algieba', zh: '轩辕十二', bayer: 'γ Leo', con: 'Leo', ra: 154.993, dec: 19.842, mag: 2.01, dist: 130, spec: 'K1III', hip: '50583', hd: '89484', aliases: ['Gamma Leonis'], desc: '狮子座金黄色双星，镰刀形的一环。' },
   { uid: 'HIP100751', en: 'Peacock', zh: '孔雀十一', bayer: 'α Pav', con: 'Pavo', ra: 306.412, dec: -56.735, mag: 1.94, dist: 180, spec: 'B2IV', hip: '100751', hd: '193924', aliases: ['Alpha Pavonis'], desc: '孔雀座最亮星。' },
-  { uid: 'HIP70890', en: 'Proxima Centauri', zh: '比邻星', bayer: 'α Cen C', con: 'Centaurus', ra: 217.429, dec: -62.679, mag: 11.13, dist: 4.24, spec: 'M5.5Ve', hip: '70890', aliases: ['半人马座比邻星', 'Proxima'], desc: '距太阳最近的恒星（约 4.24 光年），一颗红矮星，肉眼不可见。' },
+  { uid: 'HIP70890', en: 'Proxima Centauri', zh: '比邻星', bayer: 'α Cen C', con: 'Centaurus', ra: 217.429, dec: -62.679, mag: 11.13, dist: 4.24, spec: 'M5.5Ve', hip: '70890', aliases: ['半人马座比邻星', 'Proxima'], desc: '距太阳最近的恒星（约 4.24 光年），一颗红矮星，肉眼不可见。', pmRa: -3775.6, pmDec: 768.2 },
   { uid: 'HIP95947', en: 'Albireo', zh: '辇道增七', bayer: 'β Cyg', con: 'Cygnus', ra: 292.68, dec: 27.96, mag: 3.05, dist: 430, spec: 'K3II', hip: '95947', hd: '183912', aliases: ['Beta Cygni'], desc: '天鹅座喙部著名的金蓝双星，望远镜下极美。' },
   { uid: 'HIP17702', en: 'Alcyone', zh: '昴宿六', bayer: 'η Tau', con: 'Taurus', ra: 56.871, dec: 24.105, mag: 2.87, dist: 440, spec: 'B7III', hip: '17702', hd: '23630', aliases: ['Eta Tauri', '昴星团'], desc: '昴星团（七姊妹星团）中最亮的成员。' },
 ];
@@ -157,6 +164,10 @@ function buildStar(raw: RawStar): CelestialObject {
     renderPriority: 0,
     searchPriority: decideSearchPriority(raw.mag, true),
     sourceCatalog: 'handwritten',
+    // 手写 pm 仅比邻星等 generated 覆盖不到的星携带；其余由合并前的回填补齐。
+    ...(raw.pmRa !== undefined && raw.pmDec !== undefined
+      ? { pmRaMasYr: raw.pmRa, pmDecMasYr: raw.pmDec }
+      : {}),
   };
 }
 
@@ -167,6 +178,9 @@ interface GeneratedStar {
   dec: number;
   mag: number;
   dist?: number | null;
+  /** 自行（mas/yr，pmra 含 cosδ，HYG 透传；缺测省键）。 */
+  pmra?: number;
+  pmdec?: number;
   spect?: string;
   con?: string;
   bayer?: string;
@@ -239,6 +253,10 @@ function buildFromGenerated(r: GeneratedStar): CelestialObject {
     renderPriority: decideRenderPriority(r.mag, isFeatured),
     searchPriority: decideSearchPriority(r.mag, isFeatured),
     sourceCatalog: 'hyg-v41',
+    // 自行透传（Phase 9B 深时模式；缺测则省键，渲染侧视为不动）。
+    ...(r.pmra !== undefined && r.pmdec !== undefined
+      ? { pmRaMasYr: r.pmra, pmDecMasYr: r.pmdec }
+      : {}),
   };
 }
 
@@ -249,6 +267,25 @@ const featured: CelestialObject[] = RAW_STARS.map(buildStar);
 // generated 载入（防御：缺失或结构异常时退化为空数组，catalog 仅剩手写 60 颗，构建不崩）。
 const generatedRaw = ((brightStars as { stars?: GeneratedStar[] })?.stars ?? []) as GeneratedStar[];
 const generatedStars: CelestialObject[] = generatedRaw.map(buildFromGenerated);
+
+// —— 自行回填（Phase 9B 深时模式）——手写精选星在合并中优先（保留人工中文名/简介），
+// 但其行内没有自行数据；北斗/大角等叙事主角全是手写星，缺 pm 会让「星座时光机」里
+// 最亮的一批星纹丝不动。按 objectUid 反查 generated 行补 pmRaMasYr/pmDecMasYr
+// （60 次 Map 查询，模块加载期一次性；手写已带 pm 的如比邻星不覆盖）。
+{
+  const pmByUid = new Map<string, GeneratedStar>();
+  for (const r of generatedRaw) {
+    if (r.pmra !== undefined && r.pmdec !== undefined) pmByUid.set(r.u, r);
+  }
+  for (const f of featured) {
+    if (f.pmRaMasYr !== undefined) continue;
+    const g = pmByUid.get(f.objectUid);
+    if (g) {
+      f.pmRaMasYr = g.pmra;
+      f.pmDecMasYr = g.pmdec;
+    }
+  }
+}
 
 /** 归一化数字编号，去前导 0，便于跨源比较。 */
 const norm = (s?: string): string => s?.replace(/^0+/, '') ?? '';

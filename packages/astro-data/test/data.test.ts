@@ -140,7 +140,7 @@ describe('核心层扩容（mag ≤ 6.5）', () => {
 describe('扩展层产物（apps/web/public/data/stars-extended.json）', () => {
   const extPath = resolve(__dirname, '../../../apps/web/public/data/stars-extended.json');
 
-  it('文件存在且列式数组等长、坐标/星等/光谱域合法', () => {
+  it('文件存在且列式数组等长、坐标/星等/光谱/自行域合法', () => {
     expect(existsSync(extPath), extPath).toBe(true);
     const ext = JSON.parse(readFileSync(extPath, 'utf8')) as {
       meta: { magRange: [number, number]; count: number };
@@ -149,12 +149,16 @@ describe('扩展层产物（apps/web/public/data/stars-extended.json）', () => 
       dec: number[];
       mag: number[];
       spec: string;
+      pmra: number[];
+      pmdec: number[];
     };
     expect(ext.n).toBe(ext.meta.count);
     expect(ext.ra.length).toBe(ext.n);
     expect(ext.dec.length).toBe(ext.n);
     expect(ext.mag.length).toBe(ext.n);
     expect(ext.spec.length).toBe(ext.n);
+    expect(ext.pmra.length).toBe(ext.n);
+    expect(ext.pmdec.length).toBe(ext.n);
     expect(ext.n).toBeGreaterThanOrEqual(14000);
     expect(ext.n).toBeLessThanOrEqual(20000);
     for (let i = 0; i < ext.n; i++) {
@@ -164,8 +168,77 @@ describe('扩展层产物（apps/web/public/data/stars-extended.json）', () => 
       expect(ext.dec[i]!).toBeLessThanOrEqual(90);
       expect(ext.mag[i]!).toBeGreaterThan(6.5);
       expect(ext.mag[i]!).toBeLessThanOrEqual(7.51);
+      // 自行列：int16 语义整数（单位 0.5 mas/yr，解码 = 值 × 0.5）
+      expect(Number.isInteger(ext.pmra[i]!)).toBe(true);
+      expect(Number.isInteger(ext.pmdec[i]!)).toBe(true);
+      expect(Math.abs(ext.pmra[i]!)).toBeLessThanOrEqual(32767);
+      expect(Math.abs(ext.pmdec[i]!)).toBeLessThanOrEqual(32767);
     }
     expect(/^[OBAFGKM?]+$/.test(ext.spec)).toBe(true);
+  });
+});
+
+describe('恒星自行透传（Phase 9B 星座时光机）', () => {
+  // 期望值全部先用 awk 对缓存 CSV（scripts/.cache/hygdata.csv，HYG v41）实跑核实
+  // 再写入断言（2026-07-15）；ETL round 0.1 mas/yr。
+  it('天狼星 HIP32349（手写精选星，pm 由 generated 回填）pm≈(-546.0, -1223.1) mas/yr', () => {
+    const s = getCelestialByUid('HIP32349')!;
+    expect(s.sourceCatalog).toBe('handwritten'); // 回填不改变手写优先语义
+    expect(s.pmRaMasYr).toBeCloseTo(-546.0, 0);
+    expect(s.pmDecMasYr).toBeCloseTo(-1223.1, 0);
+  });
+
+  it('大角星 HIP69673 pm≈(-1093.4, -1999.4)；织女星 HIP91262 pm≈(201.0, 287.5)', () => {
+    const arcturus = getCelestialByUid('HIP69673')!;
+    expect(arcturus.pmRaMasYr).toBeCloseTo(-1093.4, 0);
+    expect(arcturus.pmDecMasYr).toBeCloseTo(-1999.4, 0);
+    const vega = getCelestialByUid('HIP91262')!;
+    expect(vega.pmRaMasYr).toBeCloseTo(201.0, 0);
+    expect(vega.pmDecMasYr).toBeCloseTo(287.5, 0);
+  });
+
+  it('核心层最快星 Groombridge 1830（HIP57939，generated 直通）pm≈(4003.7, -5813.0)', () => {
+    const s = getCelestialByUid('HIP57939')!;
+    expect(s.sourceCatalog).toBe('hyg-v41');
+    expect(s.pmRaMasYr).toBeCloseTo(4003.7, 0);
+    expect(s.pmDecMasYr).toBeCloseTo(-5813.0, 0);
+    // 深时模式量级自证：7.06″/yr × 10 万年 ≈ 196°，远超小角度域——
+    // 渲染侧必须用精确大圆旋转而非切平面近似（TwinkleStars shader 注释同步声明）。
+    const totalMasYr = Math.hypot(s.pmRaMasYr!, s.pmDecMasYr!);
+    expect(totalMasYr).toBeGreaterThan(6900);
+    expect(totalMasYr).toBeLessThan(7200);
+  });
+
+  it('比邻星 HIP70890（generated 覆盖不到的手写暗星）pm 手写值≈(-3775.6, 768.2)', () => {
+    const s = getCelestialByUid('HIP70890')!;
+    expect(s.pmRaMasYr).toBeCloseTo(-3775.6, 1);
+    expect(s.pmDecMasYr).toBeCloseTo(768.2, 1);
+  });
+
+  it('北斗七星形变方向锚点：两端（天枢/摇光）pmra<0，中段五星（移动星群）pmra>0', () => {
+    // 文献一致性（astroEDU/大熊座移动星群）：+10 万年勺柄拉直、勺口张开。
+    const dubhe = getCelestialByUid('HIP54061')!; // 天枢
+    const alkaid = getCelestialByUid('HIP67301')!; // 摇光
+    expect(dubhe.pmRaMasYr!).toBeLessThan(0);
+    expect(alkaid.pmRaMasYr!).toBeLessThan(0);
+    for (const hip of ['HIP53910', 'HIP58001', 'HIP59774', 'HIP62956', 'HIP65378']) {
+      const s = getCelestialByUid(hip)!; // 天璇/天玑/天权/玉衡/开阳
+      expect(s.pmRaMasYr!, hip).toBeGreaterThan(0);
+    }
+  });
+
+  it('核心层 pm 覆盖率 100%（HYG v41 亮星全有 pm 测量），值域 |pm| < 10500 mas/yr', () => {
+    let withPm = 0;
+    for (const s of CELESTIAL_CATALOG) {
+      if (s.pmRaMasYr === undefined) continue;
+      withPm++;
+      expect(Number.isFinite(s.pmRaMasYr)).toBe(true);
+      expect(Number.isFinite(s.pmDecMasYr!)).toBe(true);
+      // HYG v41 分量截断上限 9999.99（Barnard 星不在层内，见 scripts 注释）
+      expect(Math.abs(s.pmRaMasYr!)).toBeLessThan(10500);
+      expect(Math.abs(s.pmDecMasYr!)).toBeLessThan(10500);
+    }
+    expect(withPm).toBe(CELESTIAL_CATALOG.length);
   });
 });
 

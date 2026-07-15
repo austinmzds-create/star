@@ -81,6 +81,8 @@ const SUN_ENTER_NDC = 1.05;
 const SUN_EXIT_NDC = 1.25;
 
 const scratchSun = new THREE.Vector3();
+/** 太阳世界坐标 scratch（9B：太阳网格挂在天旋 group 下，须取含旋转的世界位）。 */
+const scratchSunWorld = new THREE.Vector3();
 
 /**
  * 显式逃生门：?fx=0 / NEXT_PUBLIC_FX=0（构建期内联）。挂载时判定一次。
@@ -185,11 +187,14 @@ export function PostFX({ tier }: { tier: DeviceTier }) {
       if (sunMesh.position.lengthSq() < 1) {
         on = false;
       } else {
-        scratchSun.copy(sunMesh.position).applyMatrix4(camera.matrixWorldInverse);
+        // 9B 地平锁定：太阳网格是天旋 group 的子节点，局部 position 不含
+        // group 旋转——用 getWorldPosition（内部自更新父链矩阵，free 模式等价）
+        sunMesh.getWorldPosition(scratchSunWorld);
+        scratchSun.copy(scratchSunWorld).applyMatrix4(camera.matrixWorldInverse);
         if (scratchSun.z >= 0) {
           on = false; // 相机身后
         } else {
-          scratchSun.copy(sunMesh.position).project(camera);
+          scratchSun.copy(scratchSunWorld).project(camera);
           const r = Math.max(Math.abs(scratchSun.x), Math.abs(scratchSun.y));
           on = sunOnScreen ? r < SUN_EXIT_NDC : r < SUN_ENTER_NDC;
         }

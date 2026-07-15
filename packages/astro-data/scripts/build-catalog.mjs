@@ -4,6 +4,15 @@
  *   核心层 mag ≤ 6.5 → src/generated/bright-stars.json（随包，短键对象格式不变）
  *   扩展层 6.5 < mag ≤ 7.5 → apps/web/public/data/stars-extended.json（懒加载，列式紧凑格式）
  *
+ * 自行透传（Phase 9B 恒星自行时光机，r-dyn §3c）：
+ *   HYG 的 pmra/pmdec 列（mas/yr；pmra 已含 cosδ 因子）此前被丢弃，现在两层都带上——
+ *   核心层每星 +2 键（pmra/pmdec，round 0.1 mas/yr）；
+ *   扩展层 +2 列 int16 语义整数（单位 0.5 mas/yr，存值 = round(mas×2)，±32767 覆盖
+ *   全表最大自行；缺测记 0 = 深时模式下不动）。
+ *   已知数据源缺陷：HYG v41 把 |pm| 分量截断在 9999.99（字段宽度），受影响的只有
+ *   Barnard 星（HIP87937，实测 pmdec≈+10362 mas/yr）——其 mag=9.54 本就在两层之外，
+ *   对产物无影响；如未来扩层需谨记此截断。
+ *
  * 手动/低频人工运行，两个产物均提交入库；运行时（前端/后端）不联网。
  * 扩展层为纯渲染层：不进搜索索引、不可拾取、不含编号（详见 generated/README.md）。
  *
@@ -130,15 +139,26 @@ function parseHyg(csvText) {
       !Number.isFinite(decDeg) || decDeg < -90 || decDeg > 90
     ) { skippedCoord++; continue; }
 
-    // —— 扩展层分流：仅渲染用途，只留坐标/星等/光谱主类（列式存储，见 writeExtended）——
+    // 自行（mas/yr，HYG pmra 列已含 cosδ）：缺测 → undefined（核心层省键 / 扩展层记 0）。
+    const pmraStr = get(row, 'pmra');
+    const pmdecStr = get(row, 'pmdec');
+    const pmraNum = pmraStr === undefined ? NaN : parseFloat(pmraStr);
+    const pmdecNum = pmdecStr === undefined ? NaN : parseFloat(pmdecStr);
+    const hasPm = Number.isFinite(pmraNum) && Number.isFinite(pmdecNum);
+
+    // —— 扩展层分流：仅渲染用途，只留坐标/星等/光谱主类 + 自行（列式存储，见 writeExtended）——
     if (magNum > MAG_CORE) {
       const spect = get(row, 'spect');
       const specClass = spect && /^[OBAFGKM]/i.test(spect) ? spect[0].toUpperCase() : '?';
+      // int16 语义编码（0.5 mas/yr 单位）：round(mas×2)，钳到 ±32767。
+      const enc = (v) => Math.max(-32767, Math.min(32767, Math.round(v * 2)));
       extStars.push({
         ra: round(raDeg, 3), // 0.001° = 3.6″，天球半径 1000 下远小于 1px（≈0.05°）。
         dec: round(decDeg, 3),
         mag: round(magNum, 2),
         spec: specClass,
+        pmra: hasPm ? enc(pmraNum) : 0,
+        pmdec: hasPm ? enc(pmdecNum) : 0,
       });
       continue;
     }
@@ -179,6 +199,11 @@ function parseHyg(csvText) {
     /** @type {Record<string, unknown>} */
     const star = { u, ra: raDeg, dec: decDeg, mag: round(magNum, 2) };
     star.dist = distanceLy; // 明确写 null 以区别「无此键」。
+    // 自行两键（round 0.1 mas/yr；缺测省键）：深时模式渲染 + 星卡展示共用。
+    if (hasPm) {
+      star.pmra = round(pmraNum, 1);
+      star.pmdec = round(pmdecNum, 1);
+    }
     if (spect) star.spect = spect;
     if (con) star.con = con;
     if (bayer) star.bayer = bayer;
@@ -221,7 +246,18 @@ function selfCheck(stars) {
   if (!vega || Math.abs(vega.mag - 0.03) > 0.02) {
     throw new Error(`抽样失败：织女星 HIP91262 mag=${vega && vega.mag}（期望≈0.03）`);
   }
-  console.log('[check] 核心层自检通过（含天狼星/织女星抽样）');
+  // 自行抽样（Phase 9B）：期望值 = 缓存 CSV 实值（awk 核实 2026-07-15：
+  // HIP32349 pmra=-546.01 pmdec=-1223.08；HIP91262 pmra=201.02 pmdec=287.46）。
+  if (!Number.isFinite(sirius.pmra) || Math.abs(sirius.pmra - -546.0) > 1) {
+    throw new Error(`抽样失败：天狼星 pmra=${sirius.pmra}（期望≈-546.0 mas/yr）`);
+  }
+  if (!Number.isFinite(sirius.pmdec) || Math.abs(sirius.pmdec - -1223.1) > 1) {
+    throw new Error(`抽样失败：天狼星 pmdec=${sirius.pmdec}（期望≈-1223.1 mas/yr）`);
+  }
+  if (!Number.isFinite(vega.pmra) || Math.abs(vega.pmra - 201.0) > 1) {
+    throw new Error(`抽样失败：织女星 pmra=${vega.pmra}（期望≈201.0 mas/yr）`);
+  }
+  console.log('[check] 核心层自检通过（含天狼星/织女星坐标+自行抽样）');
 }
 
 /** 扩展层产物自检。抛错则不写文件。 */
@@ -236,6 +272,13 @@ function selfCheckExt(extStars) {
     if (s.ra < 0 || s.ra >= 360) throw new Error(`扩展层 raDeg 越界：${s.ra}`);
     if (s.dec < -90 || s.dec > 90) throw new Error(`扩展层 decDeg 越界：${s.dec}`);
     if (!/^[OBAFGKM?]$/.test(s.spec)) throw new Error(`扩展层光谱主类非法：${s.spec}`);
+    // 自行 int16 编码域检查（0.5 mas/yr 单位）。
+    if (!Number.isInteger(s.pmra) || Math.abs(s.pmra) > 32767) {
+      throw new Error(`扩展层 pmra 编码越界：${s.pmra}`);
+    }
+    if (!Number.isInteger(s.pmdec) || Math.abs(s.pmdec) > 32767) {
+      throw new Error(`扩展层 pmdec 编码越界：${s.pmdec}`);
+    }
   }
   console.log('[check] 扩展层自检通过');
 }
@@ -318,6 +361,9 @@ async function main() {
     dec: extStars.map((s) => s.dec),
     mag: extStars.map((s) => s.mag),
     spec: extStars.map((s) => s.spec).join(''),
+    // 自行两列（int16 语义，0.5 mas/yr 单位；解码 mas/yr = 值 × 0.5）。
+    pmra: extStars.map((s) => s.pmra),
+    pmdec: extStars.map((s) => s.pmdec),
   };
   mkdirSync(dirname(OUT_EXT_JSON), { recursive: true });
   writeFileSync(OUT_EXT_JSON, JSON.stringify(extPayload) + '\n');

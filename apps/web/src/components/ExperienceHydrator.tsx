@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { startAmbient } from '@/lib/audioEngine';
 import { readPref } from '@/lib/prefs';
-import { useUniverse } from '@/lib/store';
+import { useUniverse, type ViewMode } from '@/lib/store';
 
 /**
  * 体验层水合器（Phase 6B，layout 级 null 渲染客户端组件）。职责三件：
@@ -24,7 +24,17 @@ export function ExperienceHydrator() {
       typeof rawVolume === 'number' && Number.isFinite(rawVolume)
         ? Math.min(1, Math.max(0, rawVolume))
         : 0.5;
-    useUniverse.setState({ redLightOn, ambientOn, ambientVolume });
+    // 观察模式（Phase 9B 地平锁定）：白名单校验，脏值一律回退 'free'；
+    // 水合到 'earth' 时同步打开观测辅助（与 setViewMode 的语义保持一致）。
+    const viewMode: ViewMode =
+      readPref<string>('viewMode.v1', 'free') === 'earth' ? 'earth' : 'free';
+    useUniverse.setState({
+      redLightOn,
+      ambientOn,
+      ambientVolume,
+      viewMode,
+      ...(viewMode === 'earth' ? { showHorizon: true } : {}),
+    });
 
     if (!ambientOn) return;
     const resume = () => startAmbient(useUniverse.getState().ambientVolume);

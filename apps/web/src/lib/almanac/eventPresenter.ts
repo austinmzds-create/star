@@ -21,6 +21,9 @@ function deepLinkOf(e: AlmanacEvent): string | null {
   if (e.focusConstellation) {
     // 流星雨极大（allDay，UTC 零点）：深链取当日 18:00 UTC = 北京次日凌晨 2 点，
     // 后半夜辐射点较高，星图打开即接近最佳观测时段。
+    // 顺带开启流星雨层（Phase 9B §3d）：MeteorShowerLayer 常驻挂载、活跃期
+    // 判定跟随 observeTime——travelTo 到极大期当夜即自动点亮辐射点圆环、
+    // 名称与程序化流星，无需额外 URL 参数或开关。
     const t = e.allDay ? e.timeMs + 18 * 3_600_000 : e.timeMs;
     return `/?t=${t}&con=${encodeURIComponent(e.focusConstellation)}`;
   }

@@ -1,7 +1,8 @@
 /**
  * 小天体状态注册表（模块级单例，镜像 ephemRegistry 模式）。
  *
- * 谷神星/灶神星/智神星/哈雷彗星的地心 J2000 坐标由 @star/astro-ephem 的
+ * 6 个小天体（谷神/灶神/智神 3 小行星 + 哈雷/恩克/庞斯-布鲁克斯 3 彗星）
+ * 的地心 J2000 坐标由 @star/astro-ephem 的
  * minorBodies（JPL 根数 + 开普勒求解）按 observeTime 计算。
  * 状态槽保持独立注册表（不与 ephemRegistry 合表），但重算入口有两个：
  * MinorBodiesLayer（懒加载）订阅 observeTime 驱动 + EphemDriver 实时模式
@@ -34,6 +35,16 @@ export interface MinorBodyState {
   distanceAu: number;
   /** 日心距离（AU）。 */
   helioDistanceAu: number;
+  /**
+   * 彗尾当前是否可见（Phase 9B）：仅彗星有意义，由 CometTailLayer 按
+   * observeTime 量化键写入（视角长与亮度双阈值判定，演示级）。
+   * 注意（集成验证修订）：StarInfoCard 的「彗尾可见 · 演示级」徽章不读
+   * 本字段——旗标由懒 chunk 在挂载后写入，而卡片只随 store 变化重渲染，
+   * 深链/暂停态下会读到写入前的旧值；徽章改用同一纯函数
+   * （computeCometTailGeometry，同 1h 量化键）同步推导。本字段保留给
+   * 层内状态恢复（deepTime 退出）与调试消费。
+   */
+  tailVisible: boolean;
   /** 天球世界坐标——固定引用、原地 mutate，勿替换实例。 */
   vec: THREE.Vector3;
 }
@@ -59,6 +70,7 @@ function createRegistry(): MinorRegistry {
       decDeg: 0,
       distanceAu: 0,
       helioDistanceAu: 0,
+      tailVisible: false,
       vec: new THREE.Vector3(),
     });
   }
@@ -68,7 +80,7 @@ function createRegistry(): MinorRegistry {
 export const minor: MinorRegistry = createRegistry();
 
 /**
- * 整批重算 4 个小天体（开普勒 + HelioVector，<1ms）。
+ * 整批重算 6 个小天体（开普勒 + HelioVector，<1.5ms）。
  * 仅在 observeTime 变化（MinorBodiesLayer effect）或实时模式 30s 心跳
  * （EphemDriver）时调用——小天体日运动角分级，绝不逐帧计算；
  * 相同 dateMs 去重直接 return，两路驱动幂等无争。
@@ -87,4 +99,14 @@ export function recomputeMinorBodies(dateMs: number): void {
   }
   minor.computedAtMs = dateMs;
   minor.version += 1;
+}
+
+/**
+ * 写入彗尾可见状态（Phase 9B）：CometTailLayer 按 1h 量化键低频调用。
+ * 只改字段不 bump version——version 语义是「坐标已重算」，彗尾旗标由
+ * UI 侧在自身渲染节奏里读取即可。未知 uid 静默忽略（层卸载竞态防御）。
+ */
+export function setCometTailVisible(uid: string, visible: boolean): void {
+  const state = minor.states.get(uid);
+  if (state) state.tailVisible = visible;
 }

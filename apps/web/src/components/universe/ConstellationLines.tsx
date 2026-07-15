@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import {
+  getConstellationDeepTimeVersion,
   LINE_BASE_ALPHA,
   type ConstellationRenderData,
 } from '@/lib/constellation-render';
@@ -77,6 +78,9 @@ interface ConstellationLinesProps {
 
 export function ConstellationLines({ data, progressRef, reducedMotion }: ConstellationLinesProps) {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
+  // 深时形变版本（9B）：挂载时取现值——geometry 从 data.positions 新建，
+  // 上传的本就是最新形变结果，不需要补一次 needsUpdate。
+  const deepTimeVersion = useRef(getConstellationDeepTimeVersion());
 
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -111,6 +115,13 @@ export function ConstellationLines({ data, progressRef, reducedMotion }: Constel
     if (!reducedMotion) u.uTime!.value += delta;
     // uProgress.value 与 progressRef 同一引用，three 侧数组比较后按需上传。
     u.uProgress!.value = progressRef.current;
+    // 深时形变（9B）：applyConstellationDeepTime 原地覆写了 data.positions，
+    // 版本号变化才置 needsUpdate（≤10Hz 节流上传 ~25KB，常态零成本）。
+    const v = getConstellationDeepTimeVersion();
+    if (v !== deepTimeVersion.current) {
+      deepTimeVersion.current = v;
+      (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    }
   });
 
   return (

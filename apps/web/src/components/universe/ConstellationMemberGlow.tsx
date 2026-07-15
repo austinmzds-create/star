@@ -3,7 +3,10 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
-import type { ConstellationRenderInfo } from '@/lib/constellation-render';
+import {
+  getConstellationDeepTimeVersion,
+  type ConstellationRenderInfo,
+} from '@/lib/constellation-render';
 
 /**
  * 星座成员星强调光环：激活座的连线端点（去重后 ≈10–30 颗）上叠一圈
@@ -58,6 +61,8 @@ export function ConstellationMemberGlow({
 }: ConstellationMemberGlowProps) {
   const materialRef = useRef<THREE.ShaderMaterial>(null);
   const pixelRatio = useThree((s) => s.gl.getPixelRatio());
+  // 深时形变版本（9B）：挂载时几何从最新 memberPositions 新建，取现值即可。
+  const deepTimeVersion = useRef(getConstellationDeepTimeVersion());
 
   const geometry = useMemo(() => {
     const geo = new THREE.BufferGeometry();
@@ -89,6 +94,12 @@ export function ConstellationMemberGlow({
     const p = progressRef.current[info.index] ?? 0;
     // 线亮到 15% 后光环开始浮现（先线后星的层次感），满亮 0.9。
     u.uProgress!.value = THREE.MathUtils.smoothstep(p, 0.15, 1.0) * 0.9;
+    // 深时形变（9B）：memberPositions 被原地覆写，版本变化才重传（点数 ≤ 数十）。
+    const v = getConstellationDeepTimeVersion();
+    if (v !== deepTimeVersion.current) {
+      deepTimeVersion.current = v;
+      (geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    }
   });
 
   return (

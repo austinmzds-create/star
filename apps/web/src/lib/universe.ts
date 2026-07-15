@@ -32,12 +32,21 @@ export function magnitudeToSize(magnitude: number): number {
   return THREE.MathUtils.clamp(15 - magnitude * 2.3, 4.5, 20);
 }
 
+/** mas/yr → rad/yr（1 mas = 1e-3/3600 度）。自行属性预转弧度，shader 零换算。 */
+export const MAS_YR_TO_RAD_YR = (1e-3 / 3600) * (Math.PI / 180);
+
 export interface StarAttributes {
   positions: Float32Array;
   colors: Float32Array;
   sizes: Float32Array;
   phases: Float32Array;
   count: number;
+  /**
+   * 自行（Phase 9B 深时模式）：每星 2 分量 (pmra*, pmdec)，单位 rad/yr
+   * （pmra 已含 cosδ）。可选——缺省时 TwinkleStars 以零填充（程序化环境星/
+   * 星屑等装饰层不动，真实星层随「星座时光机」形变）。
+   */
+  pms?: Float32Array;
 }
 
 export interface CatalogRenderData extends StarAttributes {
@@ -62,6 +71,7 @@ export function buildCatalogRenderData(): CatalogRenderData {
   const colors = new Float32Array(count * 3);
   const sizes = new Float32Array(count);
   const phases = new Float32Array(count);
+  const pms = new Float32Array(count * 2);
   const vectors: THREE.Vector3[] = [];
 
   objects.forEach((obj, i) => {
@@ -78,9 +88,15 @@ export function buildCatalogRenderData(): CatalogRenderData {
 
     sizes[i] = magnitudeToSize(obj.magnitude);
     phases[i] = (i * 2.399963) % (Math.PI * 2);
+
+    // 自行（mas/yr → rad/yr 预转）：缺测保持 0（深时模式该星不动，Float32Array 初值即 0）。
+    if (obj.pmRaMasYr !== undefined && obj.pmDecMasYr !== undefined) {
+      pms[i * 2] = obj.pmRaMasYr * MAS_YR_TO_RAD_YR;
+      pms[i * 2 + 1] = obj.pmDecMasYr * MAS_YR_TO_RAD_YR;
+    }
   });
 
-  return { positions, colors, sizes, phases, count, vectors, objects };
+  return { positions, colors, sizes, phases, count, pms, vectors, objects };
 }
 
 /** 均匀分布在单位球面上的随机方向。 */

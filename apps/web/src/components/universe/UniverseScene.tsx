@@ -1,13 +1,14 @@
 'use client';
 
 import { AdaptiveDpr, useDetectGPU } from '@react-three/drei';
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import {
   Component,
   lazy,
   Suspense,
   useEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
   type ReactNode,
 } from 'react';
@@ -16,6 +17,7 @@ import { applyGpuTier, getDeviceTier, subscribeDeviceTier } from '@/lib/deviceTi
 import { getComposerActive, subscribeComposerActive } from '@/lib/fxBus';
 import { setPerfTier } from '@/lib/perfBus';
 import { ensureStaticEntries } from '@/lib/pickRegistry';
+import { beginSkyModeTransition, getSkyQuaternion, setSkyTarget, tickSkyFrame } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
 import { buildCatalogRenderData, generateAmbientField } from '@/lib/universe';
 import { CameraRig } from './CameraRig';
@@ -41,6 +43,11 @@ const SatellitesLayer = lazy(() =>
 );
 const MinorBodiesLayer = lazy(() =>
   import('./MinorBodiesLayer').then((m) => ({ default: m.MinorBodiesLayer })),
+);
+// 流星雨层（Phase 9B）：组件归「流星雨」域，挂载行归「地平锁定」域（契约 §4）。
+// lazy 独立 chunk：常驻挂载但组件自身按活跃期决定是否产出几何。
+const MeteorShowerLayer = lazy(() =>
+  import('./MeteorShowerLayer').then((m) => ({ default: m.MeteorShowerLayer })),
 );
 
 // 后处理链（Phase 9A）：postprocessing + @react-three/postprocessing ≈100KB gz，
@@ -78,6 +85,10 @@ const DevPerf =
  *
  * 帧循环纪律：useFrame 内无 zustand set、无 Vector3 分配、无 attribute 重建；
  * 行星位置只在 ephemRegistry.version 变化时搬运。
+ *
+ * 天球旋转（Phase 9B 地平锁定）：除 HorizonLayer（地平参照物）外的全部
+ * 天空层挂在 SkyRotationGroup 下，group.quaternion 每帧从 lib/skyFrame 读——
+ * earth 模式整个天空绕天极旋转（25,000+ 星点零重算），free 模式恒等。
  *
  * 设备档（Phase 9A 三档化）：启动启发式 + DetectGPU 异步微调一次——档位
  * 变化经 useSyncExternalStore 触发一次整树重渲染（会话内至多一次，纹理层
@@ -117,6 +128,48 @@ class ProbeBoundary extends Component<{ children: ReactNode }, { failed: boolean
   override render(): ReactNode {
     return this.state.failed ? null : this.props.children;
   }
+}
+
+/**
+ * 天球旋转 root group（Phase 9B 地平锁定，契约 §2）：全部「天空层」挂在
+ * 本 group 下，group.quaternion 每帧从 lib/skyFrame 读取（零分配）——
+ * earth 模式下随 observeTime/city 绕天极旋转，free 模式恒等。
+ * HorizonLayer/罗盘刻意留在 group 外（地平线固定于观测者，不随天旋）。
+ *
+ * 更新纪律：目标四元数重算走 zustand 命令式订阅（播放期 observeTime 4Hz），
+ * 不触发本组件 React 重渲染；useFrame 只做 slerp 补间 + copy。
+ */
+function SkyRotationGroup({ children }: { children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  useEffect(() => {
+    const apply = (snap: boolean): void => {
+      const s = useUniverse.getState();
+      setSkyTarget(
+        s.viewMode,
+        s.observeTime ?? Date.now(),
+        s.city.latitudeDeg,
+        s.city.longitudeDeg,
+        snap,
+      );
+    };
+    apply(true); // 首帧直接就位（含 prefs 已水合为 earth 的场景），不做入场动画
+    return useUniverse.subscribe((s, prev) => {
+      if (
+        s.viewMode === prev.viewMode &&
+        s.observeTime === prev.observeTime &&
+        s.city === prev.city
+      )
+        return;
+      // free↔earth 切换：0.8s 定时 slerp（与 CameraRig 俯仰缓推同步开始）
+      if (s.viewMode !== prev.viewMode) beginSkyModeTransition();
+      apply(false);
+    });
+  }, []);
+  useFrame((_, delta) => {
+    tickSkyFrame(delta);
+    ref.current?.quaternion.copy(getSkyQuaternion());
+  });
+  return <group ref={ref}>{children}</group>;
 }
 
 export function UniverseScene() {
@@ -170,41 +223,51 @@ export function UniverseScene() {
         {/* V4 深邃：底色再压一档（#03040a → #010207），星点对比全靠底黑 */}
         <color attach="background" args={['#010207']} />
         <Suspense fallback={null}>
-          <SpaceBackdrop blobCount={tier === 'low' ? 2 : undefined} />
-          {/* 真实银河全景：NASA SVS Deep Star Maps 2020（懒加载，失败静默降级）。
-            key=tier：异步换档时重挂取对应档纹理（4k/2k）与薄雾带配置 */}
-          <MilkyWayLayer key={tier} />
-          {/* 程序化环境星场：营造铺满宇宙的氛围 */}
-          <TwinkleStars attributes={ambient} twinkle={0.85} sizeScale={1} renderOrder={0} />
-          {/* 核心真实星表（mag≤6.5）：可搜索、可点击、可命名 */}
-          <TwinkleStars attributes={catalog} twinkle={0.35} sizeScale={1.15} renderOrder={1} />
-          {/* 扩展星场（mag 6.5–7.5）：空闲懒加载，纯渲染层 */}
-          <ExtendedStars tier={tier} />
-          {/* 深空天体：Messier 全量 + 亮 NGC/IC */}
-          <DeepSkyLayer />
-          {/* 星团星屑（V4）：cluster DSO 显性化为一小撮星屑，单 Points、不拾取 */}
-          <ClusterSprinkleLayer tier={tier} />
-          {/* 著名 DSO 真实照片：≤16 张（NASA/ESO/Commons，空闲错峰懒加载） */}
-          <DsoPhotoLayer key={`dso-${tier}`} />
-          {/* 星座层：88 座连线依次点亮 + 中文名淡入 + 20 幅自绘艺术图 */}
-          <ConstellationLayer />
-          {/* 行星日月：observeTime 驱动的星历实时位置。key=tier：换档重建
-            光晕/GodRays 光源盘配置（组件内 useMemo 一次性构建，不热更） */}
-          <PlanetsLayer key={`planets-${tier}`} tier={tier} />
-          {/* 行星轨迹（6B-6）：选中行星/月亮时的 ±N 天视轨迹（≤2 draw，无选中零几何） */}
-          <PlanetTrailLayer />
-          {/* 人造卫星（6B-7）：ISS/天宫/哈勃，SGP4 站心实时位置 + 尾迹（懒 chunk，2 draw） */}
-          {showSatellites && <SatellitesLayer />}
-          {/* 小行星与彗星（6B-8）：谷神/灶神/智神/哈雷，JPL 根数开普勒轨道（懒 chunk，1 draw） */}
-          {showMinorBodies && <MinorBodiesLayer />}
-          <TargetHighlight />
+          {/* 天球旋转 group（9B 地平锁定）：以下全部天空层随 skyFrame 四元数
+            整体旋转（free 模式恒等）；地平参照物（HorizonLayer）在 group 外 */}
+          <SkyRotationGroup>
+            <SpaceBackdrop blobCount={tier === 'low' ? 2 : undefined} />
+            {/* 真实银河全景：NASA SVS Deep Star Maps 2020（懒加载，失败静默降级）。
+              key=tier：异步换档时重挂取对应档纹理（4k/2k）与薄雾带配置 */}
+            <MilkyWayLayer key={tier} />
+            {/* 程序化环境星场：营造铺满宇宙的氛围 */}
+            <TwinkleStars attributes={ambient} twinkle={0.85} sizeScale={1} renderOrder={0} />
+            {/* 核心真实星表（mag≤6.5）：可搜索、可点击、可命名 */}
+            <TwinkleStars attributes={catalog} twinkle={0.35} sizeScale={1.15} renderOrder={1} />
+            {/* 扩展星场（mag 6.5–7.5）：空闲懒加载，纯渲染层 */}
+            <ExtendedStars tier={tier} />
+            {/* 深空天体：Messier 全量 + 亮 NGC/IC */}
+            <DeepSkyLayer />
+            {/* 星团星屑（V4）：cluster DSO 显性化为一小撮星屑，单 Points、不拾取 */}
+            <ClusterSprinkleLayer tier={tier} />
+            {/* 著名 DSO 真实照片：≤16 张（NASA/ESO/Commons，空闲错峰懒加载） */}
+            <DsoPhotoLayer key={`dso-${tier}`} />
+            {/* 星座层：88 座连线依次点亮 + 中文名淡入 + 20 幅自绘艺术图 */}
+            <ConstellationLayer />
+            {/* 行星日月：observeTime 驱动的星历实时位置。key=tier：换档重建
+              光晕/GodRays 光源盘配置（组件内 useMemo 一次性构建，不热更） */}
+            <PlanetsLayer key={`planets-${tier}`} tier={tier} />
+            {/* 行星轨迹（6B-6）：选中行星/月亮时的 ±N 天视轨迹（≤2 draw，无选中零几何） */}
+            <PlanetTrailLayer />
+            {/* 人造卫星（6B-7）：ISS/天宫/哈勃，SGP4 站心 RA/Dec 实时位置 + 尾迹
+              （懒 chunk，2 draw）——站心坐标仍是赤道系投影，随天旋 group 正确旋转 */}
+            {showSatellites && <SatellitesLayer />}
+            {/* 小行星与彗星（6B-8）：谷神/灶神/智神/哈雷，JPL 根数开普勒轨道（懒 chunk，1 draw） */}
+            {showMinorBodies && <MinorBodiesLayer />}
+            {/* 流星雨（9B）：辐射点 marker + 程序化流星（组件归流星雨域，挂载行归本域） */}
+            <MeteorShowerLayer />
+            {/* 选中高亮：跟随拾取表天球本地坐标，须与天空层同频旋转 */}
+            <TargetHighlight />
+            {/* 坐标线（V3-F）：黄道 / 天赤道+网格——RA/Dec 参考系钉在天球上，
+              earth 模式必须随天旋（否则网格与恒星错位），故一并入 group */}
+            <GridLayer />
+          </SkyRotationGroup>
         </Suspense>
         <EphemDriver />
-        {/* 坐标线（V3-F）：黄道 / 天赤道+网格，静态几何，默认关、懒构建 */}
-        <GridLayer />
-        {/* 观测辅助（V3-F/G）：地平线大圆+方位标+半球压暗+晨昏色调。
-          刻意挂在 EphemDriver 之后——同一 commit 内 effect 先后有序，
-          读 ephemRegistry 的太阳坐标一定是当次 observeTime 的新鲜值 */}
+        {/* 观测辅助（V3-F/G + 9B 罗盘/晨昏辉光）：地平线大圆+方位标+半球压暗。
+          地平线固定于观测者，刻意留在天旋 group 外；挂在 EphemDriver 之后——
+          同一 commit 内 effect 先后有序，读 ephemRegistry 的太阳坐标
+          一定是当次 observeTime 的新鲜值 */}
         <HorizonLayer />
         <CameraRig />
         {/* 后处理链尾（Phase 9A）：Bloom/ToneMapping/Vignette/Noise + 熔断。

@@ -24,6 +24,14 @@ function constellationAbbrOfUid(uid: string): string | null {
 export type ConstellationSource = 'gaze' | 'select' | 'search';
 
 /**
+ * 观察模式（Phase 9B 跨域契约 §1，冻结；本字段归「地平锁定」域独家写入）：
+ * 'free'  = 自由环视天球（默认，用户拍板）——天空层不做地平旋转，沿用旧行为；
+ * 'earth' = 站在地球上看——天空层随 observeTime/city 绕天极旋转（lib/skyFrame），
+ *           相机 yaw/pitch 语义变为方位角/高度角，时间快进即天旋地转。
+ */
+export type ViewMode = 'free' | 'earth';
+
+/**
  * 开场序曲阶段（Phase 9A 动效序曲）：'playing' 期间首屏 UI（BrandMark/
  * SearchPanel/ControlBar 等）保持隐藏待命，转 'done' 时按 stagger 依次入场。
  * 'idle' 是 SSR/未决初值——UI 侧只把 'playing' 当隐藏信号，其余一律可见，
@@ -137,6 +145,17 @@ interface UniverseState {
   /** 开场序曲阶段（低频，仅 lib/overture 写；UI stagger 消费）。 */
   overturePhase: OverturePhase;
 
+  // ── Phase 9B 跨域契约字段（冻结；归「地平锁定」域写，其它域只读） ──
+  /** 观察模式：自由环视（默认）/ 站在地球上看。持久化 star.viewMode.v1。 */
+  viewMode: ViewMode;
+  /**
+   * 恒星自行时光机的 J2000 偏移年数（±100,000）；null = 关闭。
+   * 非 null 时：恒星/星座由「自行时光机」域做形变本体；行星/日月、小天体
+   * +彗尾、卫星各层在此尺度不可外推，须各自淡出（各自域实现；卫星层在
+   * SatellitesLayer 内完成）。
+   */
+  deepTimeYears: number | null;
+
   selectStar: (uid: string | null) => void;
   focusStar: (uid: string) => void;
   setCity: (city: City) => void;
@@ -213,6 +232,15 @@ interface UniverseState {
   setGyroActive: (active: boolean) => void;
   /** 序曲阶段写入口（仅 lib/overture 调用；同值去重防 React 抖动）。 */
   setOverturePhase: (phase: OverturePhase) => void;
+
+  // ── Phase 9B 跨域契约 action（冻结） ──
+  /**
+   * 切换观察模式（写 prefs 持久化）。进入 'earth' 时顺带打开观测辅助
+   * （地平线/罗盘是该模式的空间锚点）；退出不强制关——用户可能本就开着。
+   */
+  setViewMode: (m: ViewMode) => void;
+  /** 开/关恒星自行时光机：null 关闭；数值钳制到 ±100,000 年。 */
+  setDeepTimeYears: (y: number | null) => void;
 }
 
 export const useUniverse = create<UniverseState>((set) => ({
@@ -258,6 +286,8 @@ export const useUniverse = create<UniverseState>((set) => ({
   ambientVolume: 0.5,
   gyroActive: false,
   overturePhase: 'idle',
+  viewMode: 'free', // 默认自由环视（用户拍板）；持久化值由 ExperienceHydrator 水合
+  deepTimeYears: null,
 
   selectStar: (uid) =>
     set((s) => {
@@ -423,6 +453,32 @@ export const useUniverse = create<UniverseState>((set) => ({
     set(active ? { gyroActive: true, autoRotate: false } : { gyroActive: false }),
   setOverturePhase: (phase) =>
     set((s) => (s.overturePhase === phase ? {} : { overturePhase: phase })),
+
+  setViewMode: (m) =>
+    set((s) => {
+      if (s.viewMode === m) return {};
+      writePref('viewMode.v1', m);
+      // 进入地球视角：地平线/罗盘是方位角语义的空间锚点，自动打开观测辅助
+      return m === 'earth' ? { viewMode: m, showHorizon: true } : { viewMode: m };
+    }),
+  setDeepTimeYears: (y) =>
+    set((s) => {
+      if (y == null) return { deepTimeYears: null };
+      const v = Math.max(-100_000, Math.min(100_000, y));
+      // 进入深时（null→非 null）时清掉当前选中（跨域缝隙防御）：
+      // 行星/小天体/卫星层即将整层淡出，高亮环、名牌与信息卡不能指着已
+      // 隐藏的目标；恒星选中同理——高亮环坐标取自 J2000 拾取表，深时形变
+      // 后已不贴星点。模式内滑条/预设 tween（非 null→非 null）不受影响。
+      if (s.deepTimeYears == null && s.selectedUid) {
+        return {
+          deepTimeYears: v,
+          selectedUid: null,
+          planetViewerOpen: false,
+          objectViewerUid: null,
+        };
+      }
+      return { deepTimeYears: v };
+    }),
 }));
 
 /**

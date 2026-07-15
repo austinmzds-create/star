@@ -23,6 +23,7 @@ import {
   Observer,
   PairLongitude,
   SearchGlobalSolarEclipse,
+  SearchHourAngle,
   SearchLunarEclipse,
   SearchMaxElongation,
   SearchMoonQuarter,
@@ -650,4 +651,59 @@ export function computeMoonRiseSet(
     riseMs: rise?.date.getTime() ?? null,
     setMs: set?.date.getTime() ?? null,
   };
+}
+
+// ── 升落与中天（Phase 9B §3e-5：日出日落/行星升落产品化） ──
+
+/**
+ * 某日 24h 内天体的升/落/上中天时刻；null = 窗口内无该事件。
+ * 常见 null 场景：极昼极夜（太阳整日不升/不落）、月亮 ~24h50m 升落周期
+ * 每月约缺一天、以及拱极天体永不落下等——均属天文事实，非计算失败。
+ */
+export interface BodyRiseSet {
+  riseMs: number | null;
+  setMs: number | null;
+  /** 上中天（过子午圈、当日最高点）时刻。 */
+  transitMs: number | null;
+  /** 上中天时刻的地平高度角（度）；transitMs 为 null 时亦为 null。 */
+  transitAltDeg: number | null;
+}
+
+/**
+ * 计算 dayStartMs 起 24h 内某星历天体的升/落/上中天（站心，海拔 0；
+ * SearchRiseSet 含 astronomy-engine 默认的标准大气折射与视半径修正）。
+ * dayStartMs 建议传观测者本地日界（如北京时区当日 00:00 对应的 UTC ms），
+ * 与 computeMoonRiseSet 同一约定。
+ */
+export function computeBodyRiseSet(
+  bodyId: EphemerisBodyId,
+  dayStartMs: number,
+  latitudeDeg: number,
+  longitudeDeg: number,
+): BodyRiseSet {
+  const obs = new Observer(latitudeDeg, longitudeDeg, 0);
+  const start = new Date(dayStartMs);
+  const rise = SearchRiseSet(AE_BODY[bodyId], obs, +1, start, 1);
+  const set = SearchRiseSet(AE_BODY[bodyId], obs, -1, start, 1);
+  // SearchHourAngle 无搜索窗口参数（必返回下一次事件）：向后搜到的首个
+  // 上中天若超出本日 24h 即视为「当日无中天」（月亮中天周期 ~24h50m，
+  // 每月约缺一天，与月出落缺日同理）。
+  const tr = SearchHourAngle(AE_BODY[bodyId], obs, 0, start, +1);
+  const trMs = tr.time.date.getTime();
+  const inDay = trMs < dayStartMs + DAY_MS;
+  return {
+    riseMs: rise?.date.getTime() ?? null,
+    setMs: set?.date.getTime() ?? null,
+    transitMs: inDay ? trMs : null,
+    transitAltDeg: inDay ? tr.hor.altitude : null,
+  };
+}
+
+/** 太阳版便捷封装（信息卡「今日 升/落/中天」与日出日落展示用）。 */
+export function computeSunRiseSet(
+  dayStartMs: number,
+  latitudeDeg: number,
+  longitudeDeg: number,
+): BodyRiseSet {
+  return computeBodyRiseSet('sun', dayStartMs, latitudeDeg, longitudeDeg);
 }

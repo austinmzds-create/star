@@ -10,6 +10,8 @@
  *     --data-urlencode "STEP_SIZE='1d'" ...
  *  （COMMAND='1;' Ceres / '4;' Vesta / '2;' Pallas / 'DES=1P;CAP' Halley，
  *   CENTER='500@399' 地心，QUANTITIES='1' 天文测量 RA/Dec ICRF/J2000。）
+ * 2026-07-15 追加（Phase 9B 真彗尾）：同法 'DES=2P;CAP'（Encke）与
+ *   'DES=12P;CAP'（Pons-Brooks），QUANTITIES='1,19,20'。
  * 返回值原样换算为度粘贴于下，注释保留时分秒原文。
  */
 import { describe, expect, it } from 'vitest';
@@ -24,7 +26,7 @@ import {
   type MinorBodyId,
 } from './minorBodies';
 
-const ALL: MinorBodyId[] = ['ceres', 'vesta', 'pallas', 'halley'];
+const ALL: MinorBodyId[] = ['ceres', 'vesta', 'pallas', 'halley', 'encke', 'ponsbrooks'];
 
 /** 球面角距（度）——勿直接减 RA。 */
 function angularSeparationDeg(
@@ -46,6 +48,9 @@ function angularSeparationDeg(
  *   Vesta  01 15 57.75 +00 37 22.4   delta 2.30323 AU
  *   Pallas 01 09 11.70 +03 34 57.8   delta 2.99871 AU
  *   Halley 08 12 17.92 +03 37 21.3   delta 35.91706 AU
+ * 追加锚点（2026-07-01 00:00 UT，抓取 2026-07-15）：
+ *   Encke  01 15 33.80 +13 48 27.1   delta 2.98976 AU（r 2.920126）
+ *   12P    16 18 13.92 -35 00 05.5   delta 7.35273 AU（r 8.226980）
  */
 const HORIZONS_ANCHORS: Array<{
   id: MinorBodyId;
@@ -59,6 +64,11 @@ const HORIZONS_ANCHORS: Array<{
   { id: 'pallas', raDeg: (1 + 9 / 60 + 11.7 / 3600) * 15, decDeg: 3 + 34 / 60 + 57.8 / 3600, distanceAu: 2.99871, tolDeg: 1.0 },
   // 哈雷根数历元 1968（上次回归前），远日点附近运动极慢，仍给略宽容差
   { id: 'halley', raDeg: (8 + 12 / 60 + 17.92 / 3600) * 15, decDeg: 3 + 37 / 60 + 21.3 / 3600, distanceAu: 35.91706, tolDeg: 1.5 },
+  // 恩克非引力加速度明显（Horizons A1/A2 非零），2022 历元二体外推给宽容差
+  //（实跑 2026-07-15：角距 0.109°）
+  { id: 'encke', raDeg: (1 + 15 / 60 + 33.8 / 3600) * 15, decDeg: 13 + 48 / 60 + 27.1 / 3600, distanceAu: 2.98976, tolDeg: 1.0 },
+  // 12P 历元 2023-09，外推 2.8 年且远离太阳段运动慢（实跑角距 0.006°）
+  { id: 'ponsbrooks', raDeg: (16 + 18 / 60 + 13.92 / 3600) * 15, decDeg: -(35 + 0 / 60 + 5.5 / 3600), distanceAu: 7.35273, tolDeg: 0.5 },
 ];
 
 const T0 = new Date('2026-07-01T00:00:00Z');
@@ -89,7 +99,7 @@ describe('solveKepler', () => {
 });
 
 describe('轨道几何边界', () => {
-  it('2026 年 12 个月首日：四体日心距离均在 [a(1−e), a(1+e)]（±0.01 AU）', () => {
+  it('2026 年 12 个月首日：六体日心距离均在 [a(1−e), a(1+e)]（±0.01 AU）', () => {
     for (const id of ALL) {
       const el = getMinorBodyElements(id);
       for (let m = 1; m <= 12; m++) {
@@ -152,11 +162,12 @@ describe('JPL Horizons 锚点（2026-07-01，抓取 2026-07-11）', () => {
 });
 
 describe('元数据与 uid', () => {
-  it('恰 4 条，MB- 前缀且唯一，描述非空；哈雷标注远日点示意', () => {
+  it('恰 6 条（3 小行星 + 3 彗星），MB- 前缀且唯一，描述非空；哈雷标注远日点示意', () => {
     const list = listMinorBodies();
-    expect(list.length).toBe(4);
+    expect(list.length).toBe(6);
+    expect(list.filter((b) => b.kind === 'comet').length).toBe(3);
     const uids = new Set(list.map((b) => b.objectUid));
-    expect(uids.size).toBe(4);
+    expect(uids.size).toBe(6);
     for (const b of list) {
       expect(b.objectUid.startsWith('MB-')).toBe(true);
       expect(['asteroid', 'comet']).toContain(b.kind);

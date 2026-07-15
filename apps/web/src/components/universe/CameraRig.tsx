@@ -10,11 +10,19 @@ import { getConstellationRenderData, pickConstellationAt } from '@/lib/constella
 import { isCoarsePointer } from '@/lib/device';
 import { getHover, setHover } from '@/lib/hoverBus';
 import { ensureStaticEntries, pickEntries, resolveObjectPosition } from '@/lib/pickRegistry';
+import { getSkyQuaternion, worldToSkyLocal } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
 import { SPHERE_RADIUS } from '@/lib/universe';
 import { triggerArrivalPulse } from './TargetHighlight';
 
 const PITCH_LIMIT = THREE.MathUtils.degToRad(85);
+/**
+ * earth 模式俯仰下限（9B 地平锁定）：pitch 语义 = 高度角，允许微俯视
+ * 地平线下 10°（看落日余脉/贴地目标）但不翻转到「地底」；上限仍 85°。
+ */
+const EARTH_PITCH_MIN = THREE.MathUtils.degToRad(-10);
+/** 模式切换的俯仰缓推时长（秒），与 skyFrame 的天旋过渡同步。 */
+const MODE_TWEEN_SEC = 0.8;
 /** FOV 允许区间（滚轮 / 捏合 / 飞行统一钳制，与旧版 22–72 一致）。 */
 const FOV_MIN = 22;
 const FOV_MAX = 72;
@@ -39,6 +47,14 @@ const pickV = new THREE.Vector3();
 const camDirV = new THREE.Vector3();
 const anchorV = new THREE.Vector3();
 const flyDirV = new THREE.Vector3();
+/**
+ * 拾取用「复合相机」（9B 地平锁定，契约 §3 低成本方案）：earth 模式下天空层
+ * 渲染位置 = 天旋 Q·v，逐条变换 9500+ 个 entry.vec 太贵——改为把 Q 折进
+ * 视图矩阵（matrixWorldInverse' = 真相机视图 × Q），一次矩阵乘适配全部条目；
+ * free 模式 Q=I，与直接用真相机等价。pickConstellationAt 也吃同一复合相机。
+ */
+const pickCam = new THREE.Camera();
+const skyMatScratch = new THREE.Matrix4();
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -119,9 +135,15 @@ export function CameraRig() {
   const selectStar = useUniverse((s) => s.selectStar);
   const constellationFocusNonce = useUniverse((s) => s.constellationFocusNonce);
   const clearPinnedConstellation = useUniverse((s) => s.clearPinnedConstellation);
+  // 观察模式（9B）：earth 下 yaw/pitch 语义 = 方位角/高度角（az = −yaw）
+  const viewMode = useUniverse((s) => s.viewMode);
 
   const yaw = useRef(0.7);
   const pitch = useRef(0.12);
+  /** 俯仰下限（rad）：free = −85°，earth = −10°（高度角语义，微俯不翻转）。 */
+  const pitchMinRef = useRef(-PITCH_LIMIT);
+  /** 模式切换俯仰缓推（0.8s easeInOut，与天旋 slerp 同步）；交互/飞行即取消。 */
+  const modeTween = useRef({ active: false, from: 0, to: 0, t: 0 });
   const dragging = useRef(false);
   const moved = useRef(false);
   const autoRotateRef = useRef(autoRotate);
@@ -181,6 +203,18 @@ export function CameraRig() {
     targetFov.current = 60;
   }, [camera]);
 
+  // 观察模式切换（9B）：收紧/放宽俯仰界；进入 earth 且正俯视地平线下时，
+  // 0.8s 缓推回 [−10°, 85°]——与 skyFrame 的天旋定时过渡同步开始，观感一体。
+  // 陀螺仪/序曲外部姿态激活时不缓推（外部驱动者语义优先，钳制仍然生效）。
+  useEffect(() => {
+    pitchMinRef.current = viewMode === 'earth' ? EARTH_PITCH_MIN : -PITCH_LIMIT;
+    if (viewMode === 'earth' && pitch.current < EARTH_PITCH_MIN && !getExternalPose().active) {
+      modeTween.current = { active: true, from: pitch.current, to: EARTH_PITCH_MIN, t: 0 };
+    } else {
+      modeTween.current.active = false;
+    }
+  }, [viewMode]);
+
   /**
    * 启动一次飞行（审计 §2.5「三件套」）：
    * - 时长角距自适应：dur = clamp(0.6 + 0.9·√(ang/π), 0.6, 2.2)——2° 微调
@@ -193,7 +227,10 @@ export function CameraRig() {
     const cam = camera as THREE.PerspectiveCamera;
     const f = fly.current;
     yawPitchToDir(yaw.current, pitch.current, f.fromDir);
-    f.toDir.copy(targetVec).normalize();
+    // 目标坐标来自注册表/星座质心，均为天球本地系——乘天旋得世界方向
+    // （free 模式恒等）。earth 模式下地平线以下目标受俯仰钳制，落点贴 −10°。
+    f.toDir.copy(targetVec).normalize().applyQuaternion(getSkyQuaternion());
+    modeTween.current.active = false; // 飞行接管，取消模式缓推
     const angRad = Math.acos(THREE.MathUtils.clamp(f.fromDir.dot(f.toDir), -1, 1));
     const angDeg = THREE.MathUtils.radToDeg(angRad);
     f.targetUid = targetUid;
@@ -274,11 +311,28 @@ export function CameraRig() {
      * 阈值按最小条目半径 0.99R 取保守值（卫星/小天体在 0.99R 球面），
      * 只会少筛不会误杀。radiusScale：点击 1.0；悬停 0.75（减少擦边误报）。
      */
+    /**
+     * 同步拾取复合相机（9B 地平锁定，契约 §3）：pickCam 的视图矩阵 =
+     * 真相机视图 × 天旋 Q——对天球本地系的 entry.vec 用 pickCam 投影，
+     * 等价于「先施加天旋再用真相机投影」，一次矩阵乘适配全部条目；
+     * 事件时刻调用（非帧循环），模块级 scratch 零分配。
+     */
+    const syncPickCam = (): THREE.Camera => {
+      skyMatScratch.makeRotationFromQuaternion(getSkyQuaternion());
+      pickCam.projectionMatrix.copy(cam.projectionMatrix);
+      pickCam.matrixWorldInverse.copy(cam.matrixWorldInverse).multiply(skyMatScratch);
+      return pickCam;
+    };
+
     const pickAt = (clientX: number, clientY: number, radiusScale: number): string | null => {
       const rect = el.getBoundingClientRect();
       const px = clientX - rect.left;
       const py = clientY - rect.top;
+      syncPickCam();
+      // 预筛点积在「天球本地系」做：把相机前向反旋回本地系（free 模式恒等），
+      // 与 entry.vec 同系比较——旋转保长，阈值推导不变
       camDirV.set(0, 0, -1).applyQuaternion(cam.quaternion);
+      worldToSkyLocal(camDirV, camDirV);
       const tanDiag =
         Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2) * Math.sqrt(1 + cam.aspect * cam.aspect);
       const cosLimit = Math.cos(Math.atan(tanDiag) + THREE.MathUtils.degToRad(3));
@@ -289,7 +343,7 @@ export function CameraRig() {
       for (const entry of pickEntries) {
         const ev = entry.vec;
         if (ev.x * camDirV.x + ev.y * camDirV.y + ev.z * camDirV.z < dotLimit) continue;
-        pickV.copy(ev).project(cam);
+        pickV.copy(ev).project(pickCam);
         if (pickV.z > 1) continue; // 背面剔除
         const sx = (pickV.x * 0.5 + 0.5) * rect.width;
         const sy = (-pickV.y * 0.5 + 0.5) * rect.height;
@@ -329,11 +383,12 @@ export function CameraRig() {
     const onDown = (e: PointerEvent) => {
       releaseCamera(); // 手势互斥：用户一摸屏幕即退出陀螺仪指星，相机停留当前朝向
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      // pointerdown 打断惯性滑行（审计 §2.1：任何按下即接管）
+      // pointerdown 打断惯性滑行（审计 §2.1：任何按下即接管）+ 模式俯仰缓推
       inertia.current = false;
       velYaw.current = 0;
       velPitch.current = 0;
       autoSpin.current.v = 0;
+      modeTween.current.active = false;
       idleSince.current = performance.now();
       clearHover(); // 开始拖拽/点击即收起名牌
       el.setPointerCapture(e.pointerId);
@@ -424,7 +479,12 @@ export function CameraRig() {
       const dYaw = -dx * s;
       const dPitch = -dy * s;
       yaw.current += dYaw;
-      pitch.current = THREE.MathUtils.clamp(pitch.current + dPitch, -PITCH_LIMIT, PITCH_LIMIT);
+      // 俯仰下限随观察模式（earth = −10° 高度角语义），上限恒 85°
+      pitch.current = THREE.MathUtils.clamp(
+        pitch.current + dPitch,
+        pitchMinRef.current,
+        PITCH_LIMIT,
+      );
       // 角速度低通采样（α≈0.3，审计 §2.1）：抬指后作为惯性初速；
       // dt 钳制防止事件间隔异常（首个事件/标签页切走再回）放大速度
       const now = performance.now();
@@ -475,8 +535,9 @@ export function CameraRig() {
           // 见 constellation-render.pickConstellationAt；仅星座层开启时）。
           const state = useUniverse.getState();
           const rect = el.getBoundingClientRect();
+          // 星座就近判定同样走复合相机（连线端点是天球本地系坐标）
           const abbr = state.showConstellations
-            ? pickConstellationAt(e.clientX - rect.left, e.clientY - rect.top, cam, rect)
+            ? pickConstellationAt(e.clientX - rect.left, e.clientY - rect.top, syncPickCam(), rect)
             : null;
           if (abbr) state.selectConstellation(abbr);
           else selectStar(null); // 真点空处：沿用原语义（取消选中/解除钉住）
@@ -540,9 +601,10 @@ export function CameraRig() {
       f.t += delta / f.dur;
       const e = easeInOutCubic(Math.min(f.t, 1));
       if (f.targetUid) {
-        // 运动目标追踪：注册表同一 Vector3 引用，每帧重读零成本
+        // 运动目标追踪：注册表同一 Vector3 引用，每帧重读零成本；
+        // earth 模式天空在旋转，本地系坐标须乘当帧天旋（free 恒等，零分配）
         const vec = resolveObjectPosition(f.targetUid);
-        if (vec) f.toDir.copy(vec).normalize();
+        if (vec) f.toDir.copy(vec).normalize().applyQuaternion(getSkyQuaternion());
       }
       slerpDir(f.fromDir, f.toDir, e, flyDirV);
       // yaw 展开到当前值 ±π 内：atan2 断线跨越时不绕远
@@ -606,7 +668,7 @@ export function CameraRig() {
           const decay = Math.exp(-INERTIA_DECAY * delta);
           velYaw.current *= decay;
           velPitch.current *= decay;
-          if (pitch.current >= PITCH_LIMIT || pitch.current <= -PITCH_LIMIT) {
+          if (pitch.current >= PITCH_LIMIT || pitch.current <= pitchMinRef.current) {
             velPitch.current = 0;
           }
           if (Math.hypot(velYaw.current, velPitch.current) < INERTIA_STOP) {
@@ -627,7 +689,24 @@ export function CameraRig() {
         }
       }
     }
-    pitch.current = THREE.MathUtils.clamp(pitch.current, -PITCH_LIMIT, PITCH_LIMIT);
+    // ── 模式切换俯仰缓推（9B）：进入 earth 时若俯视地平线下，0.8s easeInOut
+    // 推回 −10°；期间放宽下限钳制（否则首帧即被 snap，缓推失义）。
+    // 任何用户输入/飞行/外部姿态接管都会先把 active 置 false。
+    const tw = modeTween.current;
+    if (tw.active) {
+      if (dragging.current || pinching.current || f.active || getExternalPose().active) {
+        tw.active = false;
+      } else {
+        tw.t += delta / MODE_TWEEN_SEC;
+        pitch.current = lerp(tw.from, tw.to, easeInOutCubic(Math.min(tw.t, 1)));
+        if (tw.t >= 1) tw.active = false;
+      }
+    }
+    pitch.current = THREE.MathUtils.clamp(
+      pitch.current,
+      tw.active ? -PITCH_LIMIT : pitchMinRef.current,
+      PITCH_LIMIT,
+    );
     cam.rotation.set(pitch.current, yaw.current, 0);
   });
 

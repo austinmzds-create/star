@@ -80,6 +80,12 @@ export function SatellitesLayer() {
   const lastSimMsRef = useRef<number | null>(null);
   const lastCityIdRef = useRef<string | null>(null);
   const pendingFocusRef = useRef(true);
+  /**
+   * 深时淡出系数（9B 跨域契约 §3）：deepTimeYears 非 null（恒星自行时光机
+   * 开启）时目标 0，否则 1——SGP4 只在 TLE 历元附近有效，±10 万年尺度下
+   * 卫星无意义。只调材质透明度与可见性，不动 SGP4 逻辑。
+   */
+  const deepFadeRef = useRef(1);
   // 每星尾迹历史（世界坐标环形缓冲，预分配 Vector3 池，最新在逻辑尾部）
   const trailRings = useMemo<TrailRing[]>(() => SATELLITE_DEFS.map(makeTrailRing), []);
 
@@ -153,8 +159,21 @@ export function SatellitesLayer() {
     };
   }, []);
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     const s = useUniverse.getState(); // 非订阅：帧内零 React 更新
+    // ── 深时淡出（9B 契约 §3）：指数逼近目标透明度，完全隐藏时跳过传播计算 ──
+    const fadeTarget = s.deepTimeYears == null ? 1 : 0;
+    let fade = deepFadeRef.current;
+    if (fade !== fadeTarget) {
+      fade += (fadeTarget - fade) * (1 - Math.exp(-6 * delta));
+      if (Math.abs(fade - fadeTarget) < 0.01) fade = fadeTarget;
+      deepFadeRef.current = fade;
+      built.pMat.opacity = fade;
+      built.tMat.opacity = fade;
+      built.points.visible = fade > 0;
+      built.trails.visible = fade > 0;
+    }
+    if (fade === 0) return; // 深时模式全隐：SGP4/尾迹全部歇脚（恢复即重算）
     const simMs = s.timeFollowsNow ? Date.now() : (s.observeTime ?? Date.now());
     // TODO(平滑)：时间机器播放时 observeTime 4Hz 更新有台阶感，v1 不做插值
     recomputeSatellites(simMs, s.city);

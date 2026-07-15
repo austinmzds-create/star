@@ -96,6 +96,68 @@ export function recomputeEphemeris(dateMs: number): void {
   ephem.version += 1;
 }
 
+// ── 播放平滑工具（Phase 9B §3b，跨域共享） ──
+
+/**
+ * 版本坐标插值窗口（ms）：与 TimeMachineBar 的 4Hz（250ms）observeTime
+ * 节流对齐——渲染层把「上一 version 的显示位置 → 新 version 目标位置」
+ * 在一个节流周期内补间完，位置恰好在下一次 version 到达时收敛。
+ */
+export const EPHEM_SLERP_WINDOW_MS = 250;
+
+// slerp 的模块级 scratch（帧循环零分配纪律；单线程渲染无重入风险）
+const slerpA = new THREE.Vector3();
+const slerpB = new THREE.Vector3();
+
+/**
+ * 天球坐标球面插值（Phase 9B §3b 播放平滑，【跨域共享工具】）：
+ * 把以球心为原点的两向量 a→b 按 t∈[0,1] 沿大圆插值写入 out，半径线性过渡。
+ *
+ * 消费方：PlanetsLayer（本「轨迹升落」域）与 MinorBodiesLayer/CometTailLayer
+ * （「彗尾」域）——各渲染层在 useFrame 里对 prev/next version 坐标做 slerp
+ * （因子 = 距 version 变化的墙钟时间 / EPHEM_SLERP_WINDOW_MS），消除时间
+ * 机器播放 4Hz 写入的台阶跳动。每帧 ≤13 次调用、零分配。
+ *
+ * 退化处理：
+ *  - a/b 有占位零向量（星历未算）→ 直接取 b；
+ *  - 夹角 <0.006°（实时心跳的微小步进）→ 线性插值（数值更稳、观感等同）；
+ *  - 近反平行（>179.9°，仅 ±24h 级大跳变会出现）→ 大圆路径不唯一，
+ *    退化线性 + NaN 防御，观感一闪而过，可接受。
+ */
+export function slerpSphereVec(
+  a: THREE.Vector3,
+  b: THREE.Vector3,
+  t: number,
+  out: THREE.Vector3,
+): THREE.Vector3 {
+  const ra = a.length();
+  const rb = b.length();
+  if (ra < 1e-9 || rb < 1e-9) return out.copy(b);
+  slerpA.copy(a).multiplyScalar(1 / ra);
+  slerpB.copy(b).multiplyScalar(1 / rb);
+  let cos = slerpA.dot(slerpB);
+  cos = cos > 1 ? 1 : cos < -1 ? -1 : cos;
+  const omega = Math.acos(cos);
+  const r = ra + (rb - ra) * t;
+  if (omega < 1e-4 || omega > Math.PI - 1.8e-3) {
+    out.copy(slerpA).lerp(slerpB, t);
+    const len = out.length();
+    // 反平行 lerp 过零 → 归一失效，直接取终点方向兜底
+    if (len < 1e-6) return out.copy(slerpB).multiplyScalar(r);
+    return out.multiplyScalar(r / len);
+  }
+  const sinO = Math.sin(omega);
+  const wa = Math.sin((1 - t) * omega) / sinO;
+  const wb = Math.sin(t * omega) / sinO;
+  return out
+    .set(
+      slerpA.x * wa + slerpB.x * wb,
+      slerpA.y * wa + slerpB.y * wb,
+      slerpA.z * wa + slerpB.z * wb,
+    )
+    .multiplyScalar(r);
+}
+
 // 模块加载时先按「现在」算一遍，保证任何消费方（含 SSR 之后的首帧）
 // 都能读到合理坐标；EphemDriver 挂载后会以 store.observeTime 对齐重算。
 try {

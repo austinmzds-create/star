@@ -8,9 +8,14 @@
  */
 
 import { raDecToVector3 } from '@star/astro-core';
-import { CATALOG_BY_UID, CONSTELLATION_ABBR, CONSTELLATION_LINES } from '@star/astro-data';
+import {
+  CATALOG_BY_UID,
+  CONSTELLATION_ABBR,
+  CONSTELLATION_LINES,
+  type CelestialObject,
+} from '@star/astro-data';
 import * as THREE from 'three';
-import { magnitudeToSize, SPHERE_RADIUS } from './universe';
+import { MAS_YR_TO_RAD_YR, magnitudeToSize, SPHERE_RADIUS } from './universe';
 
 // ── 动画时序参数（默认值总表，见 docs/architecture.md 星座一节） ──
 
@@ -63,6 +68,10 @@ export interface ConstellationRenderInfo {
   memberPhases: Float32Array;
   /** 成员星数量。 */
   memberCount: number;
+  /** 成员星 J2000 基准单位方向（深时重算的不变基，memberCount×3）。 */
+  memberBaseDir: Float32Array;
+  /** 成员星自行切向速度向量（rad/yr，缺测为零向量，memberCount×3）。 */
+  memberPmVec: Float32Array;
 }
 
 /** 全 88 座合并后的渲染数据（一次 useMemo 构建，<2ms）。 */
@@ -78,9 +87,29 @@ export interface ConstellationRenderData {
   aPhase: Float32Array;
   /** 每顶点：沿段归一化坐标（起点 0 / 终点 1）；片元内插值后驱动逐段「描线」与流光。 */
   aEnd: Float32Array;
+  /** 每顶点 J2000 基准单位方向（深时重算的不变基，vertexCount×3）。 */
+  baseDir: Float32Array;
+  /** 每顶点自行切向速度向量（rad/yr，与 TwinkleStars shader 同一推导，vertexCount×3）。 */
+  pmVec: Float32Array;
   vertexCount: number;
   cons: ConstellationRenderInfo[];
   byAbbr: Map<string, ConstellationRenderInfo>;
+}
+
+/**
+ * 恒星自行切向速度向量（rad/yr）：east/north 切向量与 TwinkleStars 顶点 shader
+ * 逐行同式（y=北天极约定），保证深时模式下连线端点与星点像素级贴合。
+ * 缺测（无 pmRaMasYr）→ 零向量（该端点不动）。构建期一次性调用，允许分配。
+ */
+function pmTangentVec(obj: CelestialObject, pn: THREE.Vector3): THREE.Vector3 {
+  const out = new THREE.Vector3();
+  if (obj.pmRaMasYr === undefined || obj.pmDecMasYr === undefined) return out;
+  const east = new THREE.Vector3(0, 1, 0).cross(pn);
+  east.divideScalar(Math.max(east.length(), 1e-6)); // 极点退化保护（与 shader 同式）
+  const north = pn.clone().cross(east);
+  return out
+    .addScaledVector(east, obj.pmRaMasYr * MAS_YR_TO_RAD_YR)
+    .addScaledVector(north, obj.pmDecMasYr * MAS_YR_TO_RAD_YR);
 }
 
 /** 由星座连线表 + 星表坐标构建合并几何数据（纯函数，可单测）。 */
@@ -89,15 +118,18 @@ export function buildConstellationRenderData(): ConstellationRenderData {
   interface ResolvedCon {
     abbr: string;
     segs: [THREE.Vector3, THREE.Vector3][]; // 单位向量
-    /** 端点按 uid 去重后的成员星（单位向量 + 光环像素尺寸）。 */
-    members: { vec: THREE.Vector3; sizePx: number }[];
+    /** 各段两端点的自行切向速度（rad/yr，与 segs 同序，深时重算用）。 */
+    segPms: [THREE.Vector3, THREE.Vector3][];
+    /** 端点按 uid 去重后的成员星（单位向量 + 光环像素尺寸 + 自行速度）。 */
+    members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3 }[];
   }
   const resolved: ResolvedCon[] = [];
   let totalSegs = 0;
 
   for (const con of CONSTELLATION_LINES) {
     const segs: [THREE.Vector3, THREE.Vector3][] = [];
-    const members: { vec: THREE.Vector3; sizePx: number }[] = [];
+    const segPms: [THREE.Vector3, THREE.Vector3][] = [];
+    const members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3 }[] = [];
     const seen = new Set<string>();
     for (const [ua, ub] of con.segments) {
       const a = CATALOG_BY_UID.get(ua);
@@ -107,13 +139,17 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       const vb = raDecToVector3({ raDeg: b.raDeg, decDeg: b.decDeg }, 1);
       const pa = new THREE.Vector3(va.x, va.y, va.z);
       const pb = new THREE.Vector3(vb.x, vb.y, vb.z);
+      const pmA = pmTangentVec(a, pa);
+      const pmB = pmTangentVec(b, pb);
       segs.push([pa, pb]);
+      segPms.push([pmA, pmB]);
       // 成员星去重：光环尺寸 ≈ 恒星点尺寸 ×2.6（强调而不吞没本体）。
       if (!seen.has(ua)) {
         seen.add(ua);
         members.push({
           vec: pa,
           sizePx: THREE.MathUtils.clamp(magnitudeToSize(a.magnitude) * 2.6, 14, 52),
+          pm: pmA,
         });
       }
       if (!seen.has(ub)) {
@@ -121,11 +157,12 @@ export function buildConstellationRenderData(): ConstellationRenderData {
         members.push({
           vec: pb,
           sizePx: THREE.MathUtils.clamp(magnitudeToSize(b.magnitude) * 2.6, 14, 52),
+          pm: pmB,
         });
       }
     }
     if (segs.length === 0) continue;
-    resolved.push({ abbr: con.con, segs, members });
+    resolved.push({ abbr: con.con, segs, segPms, members });
     totalSegs += segs.length;
   }
 
@@ -136,6 +173,8 @@ export function buildConstellationRenderData(): ConstellationRenderData {
   const aT1 = new Float32Array(vertexCount);
   const aPhase = new Float32Array(vertexCount);
   const aEnd = new Float32Array(vertexCount);
+  const baseDir = new Float32Array(vertexCount * 3);
+  const pmVec = new Float32Array(vertexCount * 3);
   const cons: ConstellationRenderInfo[] = [];
 
   let v = 0; // 顶点游标
@@ -160,10 +199,19 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       const t0 = (SEGMENT_STAGGER_SEC * i) / riseDurSec;
       const t1 = (SEGMENT_STAGGER_SEC * i + SEGMENT_RISE_SEC) / riseDurSec;
       const phase = (globalSeg * 2.399963) % (Math.PI * 2); // 黄金角散布
+      const pms = con.segPms[i]!;
       [a, b].forEach((p, end) => {
         positions[v * 3] = p.x * LINE_RADIUS;
         positions[v * 3 + 1] = p.y * LINE_RADIUS;
         positions[v * 3 + 2] = p.z * LINE_RADIUS;
+        // 深时不变基：单位方向 + 自行速度（positions 会被 applyConstellationDeepTime 原地覆写）
+        baseDir[v * 3] = p.x;
+        baseDir[v * 3 + 1] = p.y;
+        baseDir[v * 3 + 2] = p.z;
+        const pm = pms[end]!;
+        pmVec[v * 3] = pm.x;
+        pmVec[v * 3 + 1] = pm.y;
+        pmVec[v * 3 + 2] = pm.z;
         aCon[v] = index;
         aT0[v] = t0;
         aT1[v] = t1;
@@ -179,10 +227,18 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     const memberPositions = new Float32Array(memberCount * 3);
     const memberSizes = new Float32Array(memberCount);
     const memberPhases = new Float32Array(memberCount);
+    const memberBaseDir = new Float32Array(memberCount * 3);
+    const memberPmVec = new Float32Array(memberCount * 3);
     con.members.forEach((m, i) => {
       memberPositions[i * 3] = m.vec.x * LINE_RADIUS;
       memberPositions[i * 3 + 1] = m.vec.y * LINE_RADIUS;
       memberPositions[i * 3 + 2] = m.vec.z * LINE_RADIUS;
+      memberBaseDir[i * 3] = m.vec.x;
+      memberBaseDir[i * 3 + 1] = m.vec.y;
+      memberBaseDir[i * 3 + 2] = m.vec.z;
+      memberPmVec[i * 3] = m.pm.x;
+      memberPmVec[i * 3 + 1] = m.pm.y;
+      memberPmVec[i * 3 + 2] = m.pm.z;
       memberSizes[i] = m.sizePx;
       memberPhases[i] = (i * 2.399963) % (Math.PI * 2);
     });
@@ -201,6 +257,8 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       memberSizes,
       memberPhases,
       memberCount,
+      memberBaseDir,
+      memberPmVec,
     });
   });
 
@@ -211,6 +269,8 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     aT1,
     aPhase,
     aEnd,
+    baseDir,
+    pmVec,
     vertexCount,
     cons,
     byAbbr: new Map(cons.map((c) => [c.abbr, c])),
@@ -225,6 +285,65 @@ let cached: ConstellationRenderData | null = null;
 export function getConstellationRenderData(): ConstellationRenderData {
   if (!cached) cached = buildConstellationRenderData();
   return cached;
+}
+
+// ── 深时形变（Phase 9B 星座时光机，r-dyn §3c）────────────────────────────
+// 恒星本体的自行位移在 TwinkleStars 顶点 shader 内按 uEpochYr 逐帧完成；
+// 连线端点/成员光环是 CPU 侧几何，须用【同一公式】重算才能与星点贴合：
+// p' = n̂·cosθ + t̂·sinθ（精确大圆旋转，θ=|pmVec·years|——小角度近似在
+// ±10 万年 × 秒级自行下失真达两位数度，见 TwinkleStars shader 注释）。
+// 调用方（ConstellationLayer）以 100ms 节流触发；≈2100 顶点一次 <0.5ms。
+// 已知取舍（演示级）：质心 centroid 保持 J2000——注视判定/镜头飞行的目标
+// 在深时下偏移 ≤ 数度（多数星座形变远小于外接半径），不值得为其重排序。
+
+/** 最近一次应用的深时年数（0 = J2000 原位）。 */
+let appliedDeepTimeYears = 0;
+/** 形变版本号：每次原地重写 positions 后自增，渲染层据此置 needsUpdate。 */
+let deepTimeGeoVersion = 0;
+
+/** 当前形变版本（ConstellationLines / MemberGlow 在 useFrame 内比对）。 */
+export function getConstellationDeepTimeVersion(): number {
+  return deepTimeGeoVersion;
+}
+
+/** 单点大圆位移：base/pm 平铺数组第 i 点 → out 第 i 点（×LINE_RADIUS，零分配）。 */
+function displacePoint(
+  out: Float32Array,
+  base: Float32Array,
+  pm: Float32Array,
+  i: number,
+  years: number,
+): void {
+  const j = i * 3;
+  const tx = pm[j]! * years;
+  const ty = pm[j + 1]! * years;
+  const tz = pm[j + 2]! * years;
+  const theta = Math.max(Math.hypot(tx, ty, tz), 1e-12);
+  const c = Math.cos(theta);
+  const s = Math.sin(theta) / theta;
+  out[j] = (base[j]! * c + tx * s) * LINE_RADIUS;
+  out[j + 1] = (base[j + 1]! * c + ty * s) * LINE_RADIUS;
+  out[j + 2] = (base[j + 2]! * c + tz * s) * LINE_RADIUS;
+}
+
+/**
+ * 把全部 88 座连线端点 + 成员光环点位形变到 J2000+years（原地覆写，幂等）。
+ * years=0 即复原。同值直接返回；数据未构建（星座层从未挂载）也直接返回——
+ * 首次 build 输出的就是 J2000 位，挂载方负责在 effect 里对齐现值。
+ */
+export function applyConstellationDeepTime(years: number): void {
+  if (!cached || years === appliedDeepTimeYears) return;
+  appliedDeepTimeYears = years;
+  deepTimeGeoVersion++;
+  const { positions, baseDir, pmVec, vertexCount, cons } = cached;
+  for (let i = 0; i < vertexCount; i++) {
+    displacePoint(positions, baseDir, pmVec, i, years);
+  }
+  for (const con of cons) {
+    for (let i = 0; i < con.memberCount; i++) {
+      displacePoint(con.memberPositions, con.memberBaseDir, con.memberPmVec, i, years);
+    }
+  }
 }
 
 // ── 星座就近点选（CameraRig 在天体拾取未命中后调用） ──

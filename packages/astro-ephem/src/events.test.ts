@@ -8,6 +8,7 @@ import { Body, PairLongitude } from 'astronomy-engine';
 import { describe, expect, it } from 'vitest';
 import {
   computeAlmanac,
+  computeBodyRiseSet,
   computeConjunctions,
   computeEclipses,
   computeElongationsOppositions,
@@ -15,6 +16,7 @@ import {
   computeMoonQuarters,
   computeMoonRiseSet,
   computeSeasons,
+  computeSunRiseSet,
   computeSupermoons,
   METEOR_SHOWERS,
   SUPERMOON_MAX_DISTANCE_KM,
@@ -267,5 +269,58 @@ describe('computeMoonRiseSet', () => {
     const rs = computeMoonRiseSet(Date.UTC(2026, 5, 13), 89, 0);
     expect(rs.riseMs).toBeNull();
     expect(rs.setMs).toBeNull();
+  });
+});
+
+describe('computeSunRiseSet / computeBodyRiseSet（Phase 9B §3e-5）', () => {
+  // 北京 2026-07-15 00:00 CST = UTC 2026-07-14T16:00Z
+  const dayStart = Date.UTC(2026, 6, 14, 16);
+  const LAT = 39.9042;
+  const LON = 116.4074;
+
+  it('北京 2026-07-15：日出 04:58 / 日落 19:42 / 中天 12:20 CST（各 ±2 分钟，实跑锚点）', () => {
+    // 锚点由仓库实际安装的 astronomy-engine 2.1.19 实跑得出（2026-07-15，
+    // Observer(39.9042, 116.4074, 0)，含标准折射）：
+    //   rise    2026-07-14T20:58:09Z = 04:58:09 CST
+    //   set     2026-07-15T11:42:07Z = 19:42:07 CST
+    //   transit 2026-07-15T04:20:20Z = 12:20:20 CST，高度 71.6°
+    const rs = computeSunRiseSet(dayStart, LAT, LON);
+    expect(rs.riseMs).not.toBeNull();
+    expect(rs.setMs).not.toBeNull();
+    expect(rs.transitMs).not.toBeNull();
+    expect(Math.abs(rs.riseMs! - Date.UTC(2026, 6, 14, 20, 58, 9))).toBeLessThan(120_000);
+    expect(Math.abs(rs.setMs! - Date.UTC(2026, 6, 15, 11, 42, 7))).toBeLessThan(120_000);
+    expect(Math.abs(rs.transitMs! - Date.UTC(2026, 6, 15, 4, 20, 20))).toBeLessThan(120_000);
+    expect(rs.transitAltDeg).toBeGreaterThan(70);
+    expect(rs.transitAltDeg).toBeLessThan(73);
+  });
+
+  it('computeSunRiseSet 与 computeBodyRiseSet("sun") 等价', () => {
+    expect(computeSunRiseSet(dayStart, LAT, LON)).toEqual(
+      computeBodyRiseSet('sun', dayStart, LAT, LON),
+    );
+  });
+
+  it('月亮/金星/木星当日升落中天非 null，且全部落在 [dayStart, dayStart+24h)', () => {
+    // 实跑参考（同日北京，CST）：月 rise 05:29:55 / set 20:36:58；
+    // 金星 rise 08:36:40 / set 21:52:56；木星 rise 05:51:54 / set 20:17:25。
+    for (const body of ['moon', 'venus', 'jupiter'] as const) {
+      const rs = computeBodyRiseSet(body, dayStart, LAT, LON);
+      for (const t of [rs.riseMs, rs.setMs, rs.transitMs]) {
+        expect(t).not.toBeNull();
+        expect(t!).toBeGreaterThanOrEqual(dayStart);
+        expect(t!).toBeLessThan(dayStart + 24 * 3_600_000);
+      }
+      expect(rs.transitAltDeg).toBeGreaterThan(0);
+    }
+  });
+
+  it('北纬 89° 盛夏极昼：太阳不升不落但中天存在（高度 ≈22.5°，实跑锚点）', () => {
+    const rs = computeSunRiseSet(dayStart, 89, 0);
+    expect(rs.riseMs).toBeNull();
+    expect(rs.setMs).toBeNull();
+    expect(rs.transitMs).not.toBeNull();
+    expect(rs.transitAltDeg).toBeGreaterThan(20);
+    expect(rs.transitAltDeg).toBeLessThan(25);
   });
 });

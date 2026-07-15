@@ -1,17 +1,19 @@
 'use client';
 
 import { useFrame, useThree } from '@react-three/fiber';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { CONSTELLATION_ART_BY_CON } from '@/lib/constellation-art';
 import {
   activateThresholdDeg,
+  applyConstellationDeepTime,
   FADE_OUT_SEC,
   GAZE_HYSTERESIS_DEG,
   getConstellationRenderData,
   REDUCED_MOTION_DUR_SEC,
 } from '@/lib/constellation-render';
 import { isCoarsePointer, prefersReducedMotion } from '@/lib/device';
+import { worldToSkyLocal } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
 import { ConstellationArtPlane } from './ConstellationArt';
 import { ConstellationLines } from './ConstellationLines';
@@ -58,6 +60,40 @@ function ConstellationLayerInner() {
   const pendingSec = useRef(0);
   const tmpDir = useRef(new THREE.Vector3());
 
+  // ── 深时同步（9B 星座时光机）：deepTimeYears 变化 → 100ms 节流 CPU 重算
+  // 88 座连线端点 + 成员光环点位（≈2100 顶点 <0.5ms，与 TwinkleStars shader
+  // 同公式保证线星贴合）。zustand 命令式订阅，滑条拖动不触发本组件重渲染；
+  // 上传由 ConstellationLines/MemberGlow 在 useFrame 比对版本号后置 needsUpdate。
+  useEffect(() => {
+    const THROTTLE_MS = 100;
+    let timer: number | null = null;
+    let lastRun = -Infinity;
+    const run = (): void => {
+      lastRun = performance.now();
+      applyConstellationDeepTime(useUniverse.getState().deepTimeYears ?? 0);
+    };
+    const schedule = (): void => {
+      const wait = THROTTLE_MS - (performance.now() - lastRun);
+      if (wait <= 0) run(); // 前沿立即执行：单次拨动（预设跳转）零延迟
+      else if (timer == null) {
+        timer = window.setTimeout(() => {
+          timer = null;
+          run(); // 尾沿执行读 getState 现值——连续拖动收敛到最新
+        }, wait);
+      }
+    };
+    // 挂载对齐：本层可能在时光机开启期间才挂载（showConstellations 重开），
+    // applyConstellationDeepTime 内部同值幂等，常态（0→0）零成本。
+    schedule();
+    const unsub = useUniverse.subscribe((s, prev) => {
+      if (s.deepTimeYears !== prev.deepTimeYears) schedule();
+    });
+    return () => {
+      unsub();
+      if (timer != null) window.clearTimeout(timer);
+    };
+  }, []);
+
   useFrame((_, delta) => {
     const state = useUniverse.getState();
     const active = state.activeConstellation;
@@ -86,7 +122,10 @@ function ConstellationLayerInner() {
       gazeAccum.current = 0;
 
       // 相机在原点，视线方向即天球注视点单位向量。
+      // 地平锁定（9B，只读 skyFrame）：本层挂在天旋 group 下，质心是天球
+      // 本地系向量——把世界系视线反旋回本地系再比对（free 模式恒等）。
       camera.getWorldDirection(tmpDir.current);
+      worldToSkyLocal(tmpDir.current, tmpDir.current);
       let best: string | null = null;
       let bestAngle = Infinity;
       for (const info of data.cons) {
