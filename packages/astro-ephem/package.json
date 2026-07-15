@@ -1,0 +1,26 @@
+{
+  "name": "@star/astro-ephem",
+  "version": "0.1.0",
+  "description": "太阳/月亮/八大行星实时星历：基于 astronomy-engine（MIT）计算地心 J2000 赤道坐标与月相。web / api 复用；小程序不依赖。",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./bodies": "./src/bodies.ts",
+    "./events": "./src/events.ts",
+    "./minor-meta": "./src/minorBodiesMeta.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@star/astro-data": "workspace:*",
+    "astronomy-engine": "^2.1.19"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

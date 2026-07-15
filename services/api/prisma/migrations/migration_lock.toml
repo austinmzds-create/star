@@ -1,0 +1,2 @@
+# Prisma migration lock. 迁移引擎据此校验目标数据库为 PostgreSQL。
+provider = "postgresql"

@@ -1,0 +1,29 @@
+<view class="page">
+  <view class="hero">
+    <view class="brand">星辰纪念</view>
+    <view class="subtitle">扫码找到属于你的那颗星</view>
+  </view>
+
+  <view class="actions">
+    <button class="btn-gold scan" bindtap="onScan">扫描证书二维码</button>
+
+    <view class="divider"><text>或</text></view>
+
+    <view class="manual glass">
+      <input
+        class="input"
+        placeholder="输入登记编号或纪念页链接"
+        placeholder-class="ph"
+        value="{{manualInput}}"
+        bindinput="onInput"
+        confirm-type="go"
+        bindconfirm="onManualSubmit"
+      />
+      <button class="btn-ghost enter" bindtap="onManualSubmit">进入</button>
+    </view>
+
+    <view wx:if="{{hint}}" class="hint">{{hint}}</view>
+  </view>
+
+  <text class="compliance">{{compliance}}</text>
+</view>

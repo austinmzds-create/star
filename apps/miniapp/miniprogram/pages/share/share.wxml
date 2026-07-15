@@ -1,0 +1,29 @@
+<view class="page">
+  <!-- 离屏画布：始终存在以供绘制，用定位移出可视区 -->
+  <canvas type="2d" id="poster" class="poster-canvas"></canvas>
+
+  <block wx:if="{{state === 'drawing'}}">
+    <view class="center dim">正在生成海报…</view>
+  </block>
+
+  <block wx:elif="{{state === 'ready'}}">
+    <image class="preview" mode="widthFix" src="{{posterTempPath}}" />
+    <view class="actions">
+      <button class="btn-gold" bindtap="onSave">保存到相册</button>
+      <button class="btn-ghost" open-type="share">转发好友</button>
+    </view>
+  </block>
+
+  <!-- 画布失败降级：仅文字分享 -->
+  <block wx:else>
+    <view class="fallback glass">
+      <view class="fb-title">{{view.memorialName}}</view>
+      <view class="fb-sub">{{view.star.nameZh}} · {{view.star.constellationZh}}</view>
+      <view wx:if="{{view.blessing}}" class="fb-body">{{view.blessing}}</view>
+      <view class="fb-note">海报生成暂不可用，可直接转发给好友</view>
+      <button class="btn-ghost fb-btn" open-type="share">转发好友</button>
+    </view>
+  </block>
+
+  <text class="compliance">{{compliance}}</text>
+</view>

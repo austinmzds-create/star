@@ -1,0 +1,63 @@
+<view class="page">
+  <!-- 顶部信息条 -->
+  <view wx:if="{{view}}" class="topbar">
+    <view class="star-name">{{view.memorialName}} · {{view.star.nameZh}}</view>
+    <view class="target-line">方位 {{targetAz}}° {{directionZh}} · 高度 {{targetAlt}}°</view>
+    <view wx:if="{{usingFallbackLocation}}" class="fallback-note">{{fallbackLabel}}，仅供参考</view>
+  </view>
+
+  <!-- 权限拒绝兜底 -->
+  <block wx:if="{{status === 'permissionDenied'}}">
+    <view class="overlay glass">
+      <view class="ov-title">需要你的位置</view>
+      <view class="ov-body">只有知道你在哪里，才能算出此刻这颗星在你头顶的方位。</view>
+      <button class="btn-gold ov-btn" bindtap="openLocationSetting">去开启定位</button>
+      <button class="btn-ghost ov-btn" bindtap="useFallbackLocation">仅看星图方向</button>
+    </view>
+  </block>
+
+  <!-- 无罗盘兜底：不画旋转箭头，显示静态方位 -->
+  <block wx:elif="{{status === 'noCompass'}}">
+    <view class="overlay glass">
+      <view class="ov-title">{{headline}}</view>
+      <view class="ov-body">{{subHint}}</view>
+    </view>
+  </block>
+
+  <!-- 地平线下兜底 -->
+  <block wx:elif="{{status === 'belowHorizon'}}">
+    <view class="overlay glass">
+      <view class="ov-title">{{headline}}</view>
+      <view class="ov-body">{{subHint}}</view>
+      <view class="ov-static">目标方位：{{directionZh}} · {{targetAz}}°</view>
+    </view>
+  </block>
+
+  <!-- 加载中 -->
+  <block wx:elif="{{status === 'loading'}}">
+    <view class="center dim">正在定位与准备罗盘…</view>
+  </block>
+
+  <!-- 引导中 / 已对准：罗盘 + 箭头 -->
+  <block wx:else>
+    <view class="compass-wrap">
+      <view class="compass {{status === 'aligned' ? 'aligned' : ''}}">
+        <text class="tick n">N</text>
+        <text class="tick e">E</text>
+        <text class="tick s">S</text>
+        <text class="tick w">W</text>
+        <view class="arrow" style="transform: rotate({{arrowDeg}}deg);">
+          <view class="arrow-head"></view>
+          <view class="arrow-body"></view>
+        </view>
+        <view wx:if="{{status === 'aligned'}}" class="found">找到了</view>
+      </view>
+    </view>
+    <view class="guide">
+      <view class="headline {{status === 'aligned' ? 'gold' : ''}}">{{headline}}</view>
+      <view class="subhint">{{subHint}}</view>
+    </view>
+  </block>
+
+  <text class="compliance">{{compliance}}</text>
+</view>

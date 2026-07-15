@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #03040a;
+  color: #eef1ff;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+#__next,
+main {
+  height: 100%;
+}
+
+/* 玻璃拟态基础 */
+.glass {
+  background: rgba(12, 16, 34, 0.55);
+  border: 1px solid rgba(140, 155, 255, 0.14);
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+}
+
+/*
+ * 玻璃背景纪律：暗化只允许出现在卡片自身的圆角矩形内，禁止任何
+ * fixed/absolute inset-0 的全屏暗化层压在星空上。背景 alpha 压到 0.68
+ * （blur 不变），让卡片后的星光保持通透。
+ *
+ * blur 半径走 CSS 变量：低档（perfBus，MotionRoot 桥接到 <html data-perf>）
+ * 从 28px 降到 12px——大面积 backdrop-filter 是移动端合成大户（r-fx §3.d）。
+ */
+.glass-strong {
+  background: rgba(9, 12, 28, 0.68);
+  border: 1px solid rgba(140, 155, 255, 0.18);
+  backdrop-filter: blur(var(--glass-blur-strong, 28px)) saturate(150%);
+  -webkit-backdrop-filter: blur(var(--glass-blur-strong, 28px)) saturate(150%);
+}
+
+/* 运行时低档（静态弱机判定或 PostFX 熔断降档均会落到这里） */
+:root[data-perf='low'] {
+  --glass-blur-strong: 12px;
+}
+
+/* 按压兜底（r-fx §3.d）：motion 尚未 hydrate 时给触屏即时反馈；
+   hydrate 后 framer 的内联 transform 优先级更高，自动接管。 */
+.tap-96:active {
+  transform: scale(0.96);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(140, 155, 255, 0.25);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 卡片滚动容器：Firefox 细滚动条 + iOS 惯性 */
+.card-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 155, 255, 0.25) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tracking-brand {
+  letter-spacing: 0.35em;
+}

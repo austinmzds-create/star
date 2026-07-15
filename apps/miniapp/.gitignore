@@ -1,0 +1,15 @@
+# 依赖
+node_modules/
+
+# 微信「构建 npm」产物
+miniprogram_npm/
+
+# TS 编译产物（本工程用微信内建 TS 插件即时编译，无独立 dist）
+dist/
+*.js.map
+
+# vendor-astro.mjs 同步进来的本地副本（接真机前才生成，勿入库，保持单一源）
+miniprogram/lib/astro-core/
+
+# 微信开发者工具本地状态
+project.private.config.json.local

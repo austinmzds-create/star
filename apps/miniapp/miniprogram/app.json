@@ -1,0 +1,24 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/detail/detail",
+    "pages/find/find",
+    "pages/share/share"
+  ],
+  "window": {
+    "navigationBarTitleText": "星辰纪念·扫码找星",
+    "navigationBarBackgroundColor": "#0a0e1a",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#0a0e1a",
+    "backgroundColorTop": "#0a0e1a",
+    "backgroundColorBottom": "#0a0e1a"
+  },
+  "permission": {
+    "scope.userLocation": {
+      "desc": "用于计算你所在位置此刻纪念星的方位，引导你在天空中找到它"
+    }
+  },
+  "requiredPrivateInfos": ["getLocation"],
+  "sitemapLocation": "sitemap.json",
+  "style": "v2"
+}

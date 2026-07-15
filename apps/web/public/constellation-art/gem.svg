@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。双子座：并肩牵手的孪生兄弟，头部对准北河二136,45 / 北河三80,127，身躯沿双星链斜向脚部亮星。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 兄（卡斯托耳）：头在北河二 -->
+      <circle cx="136" cy="50" r="21"/>
+      <path d="M 136 72 C 180 140 240 220 300 290 C 330 325 362 355 392 378"/>
+      <!-- 弟（波吕丢刻斯）：头在北河三 -->
+      <circle cx="82" cy="130" r="21"/>
+      <path d="M 82 152 C 130 220 200 300 280 380 C 305 405 336 428 368 445"/>
+      <!-- 内侧手臂相牵 -->
+      <path d="M 150 95 C 175 130 195 165 208 200"/>
+      <path d="M 100 170 C 135 190 170 200 205 208"/>
+      <circle cx="210" cy="206" r="7"/>
+      <!-- 外侧手臂 -->
+      <path d="M 126 88 C 95 105 70 96 56 76" stroke="#8fb8e0"/>
+      <path d="M 66 145 C 41 165 29 195 33 225" stroke="#8fb8e0"/>
+      <!-- 脚尖轻点（井宿三 / ξ Gem） -->
+      <path d="M 392 378 C 402 384 410 384 418 380"/>
+      <path d="M 368 445 C 376 452 385 453 393 449"/>
+      <!-- 头部双星星芒 + 脚部微芒 -->
+      <path d="M 136 22 L 136 36 M 129 29 L 143 29 M 82 102 L 82 116 M 75 109 L 89 109"/>
+      <path d="M 411 368 L 411 382 M 404 375 L 418 375 M 374 443 L 374 457 M 367 450 L 381 450" stroke="#8fb8e0"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

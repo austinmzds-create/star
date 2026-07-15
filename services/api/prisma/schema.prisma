@@ -1,0 +1,481 @@
+// 星辰纪念平台 · 主数据库 Schema
+// 约定：模型名 PascalCase，表名 snake_case（@@map），字段 camelCase（本期保持 camelCase 列名以减少映射心智负担）。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 天体类型（与 @star/astro-data 的 CelestialObjectType 对齐，DB 侧用大写枚举）
+enum CelestialType {
+  STAR
+  GALAXY
+  NEBULA
+  CLUSTER
+  PLANET // 行星（星历天体，坐标运行时计算）
+  MOON // 月亮（星历天体）
+  SUN // 太阳（星历天体）
+}
+
+/// 纪念登记状态
+enum RegistrationStatus {
+  PENDING_REVIEW // 命中敏感词等待人工/机器复审
+  ACTIVE         // 生效，公开纪念页可访问
+  REJECTED       // 复审拒绝
+}
+
+/// 纪念场景（白名单，与 apps/web MemorialModal 的中文选项一一对应）
+enum OccasionType {
+  LOVE         // 情侣纪念
+  BIRTHDAY     // 生日
+  WEDDING      // 婚礼
+  GRADUATION   // 毕业
+  NEWBORN      // 宝宝出生
+  PET_MEMORIAL // 宠物纪念
+  IN_MEMORIAM  // 逝者纪念
+  OTHER        // 其他
+}
+
+/// 证书生成状态（占位）
+enum CertificateStatus {
+  PENDING
+  GENERATING
+  READY
+  FAILED
+}
+
+/// 订单状态。FAILED=支付失败，CANCELLED=用户/超时取消，二者语义不同。
+enum OrderStatus {
+  CREATED
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+/// 情侣双星中的角色（A=第一颗，B=第二颗）
+enum CoupleRole {
+  A
+  B
+}
+
+/// Agent 任务状态
+enum AgentTaskStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+/// 天体主表：字段对齐 @star/astro-data 的 CelestialObject，另加运营字段。
+model CelestialObject {
+  id               Int           @id @default(autoincrement())
+  /// 稳定唯一标识，如 'HIP32349'
+  objectUid        String        @unique
+  type             CelestialType
+  nameEn           String
+  nameZh           String
+  /// 别名快照（搜索用规范化版本在 celestial_name_alias）
+  aliases          String[]      @default([])
+  bayer            String?
+  constellation    String
+  constellationZh  String
+  /// J2000 赤经（度，0-360）。星历天体（isEphemeris=true）为 null，坐标运行时计算
+  raDeg            Float?
+  /// J2000 赤纬（度，-90-90）。同上
+  decDeg           Float?
+  /// 是否星历天体（行星/日月）：坐标不落库，读取时由 @star/astro-ephem 实时计算
+  isEphemeris      Boolean       @default(false)
+  magnitude        Float
+  distanceLy       Float?
+  spectralType     String?
+  /// 各星表交叉编号，如 {"hip":"32349","hd":"48915"}
+  catalogIds       Json          @default("{}")
+  isNamable        Boolean       @default(true)
+  isFeatured       Boolean       @default(false)
+  descriptionZh    String?
+  /// 前端渲染优先级（大者先渲染/更醒目），运营可调
+  renderPriority   Int           @default(0)
+  /// 搜索加权（叠加在相关性得分上），运营可调
+  searchPriority   Int           @default(0)
+  /// 数据质量评分 0-100（坐标/星等/简介完整度）
+  dataQualityScore Int           @default(0)
+  /// 数据来源批次，如 'astro-data-seed-v1'、'hipparcos-import'
+  sourceCatalog    String        @default("astro-data-seed-v1")
+
+  // —— 百科档案（Phase 7 encyclopedia）：derivePhysical 确定性推导落库，全部可空、向后兼容 ——
+  /// 有效表面温度（K）
+  tempK            Int?
+  /// 质量（太阳质量，质光关系反解）
+  massSolar        Float?
+  /// 半径（太阳半径）
+  radiusSolar      Float?
+  /// 光度（太阳光度）
+  luminositySolar  Float?
+  /// 已度过年龄估算（Gyr）；DSO 用星团真实年龄
+  ageGyr           Float?
+  /// 主序寿命估算（Gyr）
+  lifespanGyr      Float?
+  /// 绝对星等 Mv
+  absoluteMag      Float?
+  /// 演化阶段：恒星 main_sequence/subgiant/giant/supergiant/white_dwarf；DSO 为类别码
+  stage            String?
+  /// 归宿：恒星为枚举码（white_dwarf/supernova_*），DSO 为中文命运文案
+  fate             String?
+  /// 最佳观测月（1-12，冲日/午夜中天月）
+  bestMonth        Int?
+  /// 观测手段分级：naked_eye/binoculars/telescope/photo
+  visibility       String?
+  /// 科普趣闻（string[] JSON，同 uid 确定性生成）
+  funFacts         Json?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  nameAliases   CelestialNameAlias[]
+  registrations MemorialRegistration[]
+
+  @@index([isFeatured, magnitude])
+  @@index([constellation])
+  @@index([isNamable, searchPriority(sort: Desc)])
+  @@map("celestial_object")
+}
+
+/// 天体别名表：DB 化搜索的基础。alias 原文 + aliasNorm 规范化（小写去变音，逻辑与 astro-data/search.ts 的 normalize 一致）。
+model CelestialNameAlias {
+  id        Int             @id @default(autoincrement())
+  objectUid String
+  object    CelestialObject @relation(fields: [objectUid], references: [objectUid], onDelete: Cascade)
+  /// 别名原文，如 '天狼星' / 'Dog Star' / 'α CMa'
+  alias     String
+  /// 规范化别名（小写、trim、NFD 去拉丁变音），Phase 3 在此列建 pg_trgm GIN 索引
+  aliasNorm String
+  /// 语言标记：'zh' | 'en' | 'sci'（学名/编号）
+  lang      String          @default("en")
+  /// 来源：'name' | 'alias' | 'bayer' | 'catalog' | 'constellation'（与 StarSearchResult.matchedOn 对齐）
+  source    String          @default("alias")
+  createdAt DateTime        @default(now())
+
+  @@unique([objectUid, aliasNorm, source])
+  @@index([aliasNorm])
+  @@map("celestial_name_alias")
+}
+
+/// 用户表（占位：本期不做鉴权，只保证外键落点存在）
+model AppUser {
+  id        String   @id @default(cuid())
+  /// 微信小程序 openid（预留）
+  wxOpenid  String?  @unique
+  /// 微信 unionid（预留）
+  wxUnionid String?  @unique
+  email     String?  @unique
+  phone     String?  @unique
+  nickname  String?
+  avatarUrl String?
+  /// 'user' | 'admin'，本期不做 RBAC，仅存字符串
+  role      String   @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  registrations MemorialRegistration[]
+  orders        Order[]
+
+  @@map("app_user")
+}
+
+/// 纪念命名登记主表
+model MemorialRegistration {
+  id               String             @id @default(cuid())
+  /// 对外纪念编号，形如 STAR-20260710-K7PX
+  registrationNo   String             @unique
+  starObjectUid    String
+  star             CelestialObject    @relation(fields: [starObjectUid], references: [objectUid])
+  /// 登记时刻的星体快照（nameZh/nameEn/raDeg/decDeg/constellationZh/magnitude 等），证书与纪念页以此为准
+  starSnapshotJson Json
+  /// 星星纪念名（1-40 个字符，按 Unicode 码点计）
+  memorialName     String             @db.VarChar(64)
+  occasionType     OccasionType
+  /// 纪念日期（仅日期，无时区语义）
+  memorialDate     DateTime?          @db.Date
+  /// 想说的话（<=140 字符）
+  blessingText     String?            @db.VarChar(280)
+  /// 长篇故事文本（预留给纪念页，<=2000 字符）
+  storyText        String?            @db.Text
+  status           RegistrationStatus @default(ACTIVE)
+  /// 公开纪念页短链 slug，形如 'm7k2xq9f4t3w'
+  publicSlug       String             @unique
+  ownerUserId      String?
+  owner            AppUser?           @relation(fields: [ownerUserId], references: [id])
+  /// 联系邮箱（隐私字段，任何对外接口不返回）
+  contactEmail     String?
+  /// 审核备注（复审拒绝原因等，内部字段）
+  reviewNote       String?
+  /// 情侣双星分组外键（null=普通单星登记）
+  coupleGroupId    String?
+  coupleGroup      CoupleGroup?       @relation(fields: [coupleGroupId], references: [id])
+  /// 该登记在情侣对中的角色（A/B），单星登记为 null
+  coupleRole       CoupleRole?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  certificates CertificateRecord[]
+  orders       Order[]
+  agentTasks   AgentTask[]
+  albums       AlbumRecord[]
+
+  @@index([starObjectUid, status])
+  @@index([ownerUserId])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([coupleGroupId])
+  // 同一分组内 A/B 各一，防止写入两个 A（Postgres 唯一索引对 NULL 不去重，单星登记不受约束）
+  @@unique([coupleGroupId, coupleRole])
+  @@map("memorial_registration")
+}
+
+/// 情侣双星分组：把两条 MemorialRegistration 关联为一对，共享一个对外 coupleSlug。
+/// 轻量设计：不持有 status——公开可见性以两条成员登记的 status 为准（复用现有 admin approve/reject，无需改后台）。
+model CoupleGroup {
+  id             String   @id @default(cuid())
+  /// 对外情侣纪念页短链 slug，形如 'c7k2xq9f4t3w'（与 publicSlug 同字母表，DB @unique 兜底唯一）
+  coupleSlug     String   @unique
+  /// 关系/场景标签，如 '恋人' / '夫妻' / '挚友'（展示用）
+  relationLabel  String?  @db.VarChar(64)
+  /// 合并祝福语（couple 页头部展示，<=140 字符）；两颗星各自的 blessingText 仍存在各自登记行
+  coupleBlessing String?  @db.VarChar(280)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  registrations MemorialRegistration[]
+
+  @@map("couple_group")
+}
+
+/// 证书记录：BullMQ worker（无 Redis 时同步）生成证书 + 星图 SVG/PNG 后写存储（OSS 或本地磁盘）。
+model CertificateRecord {
+  id               String               @id @default(cuid())
+  registrationId   String
+  registration     MemorialRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  status           CertificateStatus    @default(PENDING)
+  /// 证书主图 object key，如 'certificates/2026/07/STAR-20260710-K7PX-v1.svg'（存 key 不存 URL，读时经 storage.url() 解析）
+  certObjectKey    String?
+  /// 星图 object key，如 'starmaps/2026/07/STAR-20260710-K7PX-v1.svg'
+  starMapObjectKey String?
+  /// 资产格式：'svg' | 'png'（sharp 可用则 png，否则 svg）
+  assetFormat      String               @default("svg")
+  /// 模板版本号，证书模板迭代后可重出
+  templateVersion  String               @default("v1")
+  error            String?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  // 幂等锚点：一个登记在一个模板版本下只有一条记录
+  @@unique([registrationId, templateVersion])
+  @@index([registrationId, status])
+  @@map("certificate_record")
+}
+
+/// 订单（占位：Phase 3 接支付）
+model Order {
+  id             String                @id @default(cuid())
+  orderNo        String                @unique
+  userId         String?
+  user           AppUser?              @relation(fields: [userId], references: [id])
+  registrationId String?
+  registration   MemorialRegistration? @relation(fields: [registrationId], references: [id])
+  /// 商品 SKU 码，如 'MEMORIAL_BASIC' | 'MEMORIAL_DELUXE'
+  skuCode        String
+  /// 金额，单位分（避免浮点）
+  amountFen      Int
+  currency       String                @default("CNY")
+  status         OrderStatus           @default(CREATED)
+  /// 支付渠道：'wxpay' | 'alipay'（预留，写入时镜像 provider 值）
+  channel        String?
+  /// 支付服务商：'mock' | 'wechat' | 'alipay'（下单时锁定的 provider.name）
+  provider       String?
+  /// 服务商侧交易号（微信 transaction_id / 支付宝 trade_no / mock 生成），回调幂等锚点之一
+  providerTxnId  String?               @unique
+  /// 下单主体描述快照（证书/纪念册名等，回调对账与展示用）
+  subject        String?
+  /// 支付/失败原始回执摘要（脱敏后 <=500 字符，审计用）
+  payMeta        Json?
+  paidAt         DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([userId, status])
+  @@index([status, createdAt(sort: Desc)])
+  @@index([provider, status])
+  @@map("order")
+}
+
+/// 纪念册记录：多页 SVG + 合并长图，复用证书 SVG 基建生成，宇宙来信页调 cosmic-letter skill。
+model AlbumRecord {
+  id                String               @id @default(cuid())
+  registrationId    String
+  registration      MemorialRegistration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  status            CertificateStatus    @default(PENDING) // 复用四态枚举
+  templateVersion   String               @default("v1")
+  /// 合并长图 object key，如 'albums/2026/07/STAR-…-v1/album.svg'
+  combinedObjectKey String?
+  /// 六页 object key，按 cover→dedication 固定顺序
+  pageObjectKeys    String[]             @default([])
+  pageCount         Int                  @default(0)
+  /// 合并产物格式 'svg' | 'png'
+  assetFormat       String               @default("svg")
+  /// 宇宙来信生成模式 'llm' | 'template'（可观测）
+  letterMode        String?
+  /// 关联 cosmic-letter 的 agent_task.id（可空）
+  letterTaskId      String?
+  error             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@unique([registrationId, templateVersion]) // 幂等锚点
+  @@index([registrationId, status])
+  @@map("album_record")
+}
+
+/// 小天体轨道根数快照（Phase 9C ephemeris-feed）：
+/// 每日从 JPL SBDB 拉取「现役亮彗星（|tp−now|≤2 年 && M1≤12）+ 白名单（1P/2P/12P）
+/// + Ceres/Pallas/Vesta 单体」写入本表；整表原子替换（全量成功才覆盖，失败保留最后成功批次）。
+/// 后端只存根数不算轨道——开普勒/近抛物线求解在 @star/astro-ephem（数据层）完成。
+model MinorBodyElement {
+  /// 稳定标识：彗星用编号去符号（'1P'、'C2023A3'），小行星用小写英文名（'ceres'）
+  id        String   @id
+  /// 上游全名，如 'C/2023 A3 (Tsuchinshan-ATLAS)'
+  name      String
+  /// 中文名（仅收录已有公认中文名的天体，绝不机器编造）
+  nameZh    String?
+  /// 'comet' | 'asteroid'（字符串不建枚举：上游分类可能扩展，快照表以宽松为先）
+  kind      String
+  /// 根数历元（儒略日 TDB）
+  epochJd   Float
+  /// 偏心率（彗星可略 >1，近抛物线/双曲线）
+  e         Float
+  /// 近日点距离（AU）——彗星 q/tp 参数化的主参数
+  qAu       Float?
+  /// 半长轴（AU）——双曲线轨道为负值，原样保留 SBDB 数值
+  aAu       Float?
+  /// 轨道倾角（度）
+  iDeg      Float
+  /// 升交点黄经 Ω（度）
+  omDeg     Float
+  /// 近日点幅角 ω（度）
+  wDeg      Float
+  /// 近日点通过时刻（儒略日 TDB）
+  tpJd      Float?
+  /// 历元平近点角（度）——椭圆轨道备用参数化
+  maDeg     Float?
+  /// 彗星总星等参数 M1
+  m1        Float?
+  /// 彗核星等参数 M2
+  m2        Float?
+  /// 数据来源 key（关联 data_source.key，应用层 join）
+  source    String   @default("jpl-sbdb")
+  /// 上游抓取成功时刻（最后成功值持久化锚点，端点 updatedAt 取本列最大值）
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind])
+  @@map("minor_body_elements")
+}
+
+/// TLE 快照（Phase 9C ephemeris-feed）：每 6h 从 Celestrak GP API 拉目标组
+/// （ISS/CSS/HST 按 NORAD id），逐星 upsert（单星失败不影响其余）。
+/// 服务端集中拉取 = 全站一份流量，尊重 Celestrak「同一数据 2h 内不重复下载」政策。
+model TleSnapshot {
+  /// 与 web 侧卫星 uid 对齐：'SAT-ISS' | 'SAT-TIANGONG' | 'SAT-HST'
+  id        String    @id
+  /// NORAD 目录号（25544 等）
+  noradId   Int       @unique
+  /// 上游名称行，如 'ISS (ZARYA)'
+  name      String
+  nameZh    String?
+  /// TLE 第一行（69 字符，写入前经 mod-10 校验）
+  l1        String
+  /// TLE 第二行（69 字符，写入前经 mod-10 校验）
+  l2        String
+  /// 从 l1 解析出的历元（观测用；前端据此显示「轨道数据 X 天前」）
+  epochAt   DateTime?
+  /// 数据来源 key（关联 data_source.key）
+  source    String    @default("celestrak")
+  /// 上游抓取成功时刻
+  fetchedAt DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("tle_snapshot")
+}
+
+/// 数据来源主数据（Phase 9C 溯源体系，r-data.md §3.1）：
+/// 每个数据源的机构/版本/许可/致谢句/抓取时间结构化落库，
+/// 前端来源徽章与「数据来源与版本」页直接渲染本表。
+/// 取舍说明：celestial_object.sourceCatalog 保持字符串批次号（'hyg-v41' 等），
+/// 不做外键——FK 需回填迁移且 seed 顺序耦合（先灌 data_source 才能灌天体），
+/// 低风险优先：应用层经 sourceKeyOf() 映射到 data_source.key 关联查询，
+/// 字符串保留 ETL 批次语义，向后完全兼容。
+model DataSource {
+  id            Int      @id @default(autoincrement())
+  /// 稳定 key：'hyg-v41' | 'openngc' | 'd3-celestial' | 'astronomy-engine'
+  /// | 'jpl-sbdb' | 'celestrak' | 'iau-csn' | 'stellarium-chinese' | 'curated'
+  key           String   @unique
+  /// 展示名，如 'HYG Database v4.1'
+  name          String
+  /// 机构/作者，如 'astronexus (David Nash)' / 'NASA/JPL' / 'IAU WGSN'
+  publisher     String
+  /// 主页/项目页 URL
+  url           String
+  /// 数据直下地址（可空）
+  downloadUrl   String?
+  /// 版本口径，如 'v41' / 'GP API' / '2026-07-15 snapshot'
+  version       String
+  /// 许可原文，如 'CC BY-SA 4.0' / 'Public Domain (US Government work)'
+  license       String
+  licenseUrl    String?
+  /// 中文致谢/署名句（证书背面、来源页直接渲染）
+  citationZh    String
+  /// 英文标准致谢句（逐字收录各源官方要求口径，绝不编造）
+  citationEn    String
+  /// 星等完备极限声明（如恒星核心层 6.5；不适用则 null）
+  magComplete   Float?
+  /// 本批次记录数（预留源为 null，接入后回填）
+  recordCount   Int?
+  /// 更新策略：'static-build' | 'runtime-daily' | 'runtime-6h' | 'runtime-live'
+  refreshPolicy String   @default("static-build")
+  /// 本批次抓取/生成时间（预留源为登记时间，notes 注明）
+  retrievedAt   DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("data_source")
+}
+
+/// Agent 任务表：AI 技能编排的持久化载体（证书文案生成、星空故事撰写等）
+model AgentTask {
+  id             String                @id @default(cuid())
+  /// 技能码，如 'certificate.copywriting' | 'story.generate'
+  skillCode      String
+  inputJson      Json
+  outputJson     Json?
+  status         AgentTaskStatus       @default(QUEUED)
+  error          String?
+  /// 实际使用的模型名（llm 模式为 claude-sonnet-5；template 模式为 'template'）
+  modelName      String?
+  /// 端到端耗时（毫秒），用于成本/性能观测
+  durationMs     Int?
+  /// 已尝试次数（BullMQ 重试对齐）
+  attempts       Int                   @default(0)
+  registrationId String?
+  registration   MemorialRegistration? @relation(fields: [registrationId], references: [id])
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([skillCode, status])
+  @@map("agent_task")
+}

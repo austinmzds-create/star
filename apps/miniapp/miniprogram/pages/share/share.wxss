@@ -1,0 +1,86 @@
+.page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40rpx;
+  box-sizing: border-box;
+}
+
+/* 离屏画布：绘制用，移出可视区 */
+.poster-canvas {
+  position: fixed;
+  left: -9999rpx;
+  top: 0;
+  width: 750px;
+  height: 1334px;
+}
+
+.center {
+  padding: 240rpx 0;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.preview {
+  width: 70%;
+  border-radius: 20rpx;
+  box-shadow: 0 12rpx 48rpx rgba(0, 0, 0, 0.5);
+}
+
+.actions {
+  margin-top: 48rpx;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24rpx;
+}
+
+.actions button {
+  height: 96rpx;
+  line-height: 96rpx;
+  font-size: 32rpx;
+}
+
+.fallback {
+  margin-top: 80rpx;
+  padding: 56rpx 44rpx;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.fb-title {
+  font-size: 48rpx;
+  font-weight: 700;
+  color: var(--gold);
+}
+
+.fb-sub {
+  margin-top: 16rpx;
+  font-size: 28rpx;
+  color: var(--text-dim);
+}
+
+.fb-body {
+  margin-top: 24rpx;
+  font-size: 30rpx;
+  line-height: 1.7;
+  color: var(--text-main);
+}
+
+.fb-note {
+  margin-top: 24rpx;
+  font-size: 24rpx;
+  color: var(--text-dim);
+}
+
+.fb-btn {
+  margin-top: 28rpx;
+  width: 100%;
+  height: 92rpx;
+  line-height: 92rpx;
+  font-size: 30rpx;
+}

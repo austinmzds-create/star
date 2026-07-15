@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。天鹰座：俯冲的雄鹰，牛郎星217,143 锚在鹰首胸口，河鼓一243,102 / 河鼓三191,200 分列两侧（挑扁担），尾指 λ 475,463。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 鹰首钩喙（牛郎星处） -->
+      <path d="M 218 145 C 209 131 200 124 190 124 C 184 124 182 130 187 135"/>
+      <circle cx="206" cy="134" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <!-- 躯干俯冲至尾 -->
+      <path d="M 218 145 C 260 202 322 282 398 380 C 424 408 450 434 468 456"/>
+      <!-- 尾羽 -->
+      <path d="M 468 456 C 452 451 436 449 420 451"/>
+      <path d="M 468 456 C 461 441 456 429 452 417"/>
+      <!-- 上翼（经河鼓一一侧展开） -->
+      <path d="M 231 150 C 251 118 281 90 320 70 C 350 55 380 48 410 48"/>
+      <path d="M 320 72 C 300 95 282 118 266 142" stroke="#8fb8e0"/>
+      <path d="M 365 56 C 340 88 315 120 289 152" stroke="#8fb8e0"/>
+      <path d="M 407 50 C 378 90 345 130 311 168" stroke="#8fb8e0"/>
+      <!-- 下翼（经河鼓三一侧展开） -->
+      <path d="M 206 166 C 171 191 136 223 106 260 C 89 282 76 305 69 328"/>
+      <path d="M 106 262 C 130 250 155 242 182 238" stroke="#8fb8e0"/>
+      <path d="M 81 300 C 111 285 142 274 176 266" stroke="#8fb8e0"/>
+      <path d="M 69 328 C 100 312 135 300 175 290" stroke="#8fb8e0"/>
+      <!-- 牛郎星大星芒 + 两伴星微芒 -->
+      <path d="M 217 125 L 217 161 M 199 143 L 235 143"/>
+      <path d="M 205 131 L 229 155 M 229 131 L 205 155" stroke="#8fb8e0"/>
+      <path d="M 243 95 L 243 109 M 236 102 L 250 102 M 191 193 L 191 207 M 184 200 L 198 200"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

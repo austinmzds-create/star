@@ -1,0 +1,208 @@
+import { raDecToVector3 } from '@star/astro-core';
+import { CELESTIAL_CATALOG, type CelestialObject } from '@star/astro-data';
+import * as THREE from 'three';
+
+/** 天球半径：所有星体统一投影到该半径的球面内壁。 */
+export const SPHERE_RADIUS = 1000;
+
+/** 由光谱型推断显示颜色（线性 RGB，0–1）。 */
+export function spectralColor(spectralType?: string): [number, number, number] {
+  const letter = spectralType?.[0]?.toUpperCase();
+  switch (letter) {
+    case 'O':
+    case 'B':
+      return [0.61, 0.7, 1.0];
+    case 'A':
+      return [0.83, 0.89, 1.0];
+    case 'F':
+      return [1.0, 0.98, 0.94];
+    case 'G':
+      return [1.0, 0.95, 0.84];
+    case 'K':
+      return [1.0, 0.8, 0.56];
+    case 'M':
+      return [1.0, 0.66, 0.48];
+    default:
+      return [1.0, 1.0, 1.0];
+  }
+}
+
+/** 视星等 -> 屏幕像素大小（越亮越大）。 */
+export function magnitudeToSize(magnitude: number): number {
+  return THREE.MathUtils.clamp(15 - magnitude * 2.3, 4.5, 20);
+}
+
+/** mas/yr → rad/yr（1 mas = 1e-3/3600 度）。自行属性预转弧度，shader 零换算。 */
+export const MAS_YR_TO_RAD_YR = (1e-3 / 3600) * (Math.PI / 180);
+
+export interface StarAttributes {
+  positions: Float32Array;
+  colors: Float32Array;
+  sizes: Float32Array;
+  phases: Float32Array;
+  count: number;
+  /**
+   * 自行（Phase 9B 深时模式）：每星 2 分量 (pmra*, pmdec)，单位 rad/yr
+   * （pmra 已含 cosδ）。可选——缺省时 TwinkleStars 以零填充（程序化环境星/
+   * 星屑等装饰层不动，真实星层随「星座时光机」形变）。
+   */
+  pms?: Float32Array;
+  /**
+   * 视星等（Phase 10 真实天空模式）：核心层为真实 mag；环境场为「伪星等」
+   * （越暗越大，装饰性最暗填充最先隐去）。可选——缺省时 TwinkleStars 以全 0
+   * 填充（视作极亮永不裁，安全）。送上 GPU 供 uMagLimit 渐隐截断。
+   */
+  mags?: Float32Array;
+}
+
+export interface CatalogRenderData extends StarAttributes {
+  /** 与 CELESTIAL_CATALOG 同序的世界坐标，用于拾取与镜头飞行。 */
+  vectors: THREE.Vector3[];
+  objects: CelestialObject[];
+}
+
+/**
+ * 由精选真实星表构建可渲染属性 + 拾取用坐标。
+ *
+ * 过滤规则（宇宙 V2）：只渲染静态恒星——
+ *  - type !== 'star'（深空天体）由 DeepSkyLayer 分层渲染；
+ *  - isEphemeris === true（行星/日月元数据行）没有静态坐标，由 PlanetsLayer
+ *    按 observeTime 实时摆位。
+ * CELESTIAL_CATALOG 当前即纯恒星表，此过滤为防御性契约。
+ */
+export function buildCatalogRenderData(): CatalogRenderData {
+  const objects = CELESTIAL_CATALOG.filter((o) => o.type === 'star' && !o.isEphemeris);
+  const count = objects.length;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const phases = new Float32Array(count);
+  const pms = new Float32Array(count * 2);
+  const mags = new Float32Array(count); // Phase 10：真实星等直上 GPU（裸眼截断）
+  const vectors: THREE.Vector3[] = [];
+
+  objects.forEach((obj, i) => {
+    const v = raDecToVector3({ raDeg: obj.raDeg, decDeg: obj.decDeg }, SPHERE_RADIUS);
+    positions[i * 3] = v.x;
+    positions[i * 3 + 1] = v.y;
+    positions[i * 3 + 2] = v.z;
+    vectors.push(new THREE.Vector3(v.x, v.y, v.z));
+
+    const [r, g, b] = spectralColor(obj.spectralType);
+    colors[i * 3] = r;
+    colors[i * 3 + 1] = g;
+    colors[i * 3 + 2] = b;
+
+    sizes[i] = magnitudeToSize(obj.magnitude);
+    mags[i] = obj.magnitude; // 裸眼渐隐用真实视星等
+    phases[i] = (i * 2.399963) % (Math.PI * 2);
+
+    // 自行（mas/yr → rad/yr 预转）：缺测保持 0（深时模式该星不动，Float32Array 初值即 0）。
+    if (obj.pmRaMasYr !== undefined && obj.pmDecMasYr !== undefined) {
+      pms[i * 2] = obj.pmRaMasYr * MAS_YR_TO_RAD_YR;
+      pms[i * 2 + 1] = obj.pmDecMasYr * MAS_YR_TO_RAD_YR;
+    }
+  });
+
+  return { positions, colors, sizes, phases, count, pms, mags, vectors, objects };
+}
+
+/** 均匀分布在单位球面上的随机方向。 */
+function randomDirection(): THREE.Vector3 {
+  const u = Math.random();
+  const v = Math.random();
+  const theta = 2 * Math.PI * u;
+  const phi = Math.acos(2 * v - 1);
+  return new THREE.Vector3(
+    Math.sin(phi) * Math.cos(theta),
+    Math.sin(phi) * Math.sin(theta),
+    Math.cos(phi),
+  );
+}
+
+/**
+ * 程序化环境星场：暗弱背景星 + 一条模拟银河的密集亮带。
+ * 只为营造「铺满宇宙」的观感，不含真实数据。
+ *
+ * 数量取值与星表扩容联动（宇宙 V2）：
+ * 核心真实星表已扩到 mag ≤ 6.5（≈9000 颗），另有扩展层（6.5–7.5，≈1.7 万点）
+ * 空闲时懒加载。真实点位大幅增多后，程序化星进一步收敛：
+ *  - 均匀背景星与真实星层空间重叠最大，降到 3000，仅作最暗一档的填充；
+ *  - 银河带是真实亮星目录不覆盖的弥散辉光，收敛到 5000。
+ * 合计 8000 程序化 + ~9000 核心真实 + （懒加载后）1.7 万扩展 ≈ 3.4 万点，
+ * 视觉重心完全落在真实数据上。低端设备由调用方再减半（deviceTier）。
+ */
+export function generateAmbientField(
+  backgroundCount = 3000,
+  milkyWayCount = 5000,
+): StarAttributes {
+  const count = backgroundCount + milkyWayCount;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+  const phases = new Float32Array(count);
+  // Phase 10 伪星等：装饰性最暗填充，真实模式应最先消失（越暗越大越先隐）。
+  const mags = new Float32Array(count);
+
+  const r = SPHERE_RADIUS * 0.985;
+
+  // 银河带的倾斜（绕 X 轴倾斜约 60°）
+  const tilt = new THREE.Matrix4().makeRotationX(THREE.MathUtils.degToRad(62));
+
+  for (let i = 0; i < count; i++) {
+    let dir: THREE.Vector3;
+    let tint: [number, number, number];
+    let size: number;
+
+    if (i < backgroundCount) {
+      // 均匀背景星
+      dir = randomDirection();
+      const warm = Math.random();
+      tint =
+        warm > 0.82
+          ? [1.0, 0.86, 0.7]
+          : warm > 0.5
+            ? [0.86, 0.9, 1.0]
+            : [0.92, 0.94, 1.0];
+      const intensity = 0.5 + Math.random() * 0.5;
+      tint = [tint[0] * intensity, tint[1] * intensity, tint[2] * intensity];
+      size = 1.1 + Math.random() * Math.random() * 2.8;
+      // 背景星 size∈[1.1,3.9] → 伪星等 6.3–8.3：郊区档仅最亮一撮残留、城市档全灭
+      mags[i] = 6.3 + (3.9 - size) * 0.7;
+    } else {
+      // 银河带：沿一个大圆聚集，垂直方向做高斯散布
+      const along = Math.random() * Math.PI * 2;
+      const spread = (Math.random() + Math.random() + Math.random() - 1.5) * 0.2;
+      dir = new THREE.Vector3(
+        Math.cos(along) * Math.cos(spread),
+        Math.sin(spread),
+        Math.sin(along) * Math.cos(spread),
+      ).applyMatrix4(tilt);
+      const intensity = 0.42 + Math.random() * 0.45;
+      tint = [0.98 * intensity, 0.94 * intensity, 0.86 * intensity];
+      size = 0.9 + Math.random() * 1.7;
+      // 银河带 size∈[0.9,2.6] → 伪星等 6.6–7.6：wild 6.5 亦近全灭（裸眼银河交给
+      // MilkyWayLayer 的真实影像层承担，本就是弥散辉光而非点阵，观感更对）
+      mags[i] = 6.6 + (2.6 - size) * 0.6;
+    }
+
+    positions[i * 3] = dir.x * r;
+    positions[i * 3 + 1] = dir.y * r;
+    positions[i * 3 + 2] = dir.z * r;
+    colors[i * 3] = tint[0];
+    colors[i * 3 + 1] = tint[1];
+    colors[i * 3 + 2] = tint[2];
+    sizes[i] = size;
+    phases[i] = Math.random() * Math.PI * 2;
+  }
+
+  return { positions, colors, sizes, phases, count, mags };
+}
+
+/** 供镜头飞行使用：把方向向量转成偏航/俯仰（与 CameraRig 中一致的约定）。 */
+export function directionToYawPitch(dir: THREE.Vector3): { yaw: number; pitch: number } {
+  const d = dir.clone().normalize();
+  const pitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
+  const yaw = Math.atan2(-d.x, -d.z);
+  return { yaw, pitch };
+}

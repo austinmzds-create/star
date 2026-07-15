@@ -1,0 +1,7 @@
+{
+  "description": "本地私有配置（不应提交个人 appid/设置到公共分支）。本期给最小占位，接真机时在微信开发者工具中覆盖。",
+  "projectname": "star-miniapp",
+  "setting": {
+    "compileHotReLoad": true
+  }
+}

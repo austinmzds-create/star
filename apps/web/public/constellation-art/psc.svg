@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。双鱼座：一横一纵两条小鱼，尾部丝带 V 形长弧系于结点（外屏七方向，左下）。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 西鱼（右，横向，对应星圈方向） -->
+      <path d="M 350 270 C 372 246 420 246 445 268 C 420 292 372 292 350 270"/>
+      <path d="M 445 268 l 24 -14 M 445 268 l 22 16"/>
+      <circle cx="368" cy="266" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <path d="M 398 250 l 6 -14" stroke="#8fb8e0"/>
+      <!-- 北鱼（左上，纵向） -->
+      <path d="M 150 40 C 174 62 174 108 150 132 C 126 108 126 62 150 40"/>
+      <path d="M 150 40 l -13 -20 M 150 40 l 13 -20"/>
+      <circle cx="146" cy="114" r="2.5" fill="#bfe3ff" stroke="none"/>
+      <path d="M 133 84 l -14 -6" stroke="#8fb8e0"/>
+      <!-- 丝带 V：两条长弧汇于结点 -->
+      <path d="M 350 274 C 298 288 258 312 228 332 C 198 352 158 372 124 396"/>
+      <path d="M 150 134 C 156 200 141 280 124 340 C 120 360 120 380 122 394"/>
+      <!-- 结点（α Psc 外屏七） -->
+      <circle cx="122" cy="400" r="9"/>
+      <path d="M 122 382 L 122 418 M 104 400 L 140 400"/>
+      <path d="M 110 388 L 134 412 M 134 388 L 110 412" stroke="#8fb8e0"/>
+      <!-- 水泡点缀 -->
+      <circle cx="300" cy="300" r="2" fill="#8fb8e0" stroke="none"/>
+      <circle cx="190" cy="180" r="2" fill="#8fb8e0" stroke="none"/>
+      <circle cx="260" cy="340" r="1.6" fill="#8fb8e0" stroke="none"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <!-- 星辰纪念原创绘制（CC0），作者：Stellar Memorial Team。室女座：执麦穗的侧身女神，长裙一笔垂弧，麦穗端点锚定角宿一161,442（大星芒）。 -->
+  <defs>
+    <g id="art" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <!-- 头与发 -->
+      <circle cx="282" cy="82" r="18"/>
+      <path d="M 270 68 C 258 60 250 48 252 36" stroke="#8fb8e0"/>
+      <!-- 躯干 -->
+      <path d="M 280 100 C 272 140 262 180 250 220"/>
+      <!-- 上扬手臂（东上相方向） -->
+      <path d="M 288 108 C 310 90 330 70 344 50" stroke="#8fb8e0"/>
+      <!-- 翼影 -->
+      <path d="M 292 112 C 330 132 355 166 365 206" stroke="#8fb8e0"/>
+      <!-- 执穗手臂垂向角宿一 -->
+      <path d="M 268 130 C 235 180 200 260 172 350 C 166 372 163 400 161 424"/>
+      <!-- 麦穗（穗粒短弧） -->
+      <path d="M 161 424 L 161 440 M 161 424 l -12 -10 M 161 424 l 12 -10 M 160 412 l -11 -9 M 160 412 l 11 -9"/>
+      <!-- 角宿一大星芒 -->
+      <path d="M 161 424 L 161 460 M 143 442 L 179 442"/>
+      <path d="M 149 430 L 173 454 M 173 430 L 149 454" stroke="#8fb8e0"/>
+      <!-- 长裙垂弧 -->
+      <path d="M 250 220 C 235 280 224 340 210 400 C 205 420 200 436 195 448"/>
+      <path d="M 262 218 C 290 290 320 370 355 440"/>
+      <path d="M 195 448 C 245 470 310 464 355 440"/>
+      <!-- 裙褶 -->
+      <path d="M 252 250 C 260 310 280 370 305 425 M 240 260 C 235 320 228 380 218 435" stroke="#8fb8e0"/>
+    </g>
+  </defs>
+  <use href="#art" stroke="#bfe3ff" stroke-width="7" opacity="0.22"/>
+  <use href="#art" stroke="#bfe3ff" stroke-width="2" opacity="0.9"/>
+</svg>

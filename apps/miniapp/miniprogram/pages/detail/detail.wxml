@@ -1,0 +1,47 @@
+<view class="page">
+  <block wx:if="{{state === 'loading'}}">
+    <view class="center dim">正在加载纪念星…</view>
+  </block>
+
+  <block wx:else>
+    <view wx:if="{{mode === 'demo'}}" class="demo-tag">示例纪念星（未连接后端，仅供体验）</view>
+
+    <!-- 星卡片 -->
+    <view class="star-card glass">
+      <view class="star-visual">
+        <view class="star-dot" style="width:{{dotSize}}rpx;height:{{dotSize}}rpx;"></view>
+      </view>
+      <view class="memorial-name">{{view.memorialName}}</view>
+      <view class="occasion">{{view.occasion}}<text wx:if="{{dateText}}"> · {{dateText}}</text></view>
+      <view class="real-name">{{view.star.nameZh}} · {{view.star.nameEn}}</view>
+      <view class="meta">{{view.star.constellationZh}}</view>
+      <view class="meta">{{radecText}}</view>
+      <view class="meta">{{magText}}</view>
+    </view>
+
+    <!-- 证书图 -->
+    <view wx:if="{{view.certificate}}" class="cert glass">
+      <image class="cert-img" mode="widthFix" src="{{view.certificate.certUrl}}" />
+    </view>
+
+    <!-- 祝福 -->
+    <view wx:if="{{view.blessing}}" class="block glass">
+      <view class="block-title">祝福</view>
+      <view class="block-body">{{view.blessing}}</view>
+    </view>
+
+    <!-- 宇宙来信 / 故事（本期仅展示已落库文本） -->
+    <view wx:if="{{view.story}}" class="block glass">
+      <view class="block-title">宇宙来信</view>
+      <view class="block-body">{{view.story}}</view>
+    </view>
+
+    <!-- CTA -->
+    <view class="cta">
+      <button class="btn-gold" bindtap="goFind">在天空中找到它</button>
+      <button class="btn-ghost" bindtap="goShare">生成分享海报</button>
+    </view>
+  </block>
+
+  <text class="compliance">{{compliance}}</text>
+</view>

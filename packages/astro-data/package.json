@@ -1,0 +1,23 @@
+{
+  "name": "@star/astro-data",
+  "version": "0.1.0",
+  "description": "共享星体数据类型 + 精选真实星表 + 中英文搜索索引。web / api / 小程序复用。",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build:catalog": "node scripts/build-catalog.mjs",
+    "build:star-names": "node scripts/build-star-names.mjs",
+    "build:dso": "node scripts/build-dso.mjs",
+    "build:constellation-lines": "node scripts/build-constellation-lines.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

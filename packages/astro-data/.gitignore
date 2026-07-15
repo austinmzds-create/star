@@ -1,0 +1,2 @@
+# ETL 下载缓存（不提交；src/generated/bright-stars.json 需提交，不在此列）
+scripts/.cache/

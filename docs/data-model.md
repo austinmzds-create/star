@@ -1,0 +1,440 @@
+# 数据模型
+
+> **定位**：库表**唯一事实来源**。`services/api/prisma/schema.prisma` 的每个 model 在本文有对应章节；
+> 星表扩容（60 颗 → 5058 亮星 + 命名候选池，Phase 3 已落地）全文在第 8 章。
+> **读者**：后端工程师、数据工程师。
+> **最后更新**：2026-07-11（Phase 4 · 情侣双星 `couple_group`、纪念册 `album_record`、订单支付字段扩展）。
+> **关联文档**：[系统架构](./architecture.md) · [API 规范](./api-spec.md) · [部署运维](./deployment.md)
+
+---
+
+## 1. 建模原则
+
+### 1.1 命名约定
+
+- Prisma model 名 **PascalCase**（`CelestialObject`），表名 **snake_case**（`@@map("celestial_object")`）。
+- 字段名 **camelCase**；本期**列名保持 camelCase**（不逐字段 `@map` 成 snake_case），
+  减少映射心智负担——Prisma 是唯一 SQL 入口，人工手写 SQL 场景极少。
+- 枚举 DB 侧用大写（`STAR` / `ACTIVE`），与共享包小写字面量（`'star'`）的映射由服务层完成。
+
+### 1.2 主键策略
+
+- 目录类表（`celestial_object` / `celestial_name_alias`）：内部自增 `Int` 主键 + 对外稳定业务标识
+  `objectUid`（唯一，如 `HIP32349`）。外键一律引用 `objectUid` 而非自增 id，保证跨环境/重导入稳定。
+- 业务类表（登记/用户/订单等）：`cuid()` 字符串主键 + 对外业务编号
+  （`registrationNo` / `publicSlug` / `orderNo`，均 `@unique`）。对外接口**永不**暴露内部主键。
+
+### 1.3 审计与软删除
+
+- 所有表统一 `createdAt @default(now())` / `updatedAt @updatedAt`。
+- 本期**不做软删除**（无 `deletedAt`）：登记的下线用状态机（`RegistrationStatus.REJECTED`）表达，
+  目录数据的下架用 `isNamable=false` 表达；物理删除仅限运营后台未来引入时再评估。
+
+## 2. ER 总览
+
+```mermaid
+erDiagram
+  celestial_object ||--o{ celestial_name_alias : "别名"
+  celestial_object ||--o{ memorial_registration : "被登记"
+  app_user ||--o{ memorial_registration : "拥有(预留)"
+  app_user ||--o{ order : "下单(预留)"
+  couple_group ||--o{ memorial_registration : "情侣两颗星(A/B)"
+  memorial_registration ||--o{ certificate_record : "证书"
+  memorial_registration ||--o{ album_record : "纪念册"
+  memorial_registration ||--o{ order : "关联订单"
+  memorial_registration ||--o{ agent_task : "AI任务(预留)"
+```
+
+枚举：`CelestialType`（STAR/GALAXY/NEBULA/CLUSTER）、`RegistrationStatus`（PENDING_REVIEW/ACTIVE/REJECTED）、
+`OccasionType`（LOVE/BIRTHDAY/WEDDING/GRADUATION/NEWBORN/PET_MEMORIAL/IN_MEMORIAM/OTHER）、
+`CertificateStatus`（PENDING/GENERATING/READY/FAILED，纪念册 `album_record` 亦复用此枚举）、
+`OrderStatus`（CREATED/PAID/**FAILED**/CANCELLED/REFUNDED——Phase 4 增 `FAILED`，FAILED=支付失败、CANCELLED=用户/超时取消，语义不同）、
+`CoupleRole`（A/B，Phase 4 新增）、`AgentTaskStatus`（QUEUED/RUNNING/SUCCEEDED/FAILED）。
+
+## 3. celestial_object 天体主表
+
+### 3.1 字段表（与 `packages/astro-data/src/types.ts` 的 `CelestialObject` 对照）
+
+| 字段 | 类型 | 共享包对应 | 说明 |
+| --- | --- | --- | --- |
+| `id` | `Int` 自增 | —（服务端扩展） | 内部主键，不对外 |
+| `objectUid` | `String @unique` | `objectUid` | 稳定唯一标识，如 `HIP32349` |
+| `type` | `CelestialType` 枚举 | `type`（小写字面量） | DB 大写枚举 ↔ 共享包 `'star' \| 'galaxy' \| 'nebula' \| 'cluster'` |
+| `nameEn` / `nameZh` | `String` | 同名 | 中英文主名 |
+| `aliases` | `String[] @default([])` | `aliases` | 别名**快照**；搜索用规范化版本在 `celestial_name_alias` |
+| `bayer` | `String?` | `bayer?` | 拜耳/佛兰斯蒂德命名，如 `α CMa` |
+| `constellation` / `constellationZh` | `String` | 同名 | 星座中英文 |
+| `raDeg` / `decDeg` | `Float` | 同名 | J2000 赤经 [0,360) / 赤纬 [-90,90]，单位度 |
+| `magnitude` | `Float` | `magnitude` | 视星等（越小越亮） |
+| `distanceLy` | `Float?` | `distanceLy: number \| null` | 距离（光年），未知为 null |
+| `spectralType` | `String?` | `spectralType?` | 光谱型，如 `A1V` |
+| `catalogIds` | `Json @default("{}")` | `catalogIds: Record<string,string>` | 各星表交叉编号，如 `{"hip":"32349","hd":"48915"}` |
+| `isNamable` | `Boolean @default(true)` | `isNamable` | 是否可作纪念命名对象（策略见 §8.4） |
+| `isFeatured` | `Boolean @default(false)` | `isFeatured` | 精选/著名星（首页展示、搜索优先） |
+| `descriptionZh` | `String?` | `descriptionZh?` | 中文简介 |
+| `renderPriority` | `Int @default(0)` | —（服务端扩展） | 前端渲染优先级/分包档位，运营可调（见 §8.3） |
+| `searchPriority` | `Int @default(0)` | —（服务端扩展） | 搜索加权，DB 化后作 ORDER BY 次键 |
+| `dataQualityScore` | `Int @default(0)` | —（服务端扩展） | 数据质量评分 0–100（坐标/星等/简介完整度） |
+| `sourceCatalog` | `String @default("astro-data-seed-v1")` | —（服务端扩展） | 数据来源批次，如 `hyg-v3-import`，可重放可对账 |
+| `createdAt` / `updatedAt` | `DateTime` | —（服务端扩展） | 审计字段 |
+
+**类型选择理由**：
+
+- `catalogIds` 用 `Json`（Postgres `jsonb`）——星表种类开放（hip/hd/hr/gl/…），逐来源建列不可维护；
+  jsonb 支持 `catalogIds->>'hip'` 表达式查询，够用。
+- `aliases` 用 `String[]`（Postgres `text[]`）——只是展示快照；**搜索不走这列**，
+  走 `celestial_name_alias`（一行一别名，可建 GIN/pg_trgm 索引、带 lang/source 元数据）。
+
+### 3.2 索引设计
+
+| 索引 | 用途 |
+| --- | --- |
+| `objectUid @unique` | 详情查询、外键引用 |
+| `@@index([isFeatured, magnitude])` | 精选列表、按亮度分层拉取 |
+| `@@index([constellation])` | 按星座筛选 |
+| `@@index([isNamable, searchPriority(sort: Desc)])` | 命名候选池抽样 + 搜索排序次键 |
+| （Phase 3）`celestial_name_alias.aliasNorm` 上 pg_trgm GIN | DB 化模糊搜索，见 §6.2 |
+
+## 4. memorial_registration 纪念登记表
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 内部主键 |
+| `registrationNo` | `String @unique` | 对外纪念编号 `STAR-YYYYMMDD-XXXX`（生成规则见下） |
+| `starObjectUid` | `String` FK → `celestial_object.objectUid` | 被登记星体 |
+| `starSnapshotJson` | `Json` | **登记时刻的星体快照**（nameZh/nameEn/raDeg/decDeg/constellationZh/magnitude 等）；证书与纪念页以此为准，不受星表后续修订影响 |
+| `memorialName` | `String @db.VarChar(64)` | 纪念名，1–40 个字符（按 **Unicode 码点**计，emoji 算 1 字；列宽 64 兜 UTF-16 余量） |
+| `occasionType` | `OccasionType` 枚举 | 纪念场景。**DB 存英文枚举码**，中文标签是展示层映射（见 [api-spec.md §3.1](./api-spec.md)），文案调整不污染数据 |
+| `memorialDate` | `DateTime? @db.Date` | 纪念日期（仅日期，无时区语义） |
+| `blessingText` | `String? @db.VarChar(280)` | 想说的话，≤140 字符 |
+| `storyText` | `String? @db.Text` | 长篇故事（纪念页预留），≤2000 字符 |
+| `status` | `RegistrationStatus @default(ACTIVE)` | `PENDING_REVIEW`（命中复审词）/ `ACTIVE`（公开纪念页可访问）/ `REJECTED` |
+| `publicSlug` | `String @unique` | 公开纪念页短链 slug（12 位小写去混淆字母表 ≈ 59 bit 熵，不可枚举） |
+| `ownerUserId` | `String?` FK → `app_user.id` | 预留：本期匿名登记，恒为 null |
+| `contactEmail` | `String?` | **隐私字段，任何对外接口不返回** |
+| `reviewNote` | `String?` | 审核备注（内部字段） |
+| `coupleGroupId` | `String?` FK → `couple_group.id` | **Phase 4**：情侣双星分组外键；`null`=普通单星登记（见 §4A） |
+| `coupleRole` | `CoupleRole?`（A/B） | **Phase 4**：该登记在情侣对中的角色；单星登记为 `null` |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+索引：`@@index([starObjectUid, status])`（星体占用查询）、`@@index([ownerUserId])`、
+`@@index([status, createdAt(sort: Desc)])`（后台审核列表）、`@@index([coupleGroupId])`（Phase 4）。
+唯一约束 `@@unique([coupleGroupId, coupleRole])`（Phase 4）：同一分组内 A/B 各一，防止写入两个 A——
+**Postgres 唯一索引对 NULL 不去重，单星登记（两列均 null）不受此约束**。
+
+**registrationNo 生成规则**（`services/api/src/common/ids/registration-no.ts`）：
+
+- 格式 `STAR-YYYYMMDD-XXXX`，后缀取自 31 字符去混淆字母表（排除 `0/O/1/I/L`），
+  4 位 ≈ 92 万组合/天。
+- 用 `node:crypto.randomInt`（CSPRNG）而非 `Math.random`；唯一性最终由 DB `@unique` 兜底，
+  冲突时上层重试。
+- 前端 `MemorialModal` 原本的本地 `makeRegistrationNo()` **已废弃**，仅保留同格式的
+  `makeDemoRegistrationNo()`（`apps/web/src/lib/api.ts`）作后端不可达时的演示回退，
+  演示编号不落库、UI 明确标注「演示模式」。
+
+**与 celestial_object 的占用关系**：本期同一颗星**允许多条登记**（未建部分唯一索引）。
+Phase 3 落地扩容后的「独占型命名」时，按 §8.4 第 3 条补：
+`namingStatus` 字段 + `memorial_registration(starObjectUid)` 上 `WHERE status = 'ACTIVE'`
+的部分唯一索引（partial unique index），并发下重复占用由约束拒绝、API 返回业务冲突码。
+
+## 4A. couple_group 情侣双星分组表（Phase 4）
+
+把两条 `memorial_registration` 关联为一对，共享一个对外 `coupleSlug`。**轻量设计：不持有 status**——
+公开可见性以两条成员登记的 `status` 为准（复用现有 admin approve/reject，无需改后台）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 内部主键 |
+| `coupleSlug` | `String @unique` | 对外情侣纪念页短链，形如 `c7k2xq9f4t3w`（与 `publicSlug` 同去混淆字母表，DB `@unique` 兜底） |
+| `relationLabel` | `String? @db.VarChar(64)` | 关系/场景标签，如「恋人」「夫妻」「挚友」（展示用） |
+| `coupleBlessing` | `String? @db.VarChar(280)` | 合并祝福语（couple 页头部展示，≤140 字符）；两颗星各自的 `blessingText` 仍存各自登记行 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+关系：`registrations MemorialRegistration[]`（恰两条，A/B 由成员行的 `coupleRole` 区分）。
+
+**决策：轻量 group vs 纯字段方案**——纯在登记表加 `coupleGroupId`/`coupleRole` 无法承载稳定对外
+`coupleSlug` 与合并展示字段（relationLabel/coupleBlessing），且「一对」需要一个有主体的实体承接。
+独立 group + 成员行 `@@unique([coupleGroupId, coupleRole])` 是最小改动且不破坏现有 memorial 单测的方案。
+创建走单事务（group + 两条登记），任一 `@unique` 冲突整体回滚换新 ID 重试。API 契约见 [api-spec.md §3.5/§3.6](./api-spec.md)。
+
+## 5. certificate_record 证书记录表
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 主键 |
+| `registrationId` | FK → `memorial_registration.id`，`onDelete: Cascade` | 所属登记 |
+| `status` | `CertificateStatus @default(PENDING)` | PENDING → GENERATING → READY / FAILED，与 BullMQ 任务状态机对齐 |
+| `certObjectKey` | `String?` | 证书主图 object key，如 `certificates/2026/07/STAR-20260710-K7PX-v1.svg` |
+| `starMapObjectKey` | `String?` | 星图 object key，如 `starmaps/2026/07/STAR-20260710-K7PX-v1.svg` |
+| `assetFormat` | `String @default("svg")` | `svg`（权威）\| `png`（sharp 可用时增强） |
+| `templateVersion` | `String @default("v1")` | 模板版本，证书模板迭代后可重出 |
+| `error` | `String?` | 失败原因 |
+
+索引：`@@unique([registrationId, templateVersion])`（幂等锚点）、`@@index([registrationId, status])`。
+存 **object key** 而非 URL——OSS 签名 URL 短时效读时现算，Local URL 由 key 派生。
+> 变更（Phase 3）：由原单列 `ossObjectKey` 改为 `certObjectKey`/`starMapObjectKey`/`assetFormat`
+> 并加 `@@unique([registrationId, templateVersion])`。本地只 `prisma generate`；真实环境需一条
+> migration（drop `ossObjectKey`、add 三列 + 唯一约束）。
+
+### 5.1 album_record 纪念册记录表（Phase 4）
+
+多页 SVG + 合并长图，复用证书 SVG 基建生成；结构与 `certificate_record` 高度同构（幂等锚点相同）。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 主键 |
+| `registrationId` | FK → `memorial_registration.id`，`onDelete: Cascade` | 所属登记 |
+| `status` | `CertificateStatus @default(PENDING)` | **复用证书四态枚举** PENDING/GENERATING/READY/FAILED |
+| `combinedObjectKey` | `String?` | 合并长图 object key，如 `albums/2026/07/STAR-…-v1/album.svg` |
+| `pageObjectKeys` | `String[] @default([])` | 六页 object key，按 `cover→star-map→story→letter→astro→dedication` 固定顺序 |
+| `pageCount` | `Int @default(0)` | 页数（当前 6） |
+| `assetFormat` | `String @default("svg")` | 合并产物格式 `svg` \| `png` |
+| `letterMode` | `String?` | 宇宙来信生成模式 `llm` \| `template`（可观测） |
+| `letterTaskId` | `String?` | 关联 `cosmic-letter` 的 `agent_task.id`（可空） |
+| `error` | `String?` | 失败原因 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+索引：`@@unique([registrationId, templateVersion])`（幂等锚点，同证书）、`@@index([registrationId, status])`。
+`templateVersion @default("v1")`。API 契约见 [api-spec.md §11](./api-spec.md)、生成时序见 [architecture.md §4.10](./architecture.md)。
+
+### 5.2 order 订单表（Phase 4 · 从占位扩展为骨架）
+
+Phase 3 前 `order` 为纯占位、src/seed 零引用；Phase 4 **加字段不改名**扩为订单支付骨架的载体。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `id` | `String @id cuid()` | 主键 |
+| `orderNo` | `String @unique` | 对外订单号 `ORD-YYYYMMDD-XXXXXX`（6 位去混淆后缀，CSPRNG，`@unique` 兜底冲突重试） |
+| `userId` | `String?` FK → `app_user.id` | 预留：本期匿名下单 |
+| `registrationId` | `String?` FK → `memorial_registration.id` | 关联纪念登记（`requiresRegistration` 的 SKU 必填） |
+| `skuCode` | `String` | 商品码，金额从服务端 `SKU_CATALOG` 取，见下 |
+| `amountFen` | `Int` | 金额，单位**分**（避免浮点）；服务端权威，回调对账基准 |
+| `currency` | `String @default("CNY")` | 币种 |
+| `status` | `OrderStatus @default(CREATED)` | CREATED/PAID/FAILED/CANCELLED/REFUNDED |
+| `channel` | `String?` | 保留字段，写入时**镜像 `provider`** 值（向后兼容） |
+| `provider` | `String?` | **Phase 4**：支付服务商 `mock`\|`wechat`\|`alipay`（下单时锁定的 provider name） |
+| `providerTxnId` | `String? @unique` | **Phase 4**：服务商侧交易号（微信 transaction_id / 支付宝 trade_no / mock `MOCKTXN-<orderNo>`）；`@unique` 天然阻止「同一第三方交易被两个订单认领」 |
+| `subject` | `String?` | **Phase 4**：下单主体描述快照（SKU 名 + 纪念名），对账/展示用 |
+| `payMeta` | `Json?` | **Phase 4**：支付/失败原始回执摘要（脱敏 ≤500 字符）或对账错误（`reconcileError`），审计用 |
+| `paidAt` | `DateTime?` | 支付成功时刻 |
+| `createdAt` / `updatedAt` | `DateTime` | 审计 |
+
+索引：`@@index([userId, status])`、`@@index([status, createdAt(sort: Desc)])`、`@@index([provider, status])`（Phase 4）。
+
+> **SKU 目录不入库**：`skuCode`→价格/名称/履约类型的映射是 `services/api/src/orders/order.constants.ts` 的
+> `SKU_CATALOG`（服务端权威常量，前端只传 `skuCode`、永不信任前端金额）。清单见 [api-spec.md §10.1](./api-spec.md)。
+> 真实环境需一条 migration：`enum OrderStatus` 加 `FAILED`，`order` 加 `provider`/`providerTxnId`/`subject`/`payMeta` 四列 + `[provider,status]` 索引。
+
+### 5.3 其余占位表
+
+- **`app_user`**：用户占位（微信 openid/unionid、email、phone 均可空且唯一；`role` 存字符串不做 RBAC）。
+  本期不做鉴权，只保证外键落点存在。
+- **`agent_task`**：AI 技能任务持久化载体（`skillCode` 如 `cosmic-letter`、`inputJson/outputJson`、
+  `status` QUEUED/RUNNING/SUCCEEDED/FAILED、`attempts` 与 BullMQ 重试对齐）。
+  Phase 3 新增 `modelName String?`（实际模型名，llm 模式 `claude-sonnet-5`/模板模式 `template`）
+  与 `durationMs Int?`（端到端耗时，成本/性能观测）——真实环境需 migration 加这两列。
+
+## 6. 搜索的 DB 化路径
+
+### 6.1 Phase 2：内存目录（现状）
+
+`CelestialService`（`services/api/src/celestial/celestial.service.ts`）直接调用
+`@star/astro-data` 的 `searchCelestial(q, { limit, catalog })`——与前端**同一份**打分代码：
+按字段家族（name/alias/bayer/catalog/constellation）加权匹配质量，叠加亮度加成
+`brightnessBonus(magnitude)`，降序截断 limit。5000 条内存打分毫秒级，扩容不阻塞后端。
+
+### 6.2 Phase 3：pg_trgm + tsvector
+
+数据基础已就位：**`celestial_name_alias` 别名表**（一行一别名）。
+
+| 字段 | 说明 |
+| --- | --- |
+| `objectUid` | FK → `celestial_object.objectUid`，`onDelete: Cascade` |
+| `alias` | 别名原文，如 `天狼星` / `Dog Star` / `α CMa` |
+| `aliasNorm` | 规范化别名（小写、trim、NFD 去拉丁变音），**规范化逻辑与 `packages/astro-data/src/search.ts` 的 normalize 保持一致** |
+| `lang` | `'zh' \| 'en' \| 'sci'` |
+| `source` | `'name' \| 'alias' \| 'bayer' \| 'catalog' \| 'constellation'`，与 `StarSearchResult.matchedOn` 对齐 |
+
+约束：`@@unique([objectUid, aliasNorm, source])`、`@@index([aliasNorm])`。
+
+切换步骤：
+
+```sql
+-- 1. 启用扩展（superuser，一次性）
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- 2. 建 GIN 索引
+CREATE INDEX celestial_name_alias_norm_trgm
+  ON celestial_name_alias USING gin ("aliasNorm" gin_trgm_ops);
+-- 3. 查询形态（示意）：相似度打分 + searchPriority 次键
+SELECT o.*, similarity(a."aliasNorm", $1) AS sim, a.source AS matched_on
+FROM celestial_name_alias a
+JOIN celestial_object o ON o."objectUid" = a."objectUid"
+WHERE a."aliasNorm" % $1
+ORDER BY sim DESC, o."searchPriority" DESC, o.magnitude ASC
+LIMIT $2;
+```
+
+**打分等价性对照**（保证内存版与 DB 版排序观感一致）：
+
+| 内存版（search.ts） | DB 版 |
+| --- | --- |
+| 前缀/包含/全等的匹配质量分档 | `similarity()`（trigram 相似度）近似 |
+| 字段家族权重（name > alias > bayer > catalog > constellation） | `source` 加权系数（应用层或 SQL CASE） |
+| `brightnessBonus(magnitude)` | `searchPriority`（seed/ETL 时按同公式预计算落库） |
+| `matchedOn` 字段 | `a.source` 透出 |
+
+切换动作只发生在 `CelestialService` 一个类内（注入 PrismaService、替换 search/getByUid 实现），
+控制器与 DTO 不动；建议加环境开关 `SEARCH_BACKEND=memory|pg` 灰度。
+
+## 7. seed 策略
+
+- `services/api/prisma/seed.ts`（`pnpm --filter @star/api db:seed` = `prisma db seed`，tsx 执行）：
+  把 `@star/astro-data` 的 `CELESTIAL_CATALOG`（60 颗）写入 `celestial_object`，
+  并为每颗星展开写 `celestial_name_alias`（nameZh/nameEn/aliases/bayer/catalogIds/constellation
+  各来源一行，`aliasNorm` 用与 search.ts 一致的规范化）。幂等：按 `objectUid` upsert。
+- seed 是**登记外键的前置条件**：`memorial_registration.starObjectUid` 引用主表，
+  真实环境必须先 migrate + seed 再开放登记。
+- 与扩容 ETL 的关系：seed 只负责精选 60 颗（`sourceCatalog='astro-data-seed-v1'`）；
+  ~5000 颗由第 8 章的 ETL 批量导入（`sourceCatalog='hyg'`），二者按 `objectUid` 合并去重、
+  精选星以手工数据为准。
+
+## 8. 星表扩容（60 颗 → 5058 亮星 + 命名候选池）· 已落地
+
+> **状态：Phase 3 已落地。** astro-data 侧 ETL 已运行并产出 `src/generated/bright-stars.json`
+> （提交入库，5058 颗，前后端直接 import）。下方为**实现登记**（实际取值，与早期规划的差异以此为准）；
+> §8.1 之后的分层/优先级/isNamable 策略章节保留，作为设计依据，数值以本登记收口。
+>
+> - **数据源与规模**：**HYG Database v41**（`hyg/CURRENT/hygdata_v41.csv`，CC BY-SA 4.0），
+>   星等阈值 **mag ≤ 6.0**，实测生成 **5058 颗**。早期草案的 v3 URL 已 404、阈值 6.5 均已收口。
+>   v41 无 Gaia 列，objectUid 优先级 **HIP > HD > HR > GL**。
+> - **ETL 位置**：`packages/astro-data/scripts/build-catalog.mjs`（`pnpm --filter @star/astro-data build:catalog`，
+>   仅用 Node 内置 `fetch`/`fs`/`zlib`，一次性人工运行、产物入库、构建/运行不联网），
+>   非早期所写的 `packages/astro-data/etl/`。合并逻辑在 `packages/astro-data/src/catalog.ts`：
+>   手写 60 颗精选优先、按 objectUid（及 HIP/HD 编号）与 generated 去重。
+> - **产物形态**：本期只产**内存目录 JSON**（compact 字段 `u/ra/dec/mag/dist/spect/con/bayer/flam/proper/hip/hd/hr`），
+>   `src/generated/README.md` 标注来源/许可/生成时间/行数。落 `celestial_object` 的 NDJSON/prisma seed 属后端后续，本期不做。
+> - **isNamable 实际策略**（`catalog.ts` 的 `decideNamable`）：`isFeatured → false`；无 HIP → false；
+>   否则 `4.0 ≤ mag ≤ 6.0` 为 true。据此**命名候选池 ≈ 4400 颗**（非著名 + 有 HIP + mag 4–6）。
+> - **isNamable 红线**：所有 `isFeatured=true` 的著名星（含手写 60 颗）`isNamable=false`——见 §8.4，
+>   合规要求绝不将知名星作命名售卖对象。**据此 api 侧命名相关测试夹具已从 Sirius/HIP32349 改用非著名可命名星**（如 `HIP55642`）。
+> - **renderPriority 实际取值**（`decideRenderPriority`）：`isFeatured → 0`；`mag ≤ 2.5 → 1`；`mag ≤ 4.5 → 2`；否则 `3`。
+
+### 8.1 目标与分层
+
+- 目标规模：**渲染层 ~5000 颗亮星**（约等于全天肉眼可见极限 mag ≤ 6.0–6.5 的恒星数，
+  HYG 中 mag ≤ 6.0 约 5 千颗量级）+ **命名候选池**（从中筛出的可售子集）。
+- 现有 60 颗精选星升级为「精选层」，**不删除、不改 objectUid**，扩容数据与之合并去重。
+- 三层数据写入 `celestial_object` **同一张表**，用字段区分：
+
+| 层 | 规模 | 判定 | 用途 |
+| --- | --- | --- | --- |
+| 精选层 featured | ~60–120 | `isFeatured=true`（现有 60 颗 + ETL 补充的著名星） | 首页展示、搜索置顶、讲故事素材 |
+| 渲染层 render | ~5000 | `magnitude ≤ 6.5` | 星空渲染、搜索可达 |
+| 命名池 namable | ~2000–3500 | 见 §8.4 | 可售命名候选 |
+
+### 8.2 数据源与 ETL 路径
+
+> **以 §8 开头的「实现登记」为准**：实际数据源为 **HYG v41**（非下文早期草案的 v3）、阈值 **mag ≤ 6.0**、
+> 脚本在 `packages/astro-data/scripts/build-catalog.mjs`（非 `etl/`）、产物为 `src/generated/bright-stars.json`
+> 内存目录（NDJSON/DB seed 本期不做）。下文流水线为**设计参考**，字段清洗/合并/校验步骤仍与实现一致，仅版本号/阈值/路径/产物以登记收口。
+
+数据源（早期草案）：**HYG Database v3**（`hygdata_v3.csv`，CC BY-SA 4.0，需在 docs 与页面
+「数据来源」处署名）。已合并 Hipparcos/HD/Gliese/Bayer/Flamsteed/常用英文名，字段齐全
+（ra/dec J2000、mag、dist(pc)、spect、proper、bayer、con、hip、hd、hr、gl）。实现改用同一家族的 v41（字段兼容，无 Gaia 列）。
+
+ETL 管道（一次性脚本，实现落 `packages/astro-data/scripts/build-catalog.mjs`，Node 22，仅内置模块）：
+
+```
+HYG v3 CSV
+  → ① 解析与筛选：mag ≤ 6.5；剔除太阳（id=0）；剔除无 hip 且无 hd 编号的孤儿行
+  → ② 字段清洗与换算：
+       ra(小时) × 15 → raDeg；dec → decDeg
+       dist(pc) × 3.26156 → distanceLy（dist ≥ 100000 视为未知 → null）
+       spect 截断规整；proper/bayer/flamsteed → nameEn/bayer/aliases
+  → ③ objectUid 生成：优先 'HIP{hip}'，无 hip 用 'HD{hd}'，再无用 'HR{hr}'
+       （与现有 60 颗的 HIPxxxx 约定一致）
+  → ④ 中文名映射：人工映射表 zh-names.json（著名星中文名/星官名）；
+       未命中的 nameZh 用「{星座中文名}{bayer 希腊字母中文序}」，
+       或退化为 nameEn 音译占位 + 标记 needsZhReview
+  → ⑤ 星座中英映射复用 packages/astro-data/src/constellations.ts
+  → ⑥ 与现有 60 颗 CELESTIAL_CATALOG 按 objectUid 合并：
+       精选星以手工数据为准（descriptionZh 等人工字段保留），仅回填缺失字段
+  → ⑦ 计算 renderPriority / searchPriority / isNamable / isFeatured（见 §8.3 / §8.4）
+  → ⑧ 校验：raDeg∈[0,360)、decDeg∈[-90,90]、objectUid 唯一、
+       mag 分布抽样比对权威值（如天狼星 -1.46）
+  → ⑨ 产出双格式：
+       a) catalog-5k.json —— 供前端分层静态加载与 astro-data 内存目录
+       b) prisma seed / 批量导入用 NDJSON → celestial_object
+          （createMany 分批 1000 条/批，冲突按 objectUid skip/update）
+```
+
+导入 DB 的批量策略：真实环境用 `prisma.$transaction` 分批 `createMany`；5000 条属小表，
+无需 COPY，但 >10 万行时升级为 `\copy` 路径。ETL 输出带 `sourceCatalog='hyg'` +
+`sourceVersion='v3.x'`（本期 schema 用 `sourceCatalog` 字符串承载批次，如 `hyg-v3.x`），
+保证可重放、可对账。
+
+### 8.3 renderPriority / searchPriority 设计
+
+- **`renderPriority`**：按视星等分档，用于前端分包渐进加载与 LOD（细节层次）——
+
+  | 档 | 判定 | 规模 | 用途 |
+  | --- | --- | --- | --- |
+  | 0 | `isFeatured` | ~60–120 | 首屏必载 |
+  | 1 | `mag ≤ 2.5` | ~90 | 骨架星空 |
+  | 2 | `mag ≤ 4.5` | ~900 | 交互稳定后流式补载 |
+  | 3 | `mag ≤ 6.5` | 其余 | 同上 |
+
+  前端首屏只加载 0–1 档，交互稳定后流式补 2–3 档（对应 [architecture.md §5.1](./architecture.md)
+  的 InstancedMesh 改造）。
+- **`searchPriority`**：搜索同分排序因子 = isFeatured 加成 + 亮度加成（沿用内存版
+  `brightnessBonus` 公式预计算落库），DB 化后作 `ORDER BY` 次键，保证内存版与 DB 版排序一致（§6.2）。
+
+> 注：规划中的档位语义为「0 最高、数值越小越优先」；现 schema 默认值 `0` 与
+> 「运营可调、大者更醒目」的注释以 ETL 落地时统一为准，届时同步修订本表与 schema 注释。
+
+### 8.4 isNamable / isFeatured 策略（定稿）
+
+**核心决策：著名星保留展示、不进入命名池；命名池取 4.0 ≤ mag ≤ 6.5 的非著名星。**
+
+1. `isFeatured=true`（现有 60 颗及 ETL 补充的有 proper name 的著名星）→ **`isNamable=false`**。理由：
+   - **合规与体验**：把「天狼星」卖给个人会强化「买断知名星星」的误导观感，与「不宣传官方命名」红线冲突；
+   - **商业**：著名星是流量与内容素材（展示、讲解、可见性演示），公共展示价值大于单次售卖；
+   - **供给**：mag 4.0–6.5 的非著名星有数千颗，肉眼/双筒可见、有真实 HIP 坐标编号，
+     「一颗真实可指认但尚无俗名的星」正是产品叙事的最佳载体。
+2. 命名池准入：`4.0 ≤ mag ≤ 6.5` 且 `isFeatured=false` 且有 HIP 编号，
+   且非著名变星/密近双星干扰项（ETL 维护小型排除表）。约 2000–3500 颗。
+3. **独占语义**：命名池内每颗星**同时仅允许一条生效登记**——
+   `celestial_object` 增加 `namingStatus: available/reserved/registered`；
+   `memorial_registration(starObjectUid)` 上 `WHERE status='ACTIVE'` 的部分唯一索引。
+   独占是礼品价值感的来源；池子足够大，不构成供给瓶颈。（本期未建，见 §4「占用关系」。）
+4. `mag < 4.0` 的非著名星（约几百颗）：默认 `isNamable=false` 作「高端池」预留，
+   未来可作溢价 SKU，本期只留字段不开放。
+5. 所有可命名接口响应必须携带合规声明字段（联动 [api-spec.md §1.5](./api-spec.md)）。
+
+### 8.5 与现有代码的衔接
+
+- `CelestialObject` 类型（`packages/astro-data/src/types.ts`）**已新增 3 个可选字段**
+  `renderPriority?` / `searchPriority?` / `sourceCatalog?`（向后兼容，前端现有数据不破坏）；
+  独占语义的 `namingStatus` 属 DB 侧未来字段（见 §8.4 第 3 条），astro-data 类型暂不引入。
+- Phase 2 搜索仍走 astro-data 内存目录（5000 条内存打分毫秒级）；DB 化按 §6 路径执行，
+  扩容不阻塞后端开发。
+- 前端 R3F 渲染 5000 点位需改 InstancedMesh/BufferGeometry 单 draw call——
+  已在 [architecture.md §5.1](./architecture.md) 标注为前端后续工作项，不属本文档范围。
+
+### 8.6 风险与开放问题
+
+- **中文名覆盖率**：HYG 无中文名，人工映射表初期只覆盖著名星；未审校星体在 UI 上以
+  「星座 + 编号」展示，避免机器音译劣质体验。
+- **许可**：HYG v3 为 CC BY-SA，需在关于页/文档署名；若未来商业上不接受 SA 传染性，
+  评估切换 Hipparcos 原始目录（公开数据）重建管道——ETL 分层设计已为换源留口。
+- **双星/变星体验**（亮度变化、伴星）：排除表初版从 GCVS 高幅变星简表人工挑选，标注为迭代项。
+
+## 9. 迁移与版本管理
+
+- 迁移工具：`prisma migrate`。迁移文件随仓库提交（`services/api/prisma/migrations/`）。
+- **本地开发容器（无 PG）只跑 `prisma generate`**——生成 Client 供 typecheck/build/单测，
+  不做 migrate（硬性约束）。首次迁移由有 DB 的环境执行 `prisma migrate dev --name init` 生成。
+- 真实环境：`pnpm --filter @star/api db:migrate`（= `prisma migrate deploy`，只应用不生成）
+  → `pnpm --filter @star/api db:seed`。完整 runbook 见 [deployment.md §5](./deployment.md)。
+- schema 变更纪律：改 `schema.prisma` 必须同步更新本文档对应章节；破坏性迁移
+  （删列/改类型）需在 PR 中说明数据回填方案。
