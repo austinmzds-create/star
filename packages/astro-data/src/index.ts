@@ -12,3 +12,4 @@ export * from './catalog';
 export * from './search';
 export * from './physics';
 export * from './dso-profiles';
+export * from './star-extras';

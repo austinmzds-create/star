@@ -3,6 +3,7 @@
 import { derivePhysical, type CelestialObject, type PhysicalProfile } from '@star/astro-data';
 import { motion } from 'framer-motion';
 import { useEffect, useMemo, useState } from 'react';
+import { sourceInfoOf } from '@/app/credits/sources';
 import { DSO_LORE } from '@/lib/dso-lore';
 import { primaryBadgeZh } from '@/lib/objectPresenter';
 import { getObjectByUid } from '@/lib/solarSystem';
@@ -272,7 +273,26 @@ export function ObjectViewerModal() {
             <p className="mt-3 text-[10.5px] text-nebula-200/40">影像：{obj.imageCredit}</p>
           )}
 
-          <p className="mt-6 text-[11px] leading-relaxed text-nebula-200/45">
+          {/* 来源小字（Phase 9C 溯源体系）：按 sourceCatalog 登记表标注；
+            未登记的批次不渲染（绝不猜测来源）。恒星物理量额外声明推算口径。 */}
+          {(() => {
+            const src = sourceInfoOf(obj.sourceCatalog);
+            if (!src) return null;
+            return (
+              <p className="mt-6 text-[10.5px] text-nebula-200/40">
+                数据：{src.badge}
+                {isStar ? ' · 物理量为光谱/测光推算' : ''} ·{' '}
+                <a
+                  href="/credits"
+                  className="underline underline-offset-2 transition hover:text-nebula-100"
+                >
+                  来源与版本
+                </a>
+              </p>
+            );
+          })()}
+
+          <p className="mt-2 text-[11px] leading-relaxed text-nebula-200/45">
             私人纪念命名登记，不代表 IAU 或任何官方天文机构命名。
           </p>
         </aside>

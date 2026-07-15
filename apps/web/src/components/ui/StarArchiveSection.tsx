@@ -3,6 +3,7 @@
 import { derivePhysical, type CelestialObject } from '@star/astro-data';
 import { motion, type Variants } from 'framer-motion';
 import { useMemo } from 'react';
+import { sourceInfoOf } from '@/app/credits/sources';
 
 /**
  * Gyr（十亿年）→ 中文可读量级。1 Gyr = 10 亿年；短寿命大质量星（O/B 型
@@ -56,6 +57,8 @@ export function StarArchiveSection({
   itemVariants: Variants;
 }) {
   const profile = useMemo(() => derivePhysical(obj), [obj]);
+  // 数据来源登记（Phase 9C 溯源体系）：未登记的批次返回 null，脚注不猜测来源
+  const src = sourceInfoOf(obj.sourceCatalog);
   if (!profile) return null;
 
   const { ageGyr, lifespanGyr, remainingGyr, massSolar, tempK } = profile;
@@ -147,8 +150,12 @@ export function StarArchiveSection({
         </details>
       )}
 
+      {/* 来源小字（Phase 9C 溯源体系）：来源已登记时标注数据出处；
+        未登记的批次不猜测来源，只保留估算声明（数据纪律） */}
       <p className="mt-3 text-[10.5px] text-nebula-200/40">
-        以上为基于光谱型的科普估算，非精确测量
+        {src
+          ? `数据：${src.badge} · 物理量为光谱/测光推算，非精确测量`
+          : '以上为基于光谱型的科普估算，非精确测量'}
       </p>
     </motion.div>
   );

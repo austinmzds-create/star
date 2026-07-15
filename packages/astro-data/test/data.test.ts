@@ -2,10 +2,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  applyStarExtrasToCatalog,
   CELESTIAL_CATALOG,
   DEEP_SKY_CATALOG,
   FULL_CATALOG,
   getCelestialByUid,
+  loadStarExtras,
   searchCelestial,
 } from '../src/index.js';
 import brightStars from '../src/generated/bright-stars.json';
@@ -178,63 +180,66 @@ describe('扩展层产物（apps/web/public/data/stars-extended.json）', () => 
   });
 });
 
-describe('恒星自行透传（Phase 9B 星座时光机）', () => {
-  // 期望值全部先用 awk 对缓存 CSV（scripts/.cache/hygdata.csv，HYG v41）实跑核实
+describe('恒星自行（9B 星座时光机 → 9C star-extras 迁移）', () => {
+  // 期望值全部先用 awk/python 对缓存 CSV（scripts/.cache/hygdata.csv，HYG v41）实跑核实
   // 再写入断言（2026-07-15）；ETL round 0.1 mas/yr。
-  it('天狼星 HIP32349（手写精选星，pm 由 generated 回填）pm≈(-546.0, -1223.1) mas/yr', () => {
-    const s = getCelestialByUid('HIP32349')!;
-    expect(s.sourceCatalog).toBe('handwritten'); // 回填不改变手写优先语义
-    expect(s.pmRaMasYr).toBeCloseTo(-546.0, 0);
-    expect(s.pmDecMasYr).toBeCloseTo(-1223.1, 0);
+  // 9C 主 chunk 回收：pm 不再随 bright-stars.json 进主表，目录对象在
+  // applyStarExtrasToCatalog 前不带 pm——lean 断言在前，回填断言在后（同文件顺序执行）。
+
+  it('lean 断言：extras 回填前，主表 JSON（列式）无 pm/ci 列，目录对象无 pm（First Load 回收）', () => {
+    // 主表 JSON（9C columnar-v1）：只允许 lean 列集合
+    const cols = (brightStars as { cols: Record<string, unknown[]> }).cols;
+    expect(Object.keys(cols).sort()).toEqual(
+      ['bayer', 'bf', 'con', 'dec', 'dist', 'flam', 'hd', 'hip', 'hr', 'mag', 'proper', 'ra', 'spect'].sort(),
+    );
+    expect('pmra' in cols).toBe(false);
+    expect('ci' in cols).toBe(false);
+    // 目录对象：除手写兜底星（比邻星）外全部无 pm（回填前）
+    const g1830 = getCelestialByUid('HIP57939')!; // generated 直通星
+    expect(g1830.pmRaMasYr).toBeUndefined();
+    // 手写兜底通道仍在（extras 覆盖不到时的红线兜底）
+    expect(getCelestialByUid('HIP70890')!.pmRaMasYr).toBeCloseTo(-3775.6, 1);
   });
 
-  it('大角星 HIP69673 pm≈(-1093.4, -1999.4)；织女星 HIP91262 pm≈(201.0, 287.5)', () => {
+  it('回填断言：applyStarExtrasToCatalog 后核心层 pm 覆盖率 100%、锚点值精确', async () => {
+    const extras = await loadStarExtras();
+    applyStarExtrasToCatalog(extras);
+
+    const sirius = getCelestialByUid('HIP32349')!;
+    expect(sirius.sourceCatalog).toBe('handwritten'); // 回填不改变手写优先语义
+    expect(sirius.pmRaMasYr).toBeCloseTo(-546.0, 0);
+    expect(sirius.pmDecMasYr).toBeCloseTo(-1223.1, 0);
+
     const arcturus = getCelestialByUid('HIP69673')!;
     expect(arcturus.pmRaMasYr).toBeCloseTo(-1093.4, 0);
     expect(arcturus.pmDecMasYr).toBeCloseTo(-1999.4, 0);
     const vega = getCelestialByUid('HIP91262')!;
     expect(vega.pmRaMasYr).toBeCloseTo(201.0, 0);
     expect(vega.pmDecMasYr).toBeCloseTo(287.5, 0);
-  });
 
-  it('核心层最快星 Groombridge 1830（HIP57939，generated 直通）pm≈(4003.7, -5813.0)', () => {
-    const s = getCelestialByUid('HIP57939')!;
-    expect(s.sourceCatalog).toBe('hyg-v41');
-    expect(s.pmRaMasYr).toBeCloseTo(4003.7, 0);
-    expect(s.pmDecMasYr).toBeCloseTo(-5813.0, 0);
-    // 深时模式量级自证：7.06″/yr × 10 万年 ≈ 196°，远超小角度域——
-    // 渲染侧必须用精确大圆旋转而非切平面近似（TwinkleStars shader 注释同步声明）。
-    const totalMasYr = Math.hypot(s.pmRaMasYr!, s.pmDecMasYr!);
+    // 核心层最快星 Groombridge 1830：深时模式量级自证（7.06″/yr × 10 万年 ≈ 196°，
+    // 远超小角度域——渲染侧必须用精确大圆旋转，TwinkleStars shader 注释同步声明）。
+    const g1830 = getCelestialByUid('HIP57939')!;
+    expect(g1830.pmRaMasYr).toBeCloseTo(4003.7, 0);
+    expect(g1830.pmDecMasYr).toBeCloseTo(-5813.0, 0);
+    const totalMasYr = Math.hypot(g1830.pmRaMasYr!, g1830.pmDecMasYr!);
     expect(totalMasYr).toBeGreaterThan(6900);
     expect(totalMasYr).toBeLessThan(7200);
-  });
 
-  it('比邻星 HIP70890（generated 覆盖不到的手写暗星）pm 手写值≈(-3775.6, 768.2)', () => {
-    const s = getCelestialByUid('HIP70890')!;
-    expect(s.pmRaMasYr).toBeCloseTo(-3775.6, 1);
-    expect(s.pmDecMasYr).toBeCloseTo(768.2, 1);
-  });
-
-  it('北斗七星形变方向锚点：两端（天枢/摇光）pmra<0，中段五星（移动星群）pmra>0', () => {
-    // 文献一致性（astroEDU/大熊座移动星群）：+10 万年勺柄拉直、勺口张开。
-    const dubhe = getCelestialByUid('HIP54061')!; // 天枢
-    const alkaid = getCelestialByUid('HIP67301')!; // 摇光
-    expect(dubhe.pmRaMasYr!).toBeLessThan(0);
-    expect(alkaid.pmRaMasYr!).toBeLessThan(0);
+    // 北斗七星形变方向锚点（astroEDU/大熊座移动星群）：+10 万年勺柄拉直、勺口张开。
+    expect(getCelestialByUid('HIP54061')!.pmRaMasYr!).toBeLessThan(0); // 天枢
+    expect(getCelestialByUid('HIP67301')!.pmRaMasYr!).toBeLessThan(0); // 摇光
     for (const hip of ['HIP53910', 'HIP58001', 'HIP59774', 'HIP62956', 'HIP65378']) {
-      const s = getCelestialByUid(hip)!; // 天璇/天玑/天权/玉衡/开阳
-      expect(s.pmRaMasYr!, hip).toBeGreaterThan(0);
+      expect(getCelestialByUid(hip)!.pmRaMasYr!, hip).toBeGreaterThan(0); // 天璇…开阳
     }
-  });
 
-  it('核心层 pm 覆盖率 100%（HYG v41 亮星全有 pm 测量），值域 |pm| < 10500 mas/yr', () => {
+    // 覆盖率 100% + 值域（HYG v41 分量截断上限 9999.99，Barnard 星不在层内）
     let withPm = 0;
     for (const s of CELESTIAL_CATALOG) {
       if (s.pmRaMasYr === undefined) continue;
       withPm++;
       expect(Number.isFinite(s.pmRaMasYr)).toBe(true);
       expect(Number.isFinite(s.pmDecMasYr!)).toBe(true);
-      // HYG v41 分量截断上限 9999.99（Barnard 星不在层内，见 scripts 注释）
       expect(Math.abs(s.pmRaMasYr!)).toBeLessThan(10500);
       expect(Math.abs(s.pmDecMasYr!)).toBeLessThan(10500);
     }

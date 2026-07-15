@@ -3,6 +3,7 @@
 import { getCelestialByUid } from '@star/astro-data';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
+import { DISCLAIMER_ZH } from '@/app/credits/sources';
 import {
   createMemorialRegistration,
   generateCosmicLetter,
@@ -225,7 +226,9 @@ export function MemorialModal() {
                     ? '提交后将生成在线纪念页，可分享给重要的人。'
                     : '当前为演示预览。正式版将生成纪念证书、星图与可扫码纪念页。'}
                   <br />
-                  本服务为私人纪念命名登记，不代表 IAU 或任何官方命名。
+                  {/* 免责声明升级（Phase 9C 合规核心）：引用 IAU-CSN 作为权威锚点，
+                    与页脚 ComplianceNote 共用 DISCLAIMER_ZH 常量，逐字同句 */}
+                  {DISCLAIMER_ZH}
                 </p>
               </div>
             ) : (

@@ -3,10 +3,17 @@
 import { raDecToVector3 } from '@star/astro-core';
 import { getMinorBodyEquatorial } from '@star/astro-ephem';
 import { useFrame } from '@react-three/fiber';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import * as THREE from 'three';
 import { EPHEM_SLERP_WINDOW_MS, slerpSphereVec } from '@/lib/ephemRegistry';
-import { minor, recomputeMinorBodies, type MinorBodyState } from '@/lib/minorRegistry';
+import {
+  ensureMinorBodiesRoster,
+  getMinorRosterVersion,
+  minor,
+  recomputeMinorBodies,
+  subscribeMinorRoster,
+  type MinorBodyState,
+} from '@/lib/minorRegistry';
 import { registerDynamicEntry, unregisterEntry } from '@/lib/pickRegistry';
 import { useUniverse } from '@/lib/store';
 import { SPHERE_RADIUS } from '@/lib/universe';
@@ -35,8 +42,8 @@ const TRAIL_SPEC: Record<MinorBodyState['kind'], { spanDays: number; stepDays: n
   asteroid: { spanDays: 45, stepDays: 3 }, // ±45d，31 采样点
   comet: { spanDays: 180, stepDays: 12 }, // ±180d，31 采样点
 };
-/** 每天体 64 采样点上限 × 每段 2 顶点（LineSegments）× 天体数（随注册表走）。 */
-const TRAIL_MAX_VERTS = minor.states.size * 64 * 2;
+/** 每天体尾线采样点上限 × 每段 2 顶点（LineSegments）；总量随花名册在 built 内算。 */
+const TRAIL_VERTS_PER_BODY = 64 * 2;
 /** 尾线重算键的时间量化粒度：6h。30s 心跳不动 observeTime 亦无妨——
  *  尾线漂移量远小于量化粒度。 */
 const TRAIL_QUANT_MS = 6 * 3600 * 1000;
@@ -73,6 +80,16 @@ export function MinorBodiesLayer() {
   const deepTimeActive = useUniverse(
     (s) => ((s as unknown as { deepTimeYears?: number | null }).deepTimeYears ?? null) !== null,
   );
+  // 动态花名册（9C）：挂载即拉一次 /api/v1/minor-bodies（失败静默回退内置 6 体）；
+  // 版本变化 → 重建几何缓冲（useMemo 依赖）。SSR 快照与客户端一致（初始 0）。
+  const roster = useSyncExternalStore(
+    subscribeMinorRoster,
+    getMinorRosterVersion,
+    getMinorRosterVersion,
+  );
+  useEffect(() => {
+    void ensureMinorBodiesRoster();
+  }, []);
   const versionRef = useRef(-1);
   const pendingFocusRef = useRef(true);
   const fadeRef = useRef(1);
@@ -82,8 +99,10 @@ export function MinorBodiesLayer() {
   const smoothingRef = useRef(false);
 
   const built = useMemo(() => {
+    void roster; // 依赖显式化：花名册版本变化重建全部缓冲
     const states = [...minor.states.values()];
     const n = states.length;
+    const trailMaxVerts = n * TRAIL_VERTS_PER_BODY;
     const tex = makeDiamondTexture();
     const geom = new THREE.BufferGeometry();
     const pos = new Float32Array(n * 3);
@@ -114,8 +133,8 @@ export function MinorBodiesLayer() {
     // 尾线：预分配单 LineSegments，重算走 setDrawRange + needsUpdate 不重建
     //（仿 PlanetTrailLayer 纪律；顶点色两端渐隐 = Additive 暗顶点技法）。
     const trailGeom = new THREE.BufferGeometry();
-    const trailPos = new Float32Array(TRAIL_MAX_VERTS * 3);
-    const trailCol = new Float32Array(TRAIL_MAX_VERTS * 3);
+    const trailPos = new Float32Array(trailMaxVerts * 3);
+    const trailCol = new Float32Array(trailMaxVerts * 3);
     trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
     trailGeom.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
     trailGeom.setDrawRange(0, 0);
@@ -133,8 +152,8 @@ export function MinorBodiesLayer() {
     // 播放平滑插值起点（每天体一个，预分配；version 变化时记「当前显示位置」）
     const prevVecs = states.map(() => new THREE.Vector3());
 
-    return { states, points, geom, pos, mat, tex, trail, trailGeom, trailPos, trailCol, trailMat, prevVecs };
-  }, []);
+    return { states, points, geom, pos, mat, tex, trail, trailGeom, trailPos, trailCol, trailMat, prevVecs, trailMaxVerts };
+  }, [roster]);
 
   useEffect(() => {
     return () => {
@@ -146,10 +165,11 @@ export function MinorBodiesLayer() {
     };
   }, [built]);
 
-  // observeTime（低频）驱动重算；挂载即算一遍保证首帧有效
+  // observeTime（低频）驱动重算；挂载即算一遍保证首帧有效；
+  // 花名册扩容后（roster 变化，computedAtMs 已被置 0）立即补算新槽位坐标
   useEffect(() => {
     recomputeMinorBodies(observeTime ?? Date.now());
-  }, [observeTime]);
+  }, [observeTime, roster]);
 
   // 尾线重算键：observeTime 量化 6h（6 体 ≈186 次开普勒求解 <2ms，useMemo 同步算；
   // 时间机器播放 4Hz 写 observeTime 也只在跨 6h 格时重算一次）。
@@ -169,7 +189,7 @@ export function MinorBodiesLayer() {
       let pz = 0;
       let pw = 0;
       let hasPrev = false;
-      for (let t = t0 - spanMs; t <= t0 + spanMs + 1 && n + 2 <= TRAIL_MAX_VERTS; t += stepMs) {
+      for (let t = t0 - spanMs; t <= t0 + spanMs + 1 && n + 2 <= built.trailMaxVerts; t += stepMs) {
         const eq = getMinorBodyEquatorial(st.id, new Date(t));
         const v = raDecToVector3({ raDeg: eq.raDeg, decDeg: eq.decDeg }, TRAIL_RADIUS);
         // 两端渐隐：w = 0.18 + 0.82·(1 − |t−t0|/span)（Additive 下暗顶点自然消失）
@@ -202,7 +222,8 @@ export function MinorBodiesLayer() {
     built.trailGeom.attributes.color!.needsUpdate = true;
   }, [built, quantTime]);
 
-  // 拾取注册 + 搜索联动补飞（recompute 在上面的 effect 同步完成，坐标已新鲜）
+  // 拾取注册 + 搜索联动补飞（recompute 在上面的 effect 同步完成，坐标已新鲜）。
+  // roster 变化重跑：动态彗星的新槽位一并注册（vec 固定引用，重复 register 幂等覆盖）。
   useEffect(() => {
     for (const st of minor.states.values()) registerDynamicEntry(st.uid, 'minor', st.vec);
     const s = useUniverse.getState();
@@ -212,7 +233,12 @@ export function MinorBodiesLayer() {
     pendingFocusRef.current = false;
     return () => {
       for (const st of minor.states.values()) unregisterEntry(st.uid);
-      // 防幽灵信息卡：层关闭时若选中的是小天体，取消选中
+    };
+  }, [roster]);
+
+  // 卸载兜底（与 roster 重注册解耦）：防幽灵信息卡——层关闭时若选中的是小天体，取消选中
+  useEffect(() => {
+    return () => {
       const cur = useUniverse.getState();
       if (cur.selectedUid?.startsWith('MB-')) cur.selectStar(null);
     };

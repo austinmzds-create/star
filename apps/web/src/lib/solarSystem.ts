@@ -40,28 +40,36 @@ export const SOLAR_BODY_ROWS: CelestialObject[] = listEphemerisBodies().map((met
   sourceCatalog: 'astronomy-engine',
 }));
 
-/** 4 个小天体（谷神/灶神/智神/哈雷）的元数据行（坐标占位，实时见 minorRegistry）。 */
-export const MINOR_BODY_ROWS: CelestialObject[] = listMinorBodies().map((meta) => ({
-  objectUid: meta.objectUid,
-  type: meta.kind, // 'asteroid' | 'comet'
-  nameEn: meta.nameEn,
-  nameZh: meta.nameZh,
-  aliases: [...meta.aliases],
-  constellation: 'Solar System',
-  constellationZh: '太阳系',
-  raDeg: 0, // 占位：实时坐标见 minorRegistry
-  decDeg: 0,
-  magnitude: meta.typicalMagnitude,
-  distanceLy: null,
-  catalogIds: {},
-  isNamable: false, // 合规红线
-  isFeatured: true,
-  isEphemeris: false,
-  descriptionZh: meta.descriptionZh,
-  renderPriority: 100,
-  searchPriority: 110,
-  sourceCatalog: 'jpl-sbdb-elements',
-}));
+/** 小天体元数据 → 目录行（坐标占位，实时见 minorRegistry；isNamable=false 合规红线）。 */
+function minorMetaToRow(meta: ReturnType<typeof listMinorBodies>[number]): CelestialObject {
+  return {
+    objectUid: meta.objectUid,
+    type: meta.kind, // 'asteroid' | 'comet'
+    nameEn: meta.nameEn,
+    nameZh: meta.nameZh,
+    aliases: [...meta.aliases],
+    constellation: 'Solar System',
+    constellationZh: '太阳系',
+    raDeg: 0, // 占位：实时坐标见 minorRegistry
+    decDeg: 0,
+    magnitude: meta.typicalMagnitude,
+    distanceLy: null,
+    catalogIds: {},
+    isNamable: false, // 合规红线
+    isFeatured: true,
+    isEphemeris: false,
+    descriptionZh: meta.descriptionZh,
+    renderPriority: 100,
+    searchPriority: 110,
+    sourceCatalog: 'jpl-sbdb-elements',
+  };
+}
+
+/**
+ * 内置 6 个小天体（谷神/灶神/智神 + 哈雷/恩克/12P）的元数据行；
+ * 9C 起动态彗星经 appendDynamicMinorRows 运行时追加（原地 push 保引用稳定）。
+ */
+export const MINOR_BODY_ROWS: CelestialObject[] = listMinorBodies().map(minorMetaToRow);
 
 const SOLAR_BY_UID = new Map<string, CelestialObject>(
   SOLAR_BODY_ROWS.map((o) => [o.objectUid, o]),
@@ -92,4 +100,22 @@ export function getObjectByUid(uid: string): CelestialObject | undefined {
     SATELLITE_BY_UID.get(uid) ??
     MINOR_BY_UID.get(uid)
   );
+}
+
+/**
+ * 运行时追加动态小天体目录行（Phase 9C：minorRegistry 注册动态彗星后调用）。
+ * 三处原地更新：MINOR_BODY_ROWS / MINOR_BY_UID / SEARCH_CATALOG——数组引用不变，
+ * searchCelestial 的索引缓存按「引用 + 长度」判命中（astro-data search.ts），
+ * push 后长度变化自动触发索引重建，新彗星立即可搜。幂等：同 uid 跳过。
+ */
+export function appendDynamicMinorRows(
+  metas: readonly ReturnType<typeof listMinorBodies>[number][],
+): void {
+  for (const meta of metas) {
+    if (MINOR_BY_UID.has(meta.objectUid)) continue;
+    const row = minorMetaToRow(meta);
+    MINOR_BODY_ROWS.push(row);
+    MINOR_BY_UID.set(meta.objectUid, row);
+    SEARCH_CATALOG.push(row);
+  }
 }

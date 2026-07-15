@@ -1,10 +1,11 @@
 'use client';
 
 import { AnimatePresence, motion } from 'framer-motion';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { prefersReducedMotion } from '@/lib/device';
 import { exits, springs } from '@/lib/motionTokens';
 import { useUniverse } from '@/lib/store';
+import { ensureStarExtrasReady, getLoadedStarExtras } from '@/lib/useStarExtra';
 
 /**
  * 星座时光机（Phase 9B「恒星自行」域，r-dyn §3c 模式 UI）。
@@ -66,6 +67,27 @@ export function DeepTimeBar() {
   const deepTimeYears = useUniverse((s) => s.deepTimeYears);
   const setDeepTimeYears = useUniverse((s) => s.setDeepTimeYears);
   const timePlaying = useUniverse((s) => s.timePlaying);
+
+  // ── 深时模式入口 await extras（9C 跨域契约）：主表 lean 化后自行数据在
+  // star-extras.json 异步 chunk，未就绪时拨滑条只会「星空纹丝不动」——
+  // 入口处 await ensureStarExtrasReady()（含目录回填 + 连线 pm 刷新），
+  // 加载中滑条/预设禁用并给加载态；就绪即恢复（单例缓存，二次进入零等待）。
+  // 降级态：chunk 拉取失败（离线等）resolve 空表——控件保持禁用并给出降级提示；
+  // 单例不缓存空结果，重进模式（或点重试）会重新拉取。
+  const [extrasState, setExtrasState] = useState<'loading' | 'ready' | 'failed'>(() =>
+    getLoadedStarExtras() !== null ? 'ready' : 'loading',
+  );
+  const extrasReady = extrasState === 'ready';
+  useEffect(() => {
+    if (deepTimeYears == null || extrasState !== 'loading') return;
+    let alive = true;
+    void ensureStarExtrasReady().then((map) => {
+      if (alive) setExtrasState(map.size > 0 ? 'ready' : 'failed');
+    });
+    return () => {
+      alive = false;
+    };
+  }, [deepTimeYears, extrasState]);
 
   // 预设跳转 tween 的 rAF 句柄（手动拖滑条/退出时取消，避免打架）。
   const tweenRaf = useRef<number | null>(null);
@@ -140,7 +162,7 @@ export function DeepTimeBar() {
               </button>
             </div>
 
-            {/* 行2：±10 万年对数滑条 */}
+            {/* 行2：±10 万年对数滑条（extras 未就绪时禁用——拨了也不会动） */}
             <div className="flex items-center gap-2">
               <span className="shrink-0 text-[10.5px] text-nebula-200/40">−10万年</span>
               <input
@@ -149,26 +171,28 @@ export function DeepTimeBar() {
                 max={SLIDER_MAX}
                 step={1}
                 value={sliderFromYears(years)}
+                disabled={!extrasReady}
                 onPointerDown={cancelTween}
                 onChange={(e) => {
                   cancelTween(); // 键盘方向键改值无 pointerdown，这里兜底
                   setDeepTimeYears(yearsFromSlider(Number(e.target.value)));
                 }}
-                className="h-1 w-full cursor-ew-resize appearance-none rounded-full bg-white/10 accent-nebula-400"
+                className="h-1 w-full cursor-ew-resize appearance-none rounded-full bg-white/10 accent-nebula-400 disabled:cursor-wait disabled:opacity-40"
                 aria-label="恒星自行时光机（对数刻度，±100,000 年）"
               />
               <span className="shrink-0 text-[10.5px] text-nebula-200/40">+10万年</span>
             </div>
 
-            {/* 行3：预设跳转 + 叙事提示 */}
+            {/* 行3：预设跳转 + 叙事提示 / 加载态（star-extras 异步 chunk 在途） */}
             <div className="flex flex-wrap items-center gap-1.5">
               {PRESETS.map((p) => (
                 <motion.button
                   key={p.value}
                   whileTap={{ scale: 0.96 }}
                   transition={springs.chip}
+                  disabled={!extrasReady}
                   onClick={() => tweenTo(p.value)}
-                  className={`tap-96 rounded-full px-2 py-0.5 text-[11px] transition ${
+                  className={`tap-96 rounded-full px-2 py-0.5 text-[11px] transition disabled:opacity-40 ${
                     years === p.value
                       ? 'bg-nebula-500/30 text-white shadow-[inset_0_0_0_1px_rgba(140,155,255,0.4)]'
                       : 'text-nebula-200/55 hover:bg-white/5'
@@ -177,9 +201,36 @@ export function DeepTimeBar() {
                   {p.label}
                 </motion.button>
               ))}
-              <span className="ml-auto text-[10.5px] text-nebula-200/45">
-                试试 +10万：北斗的勺柄会拉直
-              </span>
+              {extrasState === 'ready' && (
+                <span className="ml-auto text-[10.5px] text-nebula-200/45">
+                  试试 +10万：北斗的勺柄会拉直
+                </span>
+              )}
+              {extrasState === 'loading' && (
+                <span
+                  className="ml-auto inline-flex items-center gap-1.5 text-[10.5px] text-amber-200/70"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <span className="h-2.5 w-2.5 animate-spin rounded-full border border-amber-200/30 border-t-amber-200/90" />
+                  正在载入恒星自行数据（HYG）…
+                </span>
+              )}
+              {extrasState === 'failed' && (
+                <span
+                  className="ml-auto inline-flex items-center gap-1.5 text-[10.5px] text-amber-200/80"
+                  role="status"
+                  aria-live="polite"
+                >
+                  自行数据加载失败，时光机暂不可用
+                  <button
+                    onClick={() => setExtrasState('loading')} // 单例不缓存空结果 → 重新拉取
+                    className="rounded-full bg-amber-400/15 px-2 py-0.5 text-amber-100 transition hover:bg-amber-400/25"
+                  >
+                    重试
+                  </button>
+                </span>
+              )}
             </div>
 
             {/* 行4：科普注记（跨域契约 §3 的不可外推声明 + 演示级取舍标注） */}

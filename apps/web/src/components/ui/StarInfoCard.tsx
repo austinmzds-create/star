@@ -16,15 +16,18 @@ import {
 } from '@star/astro-ephem';
 import { AnimatePresence, motion, type Variants } from 'framer-motion';
 import dynamic from 'next/dynamic';
-import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StarArchiveSection } from './StarArchiveSection';
 import { exits, springs, stagger } from '@/lib/motionTokens';
 import { ObjectVisualThumb } from '@/components/viewer/ObjectVisualThumb';
+import { sourceInfoOf } from '@/app/credits/sources';
 import { CITIES, type City } from '@/lib/cities';
 import { isSatelliteUid } from '@/lib/satellites/tles';
 import { formatBeijingTime, formatDec, formatDistance, formatRA } from '@/lib/format';
 import { formatDistanceAu, kindLabelZh, primaryBadgeZh } from '@/lib/objectPresenter';
 import { getObjectByUid } from '@/lib/solarSystem';
+import { useStarExtra } from '@/lib/useStarExtra';
 import { useUniverse } from '@/lib/store';
 
 // 深空科普长文 + lightbox：仅选中带照片的 DSO 才拉取（16 篇长文不进主页首包）
@@ -133,6 +136,14 @@ export function StarInfoCard() {
 
   const obj = selectedUid ? getObjectByUid(selectedUid) : undefined;
   const inCouple = obj ? obj.objectUid === coupleSlotA || obj.objectUid === coupleSlotB : false;
+
+  // 恒星增强字段（Phase 9C 公信力）：star-extras.json 异步 chunk，加载完成前
+  // 返回 null——徽章优雅缺席，绝不阻塞卡片首帧；非恒星传 null 直接短路。
+  const extra = useStarExtra(obj?.type === 'star' ? obj.objectUid : null);
+  // 数据来源登记（按 sourceCatalog 前缀收敛；未登记的批次不显徽章，绝不猜测来源）
+  const srcInfo = obj ? sourceInfoOf(obj.sourceCatalog) : null;
+  // 「数据来源」行锚点：来源小徽章点击后卡内平滑滚动到此
+  const sourceRowRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (observeTime == null) setObserveTime(Date.now());
@@ -303,6 +314,17 @@ export function StarInfoCard() {
               </motion.div>
 
               <motion.div variants={itemVariants} className="mt-3 flex flex-wrap gap-2">
+                {/* IAU 官方星名（金边徽章，Phase 9C 公信力）：仅 IAU-CSN 名录内的
+                  恒星显示（约 339 颗，HIP/HD 精确匹配）；extras 未加载完成时缺席。
+                  注意语义：这是「该恒星本身的官方专名」，与本站纪念命名无关。 */}
+                {extra?.iauName && (
+                  <span
+                    className="rounded-full border border-gold/50 bg-gold/10 px-2.5 py-0.5 text-[12px] text-gold"
+                    title="源自 IAU 恒星命名工作组（WGSN）官方名录 IAU-CSN（CC BY 4.0，署名 IAU）"
+                  >
+                    IAU 官方星名 · {extra.iauName}
+                  </span>
+                )}
                 {badge && <Badge>{badge}</Badge>}
                 {/* 远日点示意徽章与彗尾徽章互斥：时间机器拨回近日点段（如 1986）
                   时彗尾可见，「远日点附近」的常态描述不再成立 */}
@@ -313,6 +335,27 @@ export function StarInfoCard() {
                 {isStar && obj.spectralType && <Badge>{obj.spectralType}</Badge>}
                 {/* 卫星星等随过境几何剧烈变化，目录值仅为占位，不展示 */}
                 {!isSatellite && <Badge>视星等 {obj.magnitude.toFixed(2)}</Badge>}
+                {/* 变星/双星徽章（HYG var/comp 字段起步，r-data.md §4-4）：
+                  varMin=最暗、varMax=最亮，展示时按数值从亮到暗排序更符合读法 */}
+                {extra?.varMin != null && extra.varMax != null && (
+                  <Badge>
+                    变星 · {Math.min(extra.varMax, extra.varMin).toFixed(1)}–
+                    {Math.max(extra.varMax, extra.varMin).toFixed(1)} 等
+                  </Badge>
+                )}
+                {extra?.multiple && <Badge>双星/聚星系统</Badge>}
+                {/* 来源小徽章：点击滚到卡内「数据来源」行（溯源体系 §3.2-1） */}
+                {srcInfo && (
+                  <button
+                    onClick={() =>
+                      sourceRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                    }
+                    className="rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-0.5 text-[11px] text-nebula-200/70 transition hover:bg-white/[0.08] hover:text-nebula-100"
+                    title={`数据来源：${srcInfo.name} · ${srcInfo.license}`}
+                  >
+                    数据 · {srcInfo.badge}
+                  </button>
+                )}
               </motion.div>
 
               {obj.descriptionZh && (
@@ -473,6 +516,28 @@ export function StarInfoCard() {
                       )}
                     </div>
                   )}
+                </motion.div>
+              )}
+
+              {/* 数据来源行（溯源体系 §3.2）：来源徽章点击滚动到此；未登记来源不渲染 */}
+              {srcInfo && (
+                <motion.div
+                  ref={sourceRowRef}
+                  variants={itemVariants}
+                  className="mt-4 rounded-xl bg-white/[0.03] px-3 py-2"
+                >
+                  <div className="text-[11px] text-nebula-200/50">数据来源</div>
+                  <div className="mt-0.5 text-[12px] leading-relaxed text-nebula-100/80">
+                    {srcInfo.name} · {srcInfo.license}
+                    {srcInfo.retrievedAt && ` · 获取于 ${srcInfo.retrievedAt.slice(0, 10)}`}
+                  </div>
+                  <Link
+                    href="/credits"
+                    prefetch={false}
+                    className="mt-1 inline-block text-[11px] text-nebula-200/60 underline underline-offset-2 transition hover:text-nebula-100"
+                  >
+                    完整数据来源与版本 →
+                  </Link>
                 </motion.div>
               )}
 

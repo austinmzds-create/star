@@ -41,6 +41,49 @@ export function parseCsvLine(line, delim = ',') {
 }
 
 /**
+ * 解码 bright-stars.json 为行对象数组（9C 列式 columnar-v1 与旧版 stars 数组双兼容）。
+ * 行形状：{ u, ra, dec, mag, dist, spect?, con?, ... }——u 由 hip/hd/hr 按
+ * HIP>HD>HR 派生（与 build-catalog / catalog.ts 同一优先级约定）。
+ * 供 build-constellation-lines.mjs / build-dso.mjs 复用（它们只读 u/ra/dec/mag）。
+ * @param {any} bright JSON.parse 后的产物对象
+ * @returns {Array<Record<string, any>>}
+ */
+export function decodeBrightStars(bright) {
+  if (Array.isArray(bright?.stars)) return bright.stars; // 旧版行式
+  const cols = bright?.cols;
+  const n = bright?.n;
+  if (!cols || typeof n !== 'number') return [];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const hip = cols.hip?.[i] || undefined;
+    const hd = cols.hd?.[i] || undefined;
+    const hr = cols.hr?.[i] || undefined;
+    let u;
+    if (hip) u = 'HIP' + hip;
+    else if (hd) u = 'HD' + hd;
+    else if (hr) u = 'HR' + hr;
+    if (!u) continue;
+    out.push({
+      u,
+      ra: cols.ra?.[i],
+      dec: cols.dec?.[i],
+      mag: cols.mag?.[i],
+      dist: cols.dist?.[i] === 0 ? null : cols.dist?.[i],
+      spect: cols.spect?.[i] || undefined,
+      con: cols.con?.[i] || undefined,
+      bayer: cols.bayer?.[i] || undefined,
+      flam: cols.flam?.[i] || undefined,
+      proper: cols.proper?.[i] || undefined,
+      bf: cols.bf?.[i] || undefined,
+      hip,
+      hd,
+      hr,
+    });
+  }
+  return out;
+}
+
+/**
  * 用 curl 下载单个 URL 到临时文件，返回 Buffer 或 null（失败）。
  * curl 天然遵守 HTTPS_PROXY / https_proxy；NODE_EXTRA_CA_CERTS 会传给 --cacert。
  * @param {string} url

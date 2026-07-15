@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { registerDynamicEntry, unregisterEntry } from '@/lib/pickRegistry';
 import {
   recomputeSatellites,
-  refreshTlesFromCelestrak,
+  refreshTles,
   sats,
 } from '@/lib/satellites/satRegistry';
 import { SATELLITE_DEFS } from '@/lib/satellites/tles';
@@ -149,7 +149,8 @@ export function SatellitesLayer() {
   // + Celestrak 运行时刷新（fire-and-forget，失败静默用快照）
   useEffect(() => {
     for (const st of sats.states.values()) registerDynamicEntry(st.uid, 'satellite', st.vec);
-    void refreshTlesFromCelestrak();
+    // 9C：改打自家 /api/v1/tle 服务端代理（fire-and-forget，失败静默用快照/缓存）
+    void refreshTles();
     pendingFocusRef.current = true;
     return () => {
       for (const st of sats.states.values()) unregisterEntry(st.uid);

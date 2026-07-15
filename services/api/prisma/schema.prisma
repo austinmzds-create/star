@@ -338,6 +338,123 @@ model AlbumRecord {
   @@map("album_record")
 }
 
+/// 小天体轨道根数快照（Phase 9C ephemeris-feed）：
+/// 每日从 JPL SBDB 拉取「现役亮彗星（|tp−now|≤2 年 && M1≤12）+ 白名单（1P/2P/12P）
+/// + Ceres/Pallas/Vesta 单体」写入本表；整表原子替换（全量成功才覆盖，失败保留最后成功批次）。
+/// 后端只存根数不算轨道——开普勒/近抛物线求解在 @star/astro-ephem（数据层）完成。
+model MinorBodyElement {
+  /// 稳定标识：彗星用编号去符号（'1P'、'C2023A3'），小行星用小写英文名（'ceres'）
+  id        String   @id
+  /// 上游全名，如 'C/2023 A3 (Tsuchinshan-ATLAS)'
+  name      String
+  /// 中文名（仅收录已有公认中文名的天体，绝不机器编造）
+  nameZh    String?
+  /// 'comet' | 'asteroid'（字符串不建枚举：上游分类可能扩展，快照表以宽松为先）
+  kind      String
+  /// 根数历元（儒略日 TDB）
+  epochJd   Float
+  /// 偏心率（彗星可略 >1，近抛物线/双曲线）
+  e         Float
+  /// 近日点距离（AU）——彗星 q/tp 参数化的主参数
+  qAu       Float?
+  /// 半长轴（AU）——双曲线轨道为负值，原样保留 SBDB 数值
+  aAu       Float?
+  /// 轨道倾角（度）
+  iDeg      Float
+  /// 升交点黄经 Ω（度）
+  omDeg     Float
+  /// 近日点幅角 ω（度）
+  wDeg      Float
+  /// 近日点通过时刻（儒略日 TDB）
+  tpJd      Float?
+  /// 历元平近点角（度）——椭圆轨道备用参数化
+  maDeg     Float?
+  /// 彗星总星等参数 M1
+  m1        Float?
+  /// 彗核星等参数 M2
+  m2        Float?
+  /// 数据来源 key（关联 data_source.key，应用层 join）
+  source    String   @default("jpl-sbdb")
+  /// 上游抓取成功时刻（最后成功值持久化锚点，端点 updatedAt 取本列最大值）
+  fetchedAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([kind])
+  @@map("minor_body_elements")
+}
+
+/// TLE 快照（Phase 9C ephemeris-feed）：每 6h 从 Celestrak GP API 拉目标组
+/// （ISS/CSS/HST 按 NORAD id），逐星 upsert（单星失败不影响其余）。
+/// 服务端集中拉取 = 全站一份流量，尊重 Celestrak「同一数据 2h 内不重复下载」政策。
+model TleSnapshot {
+  /// 与 web 侧卫星 uid 对齐：'SAT-ISS' | 'SAT-TIANGONG' | 'SAT-HST'
+  id        String    @id
+  /// NORAD 目录号（25544 等）
+  noradId   Int       @unique
+  /// 上游名称行，如 'ISS (ZARYA)'
+  name      String
+  nameZh    String?
+  /// TLE 第一行（69 字符，写入前经 mod-10 校验）
+  l1        String
+  /// TLE 第二行（69 字符，写入前经 mod-10 校验）
+  l2        String
+  /// 从 l1 解析出的历元（观测用；前端据此显示「轨道数据 X 天前」）
+  epochAt   DateTime?
+  /// 数据来源 key（关联 data_source.key）
+  source    String    @default("celestrak")
+  /// 上游抓取成功时刻
+  fetchedAt DateTime
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@map("tle_snapshot")
+}
+
+/// 数据来源主数据（Phase 9C 溯源体系，r-data.md §3.1）：
+/// 每个数据源的机构/版本/许可/致谢句/抓取时间结构化落库，
+/// 前端来源徽章与「数据来源与版本」页直接渲染本表。
+/// 取舍说明：celestial_object.sourceCatalog 保持字符串批次号（'hyg-v41' 等），
+/// 不做外键——FK 需回填迁移且 seed 顺序耦合（先灌 data_source 才能灌天体），
+/// 低风险优先：应用层经 sourceKeyOf() 映射到 data_source.key 关联查询，
+/// 字符串保留 ETL 批次语义，向后完全兼容。
+model DataSource {
+  id            Int      @id @default(autoincrement())
+  /// 稳定 key：'hyg-v41' | 'openngc' | 'd3-celestial' | 'astronomy-engine'
+  /// | 'jpl-sbdb' | 'celestrak' | 'iau-csn' | 'stellarium-chinese' | 'curated'
+  key           String   @unique
+  /// 展示名，如 'HYG Database v4.1'
+  name          String
+  /// 机构/作者，如 'astronexus (David Nash)' / 'NASA/JPL' / 'IAU WGSN'
+  publisher     String
+  /// 主页/项目页 URL
+  url           String
+  /// 数据直下地址（可空）
+  downloadUrl   String?
+  /// 版本口径，如 'v41' / 'GP API' / '2026-07-15 snapshot'
+  version       String
+  /// 许可原文，如 'CC BY-SA 4.0' / 'Public Domain (US Government work)'
+  license       String
+  licenseUrl    String?
+  /// 中文致谢/署名句（证书背面、来源页直接渲染）
+  citationZh    String
+  /// 英文标准致谢句（逐字收录各源官方要求口径，绝不编造）
+  citationEn    String
+  /// 星等完备极限声明（如恒星核心层 6.5；不适用则 null）
+  magComplete   Float?
+  /// 本批次记录数（预留源为 null，接入后回填）
+  recordCount   Int?
+  /// 更新策略：'static-build' | 'runtime-daily' | 'runtime-6h' | 'runtime-live'
+  refreshPolicy String   @default("static-build")
+  /// 本批次抓取/生成时间（预留源为登记时间，notes 注明）
+  retrievedAt   DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("data_source")
+}
+
 /// Agent 任务表：AI 技能编排的持久化载体（证书文案生成、星空故事撰写等）
 model AgentTask {
   id             String                @id @default(cuid())

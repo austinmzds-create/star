@@ -1,11 +1,12 @@
 'use client';
 
 import { useFrame, useThree } from '@react-three/fiber';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { fx, getGlobalFade } from '@/lib/fxBus';
 import { useUniverse } from '@/lib/store';
-import type { StarAttributes } from '@/lib/universe';
+import { MAS_YR_TO_RAD_YR, type StarAttributes } from '@/lib/universe';
+import { ensureStarExtrasReady } from '@/lib/useStarExtra';
 
 const VERTEX = /* glsl */ `
   uniform float uTime;
@@ -18,7 +19,33 @@ const VERTEX = /* glsl */ `
   attribute vec3 aColor;
   attribute float aPhase;
   attribute vec2 aPm;          // 自行 (pmra*, pmdec)，rad/yr 预转（pmra 含 cosδ）
+  attribute float aCi;         // B−V 色指数（9C 星色连续化；哨兵 1000 = 无 ci，走 aColor）
   varying vec3 vColor;
+
+  // ── 星色连续化（Phase 9C，r-data §4-3）────────────────────────────────
+  // 有 ci 的星（核心真实星表，extras 加载后回填）用 Ballesteros 公式反解色温，
+  // 再沿「与既有 OBAFGKM 7 档同锚点」的连续色带取色——观感与旧色板一脉相承，
+  // 但相邻光谱子型之间不再跳档。无 ci（哨兵 1000）保持旧 aColor 不动。
+  // Ballesteros: T = 4600(1/(0.92BV+1.7)+1/(0.92BV+0.62))；BV 钳 [-0.4,3.5]
+  //（HYG 核心层实测 ci ∈ [-0.31, 3.33]，BV→-0.674 分母过零）。
+  float ciToTemp(float ci) {
+    float b = clamp(ci, -0.4, 3.5);
+    return 4600.0 * (1.0 / (0.92 * b + 1.7) + 1.0 / (0.92 * b + 0.62));
+  }
+  // 色温 → RGB：log2(T) 域分段线性（锚点即 lib/universe spectralColor 7 档色），
+  // 链式 mix 每段依次饱和 = 标准梯度链。锚点 log2：3200K=11.64 4450K=12.12
+  // 5600K=12.45 6800K=12.73 9000K=13.14 15000K=13.87。
+  vec3 tempToRgb(float t) {
+    float x = log2(t);
+    vec3 c = vec3(1.0, 0.60, 0.42);                                            // <2700K 炭火深红
+    c = mix(c, vec3(1.0, 0.66, 0.48), clamp((x - 11.40) / 0.24, 0.0, 1.0));    // M
+    c = mix(c, vec3(1.0, 0.80, 0.56), clamp((x - 11.64) / 0.48, 0.0, 1.0));    // K
+    c = mix(c, vec3(1.0, 0.95, 0.84), clamp((x - 12.12) / 0.33, 0.0, 1.0));    // G
+    c = mix(c, vec3(1.0, 0.98, 0.94), clamp((x - 12.45) / 0.28, 0.0, 1.0));    // F
+    c = mix(c, vec3(0.83, 0.89, 1.0), clamp((x - 12.73) / 0.41, 0.0, 1.0));    // A
+    c = mix(c, vec3(0.61, 0.70, 1.0), clamp((x - 13.14) / 0.73, 0.0, 1.0));    // B/O
+    return c;
+  }
   varying float vTw;
   varying float vFaint;
   varying float vBoost;
@@ -47,7 +74,8 @@ const VERTEX = /* glsl */ `
   }
 
   void main() {
-    vColor = aColor;
+    // 9C 星色连续化：aCi < 900 视为有效 ci（哨兵 1000 = 无 ci 保持旧色）
+    vColor = aCi < 900.0 ? tempToRgb(ciToTemp(aCi)) : aColor;
     // 微弱星判定（宇宙 V4 §1.4）：aSize < 4.5px 视为暗视觉区，交给片元去饱和。
     // 用尺寸而非星等做代理——本 shader 被环境场/扩展场复用，只有尺寸是共同语言。
     vFaint = clamp((4.5 - aSize) / 4.5, 0.0, 1.0);
@@ -120,8 +148,17 @@ const FRAGMENT = /* glsl */ `
   }
 `;
 
+/** aCi 哨兵：无 ci 数据（装饰星/扩展星/extras 未达）→ shader 保持旧 aColor。 */
+const CI_NONE = 1000;
+
 interface TwinkleStarsProps {
-  attributes: StarAttributes;
+  /**
+   * 渲染属性。可选 objects（CatalogRenderData 结构性携带，与各缓冲同序）：
+   * 存在时本组件在 extras（star-extras.json 异步 chunk）加载完成后按 uid
+   * 回填 aPm（自行）与 aCi（B−V）attribute——9C 主 chunk 回收后目录不再自带 pm，
+   * GPU 缓冲的真实数据一律异步补齐（加载前 uEpochYr 语义不变：pm=0 星不动）。
+   */
+  attributes: StarAttributes & { objects?: readonly { objectUid: string }[] };
   /** 全局尺寸缩放。 */
   sizeScale?: number;
   /** 闪烁强度 0–1。 */
@@ -151,8 +188,62 @@ export function TwinkleStars({
       'aPm',
       new THREE.BufferAttribute(attributes.pms ?? new Float32Array(attributes.count * 2), 2),
     );
+    // B−V 色指数（9C 星色连续化）：初值全哨兵（保持旧色）；带 objects 的真实
+    // 星层在 extras 加载后按 uid 回填（下方 effect），无 ci 星与装饰层永不变。
+    geo.setAttribute(
+      'aCi',
+      new THREE.BufferAttribute(new Float32Array(attributes.count).fill(CI_NONE), 1),
+    );
     return geo;
   }, [attributes]);
+
+  // ── extras 回填（9C）：aPm/aCi 在 star-extras.json 异步 chunk 到达后一次性写入 ──
+  // 空闲时机触发（不与首屏关键路径抢带宽；DeepTimeBar 入口会 await 同一单例，
+  // 用户先开时光机则加载被动提前）。needsUpdate 一次，非帧循环。
+  useEffect(() => {
+    const objects = attributes.objects;
+    if (!objects || objects.length === 0) return;
+    let cancelled = false;
+    let idleId: number | null = null;
+    let timerId: number | null = null;
+
+    const backfill = (): void => {
+      void ensureStarExtrasReady().then((extras) => {
+        if (cancelled) return;
+        const pmAttr = geometry.getAttribute('aPm') as THREE.BufferAttribute;
+        const ciAttr = geometry.getAttribute('aCi') as THREE.BufferAttribute;
+        const pmArr = pmAttr.array as Float32Array;
+        const ciArr = ciAttr.array as Float32Array;
+        const n = Math.min(objects.length, attributes.count);
+        for (let i = 0; i < n; i++) {
+          const ex = extras.get(objects[i]!.objectUid);
+          if (!ex) continue;
+          if (ex.pmRa !== undefined && ex.pmDec !== undefined) {
+            // mas/yr → rad/yr 预转（shader 零换算，与 9B 约定一致）
+            pmArr[i * 2] = ex.pmRa * MAS_YR_TO_RAD_YR;
+            pmArr[i * 2 + 1] = ex.pmDec * MAS_YR_TO_RAD_YR;
+          }
+          if (ex.ci !== undefined) ciArr[i] = ex.ci;
+        }
+        pmAttr.needsUpdate = true;
+        ciAttr.needsUpdate = true;
+      });
+    };
+
+    // 首帧后的空闲时机（fallback: 2.5s 定时器）——与 ExtendedStars 同一纪律
+    if (typeof window.requestIdleCallback === 'function') {
+      idleId = window.requestIdleCallback(backfill, { timeout: 4000 });
+    } else {
+      timerId = window.setTimeout(backfill, 2500);
+    }
+    return () => {
+      cancelled = true;
+      if (idleId !== null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      }
+      if (timerId !== null) window.clearTimeout(timerId);
+    };
+  }, [attributes, geometry]);
 
   const uniforms = useMemo(
     () => ({

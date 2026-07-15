@@ -60,11 +60,13 @@ interface IndexedObject {
 }
 
 // 按 catalog 引用缓存索引，避免每次查询 rebuild。
+// 9C：目录支持运行时追加（动态彗星等，SEARCH_CATALOG 原地 push 保引用稳定），
+// 故缓存命中同时校验长度——追加后长度变化即自动重建索引，无需显式失效接口。
 const indexCache = new WeakMap<CelestialObject[], IndexedObject[]>();
 
 function getIndex(catalog: CelestialObject[]): IndexedObject[] {
   let idx = indexCache.get(catalog);
-  if (!idx) {
+  if (!idx || idx.length !== catalog.length) {
     idx = catalog.map((obj) => ({
       obj,
       featured: obj.isFeatured,

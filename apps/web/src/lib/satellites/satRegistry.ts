@@ -216,45 +216,45 @@ export function recomputeSatellites(dateMs: number, city: City): void {
 }
 
 /**
- * 运行时从 Celestrak 拉最新 TLE（每星独立，5s 超时）。
- * 任一环节失败（网络/CORS/解析/校验）静默丢弃保快照——兜底是产品既定行为。
- * 成功则原子替换该星 satrec 并写 localStorage（24h 缓存）。
+ * 运行时刷新 TLE（Phase 9C：改打自家 /api/v1/tle 服务端代理，一次拉全）。
+ *
+ * 客户端【零 Celestrak 直连】——Celestrak usage policy 要求同一数据 2h 更新
+ * 节奏内不重复拉取，违者 403→封 IP；全站访客各自直连必被封。改为 services/api
+ * 每 6h 集中拉一次落库，前端只打自家接口（api.ts never-reject 模式）。
+ * 失败（未配置 API / 网络 / 校验不过）静默保内置快照 + localStorage 24h 缓存
+ * ——兜底是产品既定行为；快照过期 >7 天时 SatellitesLayer 已有「轨道数据 X 天前」声明。
+ * 成功则原子替换该星 satrec 并写 localStorage（键与旧版一致，缓存平滑续用）。
  */
-export async function refreshTlesFromCelestrak(): Promise<void> {
+export async function refreshTles(): Promise<void> {
   if (!satrecs) satrecs = buildSatrecs();
-  await Promise.all(
-    SATELLITE_DEFS.map(async (def) => {
-      try {
-        const res = await fetch(
-          `https://celestrak.org/NORAD/elements/gp.php?CATNR=${def.noradId}&FORMAT=TLE`,
-          { signal: AbortSignal.timeout(5000) },
-        );
-        if (!res.ok) return;
-        const text = await res.text();
-        // 返回 3 行：名称 + line1 + line2（行尾可能带空白）
-        const lines = text.split(/\r?\n/).map((l) => l.trimEnd());
-        const line1 = lines.find((l) => l.startsWith('1 '));
-        const line2 = lines.find((l) => l.startsWith('2 '));
-        if (!line1 || !line2) return;
-        const rec = validateTle(line1, line2);
-        if (!rec) return;
-        const slot = satrecs?.get(def.uid);
-        if (slot) slot.satrec = rec;
-        const state = sats.states.get(def.uid);
-        if (state) state.tleEpoch = parseTleEpoch(line1);
-        try {
-          localStorage.setItem(
-            TLE_CACHE_PREFIX + def.noradId,
-            JSON.stringify({ fetchedAt: Date.now(), lines: [line1, line2] }),
-          );
-        } catch {
-          // 存储失败无所谓，下次再拉
-        }
-        // 强制下一次 recompute 生效（时间戳去重会挡住同 ms 的重算）
-        sats.computedAtMs = 0;
-      } catch {
-        // 静默：快照兜底
-      }
-    }),
-  );
+  const { fetchTleFeed } = await import('../api'); // 懒 chunk 内动态引，避免拉宽本模块静态依赖
+  const feed = await fetchTleFeed();
+  if (!feed) return; // 快照/缓存兜底
+  const byId = new Map(feed.sats.map((s) => [s.id, s]));
+  for (const def of SATELLITE_DEFS) {
+    // 跨域契约（feed.types.ts 冻结）：TLE 条目 id 与本侧卫星 uid 对齐（'SAT-ISS' 等），
+    // 不是 NORAD 编号——按 uid 命中，否则整轮刷新静默落空
+    const row = byId.get(def.uid);
+    if (!row) continue;
+    // 行尾容错 + 双行校验（长度/行号/mod-10 校验和/satrec 可解析）
+    const line1 = row.l1?.trimEnd();
+    const line2 = row.l2?.trimEnd();
+    if (!line1 || !line2) continue;
+    const rec = validateTle(line1, line2);
+    if (!rec) continue;
+    const slot = satrecs.get(def.uid);
+    if (slot) slot.satrec = rec;
+    const state = sats.states.get(def.uid);
+    if (state) state.tleEpoch = parseTleEpoch(line1);
+    try {
+      localStorage.setItem(
+        TLE_CACHE_PREFIX + def.noradId,
+        JSON.stringify({ fetchedAt: Date.now(), lines: [line1, line2] }),
+      );
+    } catch {
+      // 存储失败无所谓，下次再拉
+    }
+    // 强制下一次 recompute 生效（时间戳去重会挡住同 ms 的重算）
+    sats.computedAtMs = 0;
+  }
 }

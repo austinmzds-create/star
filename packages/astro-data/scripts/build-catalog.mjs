@@ -1,19 +1,31 @@
 // @ts-check
 /**
- * 离线 ETL 脚本：下载 HYG Database v41 → 双层产出。
- *   核心层 mag ≤ 6.5 → src/generated/bright-stars.json（随包，短键对象格式不变）
+ * 离线 ETL 脚本：下载 HYG Database v41 → 三层产出。
+ *   核心层 mag ≤ 6.5 → src/generated/bright-stars.json（随包，短键对象格式，lean——
+ *     只含坐标/星等/距离/光谱/编号/名称，不带 pm 等增强字段，控制主 chunk 体积）
  *   扩展层 6.5 < mag ≤ 7.5 → apps/web/public/data/stars-extended.json（懒加载，列式紧凑格式）
+ *   增强层（Phase 9C）→ src/generated/star-extras.json（异步 chunk，byUid 记录）：
+ *     pm/ci/变星幅度/聚星标记全部走这里，loadStarExtras() 动态 import 消费。
  *
- * 自行透传（Phase 9B 恒星自行时光机，r-dyn §3c）：
- *   HYG 的 pmra/pmdec 列（mas/yr；pmra 已含 cosδ 因子）此前被丢弃，现在两层都带上——
- *   核心层每星 +2 键（pmra/pmdec，round 0.1 mas/yr）；
- *   扩展层 +2 列 int16 语义整数（单位 0.5 mas/yr，存值 = round(mas×2)，±32767 覆盖
- *   全表最大自行；缺测记 0 = 深时模式下不动）。
+ * 自行（Phase 9B 恒星自行时光机 → 9C 迁移至 star-extras）：
+ *   HYG 的 pmra/pmdec 列（mas/yr；pmra 已含 cosδ 因子）——
+ *   9B 曾透传进核心层（每星 +2 键，主页 First Load 593→748KB），9C 撤回：
+ *   核心层回归 lean，pm 改进 star-extras.json（round 0.1 mas/yr）；
+ *   扩展层保持 +2 列 int16 语义整数（单位 0.5 mas/yr，存值 = round(mas×2)，±32767 覆盖
+ *   全表最大自行；缺测记 0 = 深时模式下不动）——扩展层本就是懒加载，不占主 chunk。
  *   已知数据源缺陷：HYG v41 把 |pm| 分量截断在 9999.99（字段宽度），受影响的只有
  *   Barnard 星（HIP87937，实测 pmdec≈+10362 mas/yr）——其 mag=9.54 本就在两层之外，
  *   对产物无影响；如未来扩层需谨记此截断。
  *
- * 手动/低频人工运行，两个产物均提交入库；运行时（前端/后端）不联网。
+ * star-extras.json 字段（HYG 隐藏字段解禁，r-data §1/§4）：
+ *   p: [pmra, pmdec]（mas/yr，round 0.1）；c: ci（B−V 色指数，round 0.01）；
+ *   v: [varMin, varMax]（变星幅度两端视星等，HYG 语义：varMin=最暗、varMax=最亮，
+ *      round 0.01；仅 var 变星命名列非空时写出，避免 HYG 对非变星也填 min/max 的噪声）；
+ *   m: 1（聚星/双星系统：base 非空 或 comp≠1 或 同一 comp_primary 组内成员 >1）；
+ *   n: IAU-CSN 官方星名（由 build-star-names.mjs 二次写入，本脚本重跑时原样保留）。
+ *   覆盖范围 = 核心层全部 uid + 手写目录里核心层外的星（比邻星 HIP70890）。
+ *
+ * 手动/低频人工运行，三个产物均提交入库；运行时（前端/后端）不联网。
  * 扩展层为纯渲染层：不进搜索索引、不可拾取、不含编号（详见 generated/README.md）。
  *
  * 用法：
@@ -40,6 +52,13 @@ const CACHE_DIR = resolve(__dirname, '.cache');
 const CACHE_CSV = resolve(CACHE_DIR, 'hygdata.csv');
 const OUT_JSON = resolve(PKG_ROOT, 'src/generated/bright-stars.json');
 const OUT_EXT_JSON = resolve(PKG_ROOT, '../../apps/web/public/data/stars-extended.json');
+const OUT_EXTRAS_JSON = resolve(PKG_ROOT, 'src/generated/star-extras.json');
+
+/**
+ * 核心层（mag≤6.5）之外仍需 star-extras 覆盖的 HIP 号：
+ * 手写精选目录里超出核心层阈值的星（比邻星 mag 11.13）。取值同源 HYG CSV。
+ */
+const EXTRAS_HIP_ALLOWLIST = new Set(['70890']);
 
 const MAG_CORE = 6.5; // 核心层阈值：mag ≤ 6.5，约 9000 颗（随包）。
 const MAG_EXT = 7.5; // 扩展层阈值：6.5 < mag ≤ 7.5，约 17000 颗（web 懒加载）。
@@ -80,7 +99,7 @@ function downloadHyg() {
   throw new Error('所有 HYG URL 下载失败');
 }
 
-/** 解析 CSV 文本 → { coreStars, extStars }（单次解析、按 mag 两路分流）。 */
+/** 解析 CSV 文本 → { coreStars, extStars, extras }（两遍解析：先聚星分组，再按 mag 分流）。 */
 function parseHyg(csvText) {
   const lines = csvText.split(/\r?\n/);
   if (lines.length < 2) throw new Error('CSV 内容异常（行数不足）');
@@ -88,8 +107,8 @@ function parseHyg(csvText) {
   const col = {};
   header.forEach((name, i) => { col[name.trim()] = i; });
 
-  // 必需列存在性校验。
-  for (const need of ['id', 'ra', 'dec', 'mag', 'con']) {
+  // 必需列存在性校验（9C 增强字段列一并强校验：上游删列必须显式失败，绝不静默产出残缺 extras）。
+  for (const need of ['id', 'ra', 'dec', 'mag', 'con', 'ci', 'var', 'var_min', 'var_max', 'comp', 'comp_primary', 'base']) {
     if (col[need] === undefined) throw new Error(`CSV 缺少必需列：${need}`);
   }
 
@@ -103,8 +122,21 @@ function parseHyg(csvText) {
     return t === '' ? undefined : t;
   };
 
+  // —— 第一遍（全表 12 万行）：comp_primary 分组计数——同组成员 >1 即聚星系统。
+  // 伴星常暗于核心层阈值（天狼 B mag 8.4），只有全表统计才能给主星打上聚星标记。
+  const primaryGroupCount = new Map();
+  for (let li = 1; li < lines.length; li++) {
+    const raw = lines[li];
+    if (!raw) continue;
+    const row = parseCsvLine(raw);
+    const cp = get(row, 'comp_primary');
+    if (cp) primaryGroupCount.set(cp, (primaryGroupCount.get(cp) ?? 0) + 1);
+  }
+
   const stars = [];
   const extStars = [];
+  /** star-extras.json 的 byUid 记录（uid → { p?, c?, v?, m? }）。 */
+  const extras = {};
   let skippedMag = 0;
   let skippedOrphan = 0;
   let skippedCoord = 0;
@@ -117,11 +149,14 @@ function parseHyg(csvText) {
     const id = get(row, 'id');
     if (id === '0') continue; // 太阳 Sol。
 
+    const hip = get(row, 'hip');
+    // 允许名单星（比邻星）超出扩展层阈值仍要产 extras 记录，先于 mag 过滤判定。
+    const isAllowlisted = hip !== undefined && EXTRAS_HIP_ALLOWLIST.has(hip);
+
     const magStr = get(row, 'mag');
     const magNum = magStr === undefined ? NaN : parseFloat(magStr);
-    if (!Number.isFinite(magNum) || magNum > MAG_EXT) { skippedMag++; continue; }
+    if (!Number.isFinite(magNum) || (magNum > MAG_EXT && !isAllowlisted)) { skippedMag++; continue; }
 
-    const hip = get(row, 'hip');
     const hd = get(row, 'hd');
     const hr = get(row, 'hr');
     const gl = get(row, 'gl');
@@ -146,8 +181,46 @@ function parseHyg(csvText) {
     const pmdecNum = pmdecStr === undefined ? NaN : parseFloat(pmdecStr);
     const hasPm = Number.isFinite(pmraNum) && Number.isFinite(pmdecNum);
 
+    // —— 增强层记录（9C star-extras）：核心层 uid + 允许名单星。uid 规则与核心层一致。——
+    // 注意先于扩展层分流：允许名单星（mag 11）不进任何渲染层，但必须有 extras 记录。
+    const inCore = magNum <= MAG_CORE;
+    if (inCore || isAllowlisted) {
+      let uidForExtras;
+      if (hip) uidForExtras = 'HIP' + hip;
+      else if (hd) uidForExtras = 'HD' + hd;
+      else if (hr) uidForExtras = 'HR' + hr;
+      if (uidForExtras) {
+        /** @type {Record<string, unknown>} */
+        const ex = {};
+        if (hasPm) ex.p = [round(pmraNum, 1), round(pmdecNum, 1)];
+        const ciStr = get(row, 'ci');
+        const ciNum = ciStr === undefined ? NaN : parseFloat(ciStr);
+        if (Number.isFinite(ciNum)) ex.c = round(ciNum, 2);
+        // 变星幅度：仅 var 命名列非空才写（HYG 对非变星也会填 var_min/var_max，属噪声）。
+        const varName = get(row, 'var');
+        const vMinStr = get(row, 'var_min');
+        const vMaxStr = get(row, 'var_max');
+        const vMin = vMinStr === undefined ? NaN : parseFloat(vMinStr);
+        const vMax = vMaxStr === undefined ? NaN : parseFloat(vMaxStr);
+        if (varName && Number.isFinite(vMin) && Number.isFinite(vMax)) {
+          ex.v = [round(vMin, 2), round(vMax, 2)];
+        }
+        // 聚星判定：base 非空 / comp≠1 / 同 comp_primary 组成员 >1（第一遍全表统计）。
+        const base = get(row, 'base');
+        const comp = get(row, 'comp');
+        const compPrimary = get(row, 'comp_primary');
+        const multiple =
+          !!base ||
+          (comp !== undefined && comp !== '1') ||
+          (compPrimary !== undefined && (primaryGroupCount.get(compPrimary) ?? 0) > 1);
+        if (multiple) ex.m = 1;
+        if (Object.keys(ex).length > 0) extras[uidForExtras] = ex;
+      }
+    }
+
     // —— 扩展层分流：仅渲染用途，只留坐标/星等/光谱主类 + 自行（列式存储，见 writeExtended）——
     if (magNum > MAG_CORE) {
+      if (!inCore && isAllowlisted && magNum > MAG_EXT) continue; // 允许名单星只产 extras
       const spect = get(row, 'spect');
       const specClass = spect && /^[OBAFGKM]/i.test(spect) ? spect[0].toUpperCase() : '?';
       // int16 语义编码（0.5 mas/yr 单位）：round(mas×2)，钳到 ±32767。
@@ -199,11 +272,7 @@ function parseHyg(csvText) {
     /** @type {Record<string, unknown>} */
     const star = { u, ra: raDeg, dec: decDeg, mag: round(magNum, 2) };
     star.dist = distanceLy; // 明确写 null 以区别「无此键」。
-    // 自行两键（round 0.1 mas/yr；缺测省键）：深时模式渲染 + 星卡展示共用。
-    if (hasPm) {
-      star.pmra = round(pmraNum, 1);
-      star.pmdec = round(pmdecNum, 1);
-    }
+    // 9C lean 纪律：pm 不再进核心层（见文件头注释），统一走 star-extras.json。
     if (spect) star.spect = spect;
     if (con) star.con = con;
     if (bayer) star.bayer = bayer;
@@ -218,10 +287,10 @@ function parseHyg(csvText) {
   }
 
   console.log(
-    `[parse] 核心层 ${stars.length} 颗 + 扩展层 ${extStars.length} 颗；` +
+    `[parse] 核心层 ${stars.length} 颗 + 扩展层 ${extStars.length} 颗 + extras ${Object.keys(extras).length} 条；` +
       `跳过 mag=${skippedMag} 孤儿=${skippedOrphan} 坐标=${skippedCoord}`,
   );
-  return { coreStars: stars, extStars };
+  return { coreStars: stars, extStars, extras };
 }
 
 /** 核心层产物自检。抛错则不写文件。 */
@@ -246,18 +315,65 @@ function selfCheck(stars) {
   if (!vega || Math.abs(vega.mag - 0.03) > 0.02) {
     throw new Error(`抽样失败：织女星 HIP91262 mag=${vega && vega.mag}（期望≈0.03）`);
   }
-  // 自行抽样（Phase 9B）：期望值 = 缓存 CSV 实值（awk 核实 2026-07-15：
-  // HIP32349 pmra=-546.01 pmdec=-1223.08；HIP91262 pmra=201.02 pmdec=287.46）。
-  if (!Number.isFinite(sirius.pmra) || Math.abs(sirius.pmra - -546.0) > 1) {
-    throw new Error(`抽样失败：天狼星 pmra=${sirius.pmra}（期望≈-546.0 mas/yr）`);
+  // 9C lean 纪律：核心层绝不允许再带 pm 键（防回归——pm 已迁 star-extras.json）。
+  for (const s of stars) {
+    if ('pmra' in s || 'pmdec' in s) {
+      throw new Error(`核心层出现 pm 键（应走 star-extras.json）：${s.u}`);
+    }
   }
-  if (!Number.isFinite(sirius.pmdec) || Math.abs(sirius.pmdec - -1223.1) > 1) {
-    throw new Error(`抽样失败：天狼星 pmdec=${sirius.pmdec}（期望≈-1223.1 mas/yr）`);
+  console.log('[check] 核心层自检通过（含天狼星/织女星抽样 + lean 无 pm 键断言）');
+}
+
+/** 增强层（star-extras）产物自检。抛错则不写文件。期望值 = 缓存 CSV 实值（python 核实 2026-07-15）。 */
+function selfCheckExtras(extras) {
+  const n = Object.keys(extras).length;
+  if (n < 7000 || n > 11000) {
+    throw new Error(`extras 条数 ${n} 超出合理区间 [7000,11000]，疑似解析崩坏`);
   }
-  if (!Number.isFinite(vega.pmra) || Math.abs(vega.pmra - 201.0) > 1) {
-    throw new Error(`抽样失败：织女星 pmra=${vega.pmra}（期望≈201.0 mas/yr）`);
+  // 自行抽样（迁自 9B 核心层自检）：HIP32349 pmra=-546.01 pmdec=-1223.08；HIP91262 pmra=201.02。
+  const sirius = extras['HIP32349'];
+  if (!sirius?.p || Math.abs(sirius.p[0] - -546.0) > 1 || Math.abs(sirius.p[1] - -1223.1) > 1) {
+    throw new Error(`extras 抽样失败：天狼星 p=${JSON.stringify(sirius?.p)}（期望≈[-546.0,-1223.1]）`);
   }
-  console.log('[check] 核心层自检通过（含天狼星/织女星坐标+自行抽样）');
+  const vega = extras['HIP91262'];
+  if (!vega?.p || Math.abs(vega.p[0] - 201.0) > 1) {
+    throw new Error(`extras 抽样失败：织女星 p=${JSON.stringify(vega?.p)}（期望 pmra≈201.0）`);
+  }
+  // ci 抽样：天狼星 ci=0.009→0.01；北极星 ci=0.636→0.64（Ballesteros 反解温度的输入）。
+  if (sirius.c === undefined || Math.abs(sirius.c - 0.01) > 0.011) {
+    throw new Error(`extras 抽样失败：天狼星 ci=${sirius.c}（期望≈0.01）`);
+  }
+  const polaris = extras['HIP11767'];
+  if (!polaris || polaris.c === undefined || Math.abs(polaris.c - 0.64) > 0.011) {
+    throw new Error(`extras 抽样失败：北极星 ci=${polaris?.c}（期望≈0.64）`);
+  }
+  // 变星抽样：北极星 var=Alp，var_min=1.99 / var_max=1.95（HYG 语义：min=最暗）。
+  if (!polaris.v || Math.abs(polaris.v[0] - 1.99) > 0.02 || Math.abs(polaris.v[1] - 1.95) > 0.02) {
+    throw new Error(`extras 抽样失败：北极星 v=${JSON.stringify(polaris.v)}（期望≈[1.99,1.95]）`);
+  }
+  // 聚星抽样：天狼星 base='Gl 244' → m=1。
+  if (sirius.m !== 1) throw new Error('extras 抽样失败：天狼星应标记聚星 m=1');
+  // 允许名单：比邻星（核心层外）必须有记录且带 pm（-3775.6/768.2）与 ci（1.807→1.81）。
+  const proxima = extras['HIP70890'];
+  if (!proxima?.p || Math.abs(proxima.p[0] - -3775.6) > 1 || proxima.c === undefined) {
+    throw new Error(`extras 抽样失败：比邻星记录缺失或不完整 ${JSON.stringify(proxima)}`);
+  }
+  // 值域检查。
+  for (const [uid, ex] of Object.entries(extras)) {
+    if (ex.p !== undefined) {
+      if (!Array.isArray(ex.p) || ex.p.length !== 2 || !ex.p.every((x) => Number.isFinite(x) && Math.abs(x) < 10500)) {
+        throw new Error(`extras pm 非法：${uid}=${JSON.stringify(ex.p)}`);
+      }
+    }
+    if (ex.c !== undefined && !(Number.isFinite(ex.c) && ex.c > -1 && ex.c < 6)) {
+      throw new Error(`extras ci 越界：${uid}=${ex.c}`);
+    }
+    if (ex.v !== undefined && (!Array.isArray(ex.v) || ex.v.length !== 2 || !ex.v.every(Number.isFinite))) {
+      throw new Error(`extras v 非法：${uid}=${JSON.stringify(ex.v)}`);
+    }
+    if (ex.m !== undefined && ex.m !== 1) throw new Error(`extras m 非法：${uid}=${ex.m}`);
+  }
+  console.log(`[check] extras 自检通过（${n} 条，含天狼/织女/北极/比邻抽样）`);
 }
 
 /** 扩展层产物自检。抛错则不写文件。 */
@@ -321,14 +437,20 @@ async function main() {
     }
   }
 
-  const { coreStars, extStars } = parseHyg(csvText);
+  const { coreStars, extStars, extras } = parseHyg(csvText);
   selfCheck(coreStars);
   selfCheckExt(extStars);
+  selfCheckExtras(extras);
 
   // 按 mag 升序（亮 → 暗）。
   coreStars.sort((a, b) => a.mag - b.mag);
   extStars.sort((a, b) => a.mag - b.mag);
 
+  // —— 核心层列式化（9C First Load 回收）：对象数组 → 并行列数组。——
+  // 每星 ~14 个重复短键在 8896 行上即 ~600KB 纯键名；列式后 gzip 从 325KB 降到
+  // ~211KB（实测 2026-07-15），这是「主页 First Load 回落 ≤600KB」的决定性一步。
+  // 空值哨兵：dist 0=未知（真实距离不为 0）；字符串列 ''=无。u 不落盘——由
+  // hip/hd/hr 按同一优先级规则派生（catalog.ts 解码端同规则，ETL/解码单一约定）。
   const payload = {
     meta: {
       source: 'HYG Database v41 (astronexus/HYG-Database)',
@@ -337,14 +459,30 @@ async function main() {
       generatedAt: new Date().toISOString(),
       magLimit: MAG_CORE,
       count: coreStars.length,
+      format: 'columnar-v1', // 消费端（catalog.ts/姊妹 ETL）识别列式格式
     },
-    stars: coreStars,
+    n: coreStars.length,
+    cols: {
+      ra: coreStars.map((s) => s.ra),
+      dec: coreStars.map((s) => s.dec),
+      mag: coreStars.map((s) => s.mag),
+      dist: coreStars.map((s) => (s.dist === null ? 0 : s.dist)),
+      spect: coreStars.map((s) => s.spect ?? ''),
+      con: coreStars.map((s) => s.con ?? ''),
+      bayer: coreStars.map((s) => s.bayer ?? ''),
+      flam: coreStars.map((s) => s.flam ?? ''),
+      proper: coreStars.map((s) => s.proper ?? ''),
+      bf: coreStars.map((s) => s.bf ?? ''),
+      hip: coreStars.map((s) => s.hip ?? ''),
+      hd: coreStars.map((s) => s.hd ?? ''),
+      hr: coreStars.map((s) => s.hr ?? ''),
+    },
   };
 
   mkdirSync(dirname(OUT_JSON), { recursive: true });
   writeFileSync(OUT_JSON, JSON.stringify(payload) + '\n');
   const bytes = readFileSync(OUT_JSON).byteLength;
-  console.log(`[write] ${OUT_JSON} — ${coreStars.length} 颗，${(bytes / 1024).toFixed(0)} KB`);
+  console.log(`[write] ${OUT_JSON} — ${coreStars.length} 颗（列式），${(bytes / 1024).toFixed(0)} KB`);
 
   // 扩展层：列式紧凑格式（四并行数组 + 光谱主类字符串），web 端页面空闲后 fetch。
   const extPayload = {
@@ -369,6 +507,49 @@ async function main() {
   writeFileSync(OUT_EXT_JSON, JSON.stringify(extPayload) + '\n');
   const extBytes = readFileSync(OUT_EXT_JSON).byteLength;
   console.log(`[write] ${OUT_EXT_JSON} — ${extStars.length} 颗，${(extBytes / 1024).toFixed(0)} KB`);
+
+  // —— 增强层 star-extras.json（9C）：byUid 短键记录，loadStarExtras() 异步 chunk 消费。——
+  // iauName（n 键）由 build-star-names.mjs 二次写入；本脚本重跑时从旧产物原样保留，
+  // 避免「重跑星表 → 官方星名清零」的顺序陷阱（两脚本可任意顺序重跑）。
+  let preservedIau = 0;
+  if (existsSync(OUT_EXTRAS_JSON)) {
+    try {
+      const prev = JSON.parse(readFileSync(OUT_EXTRAS_JSON, 'utf8'));
+      for (const [uid, ex] of Object.entries(prev?.byUid ?? {})) {
+        if (ex && typeof ex.n === 'string' && ex.n) {
+          if (!extras[uid]) extras[uid] = {};
+          extras[uid].n = ex.n;
+          preservedIau++;
+        }
+      }
+    } catch {
+      console.warn('[warn] 旧 star-extras.json 解析失败，iauName 保留跳过（可重跑 build-star-names 补回）');
+    }
+  }
+  const extrasPayload = {
+    meta: {
+      source: 'HYG Database v41 (astronexus/HYG-Database)',
+      sourceUrl,
+      license: 'CC BY-SA 4.0',
+      generatedAt: new Date().toISOString(),
+      count: Object.keys(extras).length,
+      fields: {
+        p: 'pm [pmRa, pmDec] mas/yr（pmRa 含 cosδ，round 0.1）',
+        c: 'ci B−V 色指数（round 0.01）',
+        v: '变星幅度 [varMin(最暗), varMax(最亮)] 视星等（仅 HYG var 命名列非空）',
+        m: '1 = 双星/聚星系统（base 非空 / comp≠1 / comp_primary 组成员>1）',
+        n: 'IAU-CSN 官方星名（build-star-names.mjs 写入，CC BY 4.0 署名 IAU）',
+      },
+      iauNamePreserved: preservedIau,
+    },
+    byUid: extras,
+  };
+  writeFileSync(OUT_EXTRAS_JSON, JSON.stringify(extrasPayload) + '\n');
+  const extrasBytes = readFileSync(OUT_EXTRAS_JSON).byteLength;
+  console.log(
+    `[write] ${OUT_EXTRAS_JSON} — ${Object.keys(extras).length} 条（保留 iauName ${preservedIau} 条），` +
+      `${(extrasBytes / 1024).toFixed(0)} KB`,
+  );
   console.log('完成。请更新 src/generated/README.md 的生成时间与行数。');
 }
 

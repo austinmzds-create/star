@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { curlDownload } from './etl-utils.mjs';
+import { curlDownload, decodeBrightStars } from './etl-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -142,7 +142,7 @@ function main() {
     throw new Error(`缺少核心星表 ${BRIGHT_STARS_JSON}，请先运行 build-catalog.mjs`);
   }
   const bright = JSON.parse(readFileSync(BRIGHT_STARS_JSON, 'utf8'));
-  const stars = bright.stars ?? [];
+  const stars = decodeBrightStars(bright); // 9C 列式/旧行式双兼容
   console.log(`[pool] 匹配池 = 核心层 ${stars.length} 颗（mag ≤ ${bright.meta?.magLimit}）`);
   const grid = buildStarIndex(stars);
 

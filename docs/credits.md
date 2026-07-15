@@ -55,11 +55,13 @@
 
 | 名称 | 许可 | 地址 |
 | --- | --- | --- |
-| HYG v4.1 星表 | CC BY-SA 4.0（数据） | https://github.com/astronexus/HYG-Database |
+| HYG v4.1 星表（Phase 9C 起自行/色指数/变星/双星字段经 star-extras.json 异步加载） | CC BY-SA 4.0（数据） | https://github.com/astronexus/HYG-Database |
+| IAU-CSN 官方星名名录（IAU WGSN；文件版本 2022-04-04，451 条、339 条与站内星表匹配；「IAU 官方星名」徽章与免责声明权威锚点） | CC BY 4.0（署名 IAU） | https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt |
 | OpenNGC 深空天体目录 | CC BY-SA 4.0（数据） | https://github.com/mattiaverga/OpenNGC |
+| d3-celestial 星座连线（88 座 / 743 线段，与 HYG 100% 匹配） | BSD-3-Clause | https://github.com/ofrohn/d3-celestial |
 | astronomy-engine 天文历表 | MIT | https://github.com/cosinekitty/astronomy |
-| TLE 轨道数据（ISS/天宫/哈勃：内置快照注明 epoch + 运行时可选刷新；TLE 会过期，站内标注「人造卫星 · 演示精度」） | 公开数据（Celestrak） | https://celestrak.org |
-| 小天体轨道根数（谷神星/灶神星/智神星/哈雷彗星，内置常量注明历元；位置经开普勒方程计算，参考值对照 JPL Horizons，站内标注「演示级，±0.5°」） | 公开数据（JPL SBDB / Horizons，US Gov） | https://ssd.jpl.nasa.gov |
+| TLE 轨道数据（ISS/天宫/哈勃：内置快照注明 epoch + Phase 9C 起由站内服务端每 6h 代理刷新，客户端不直连上游；TLE 会过期，站内标注「人造卫星 · 演示精度」。致谢句原文：Orbital data courtesy of CelesTrak） | 公开数据（Celestrak，遵守其官方使用政策） | https://celestrak.org |
+| 小天体轨道根数（内置常量注明历元 + Phase 9C 起服务端每日自 SBDB Query API 刷新现役亮彗星；位置经开普勒/近抛物线方程计算，参考值对照 JPL Horizons，站内标注「演示级，±0.5°」；礼节署名 NASA/JPL Solar System Dynamics） | 公有领域（JPL SBDB / Horizons，US Gov） | https://ssd.jpl.nasa.gov |
 | 流星雨常识表（约 10 大流星雨极大期/ZHR/辐射点，内置静态常量） | 公域天文常识（历表可参考 IMO） | https://www.imo.net |
 | satellite.js（SGP4 传播库，Phase 6B 唯一新增 npm 依赖） | MIT | https://github.com/shashwatak/satellite-js |
 
@@ -72,3 +74,10 @@
   由文档手工登记并与站内 CreditsPanel 的静态「数据来源」段落保持一致；`fetch-assets.mjs` 只管理**图像资产**清单，
   重跑该脚本重新生成本文件时需保留（或由脚本清单收编）这四行与本条注记。
 - 卫星与小天体的观测坐标全部经公式计算（SGP4 / 开普勒方程），不采用任何编造坐标；二者均不可命名（`isNamable=false`）。
+- **Phase 9C 公信力补记**：站内新增 `/credits`「数据来源与版本」正式页面（`apps/web/src/app/credits/`），
+  逐源登记机构/版本/许可/逐字致谢句/数据获取时间，并声明**星等完备极限**——
+  恒星 mag≤6.5 全天完备（核心层 8,896 颗）、6.5–7.5 为渲染增强层（16,852 颗）、
+  深空 Messier 110 全量 + NGC/IC V≤10（574 条）。上表新增 IAU-CSN 与 d3-celestial 两行为
+  Phase 9C 手工登记，重跑 `fetch-assets.mjs` 时需与 Phase 6B 四行一并保留。
+  全站免责声明统一为：「本平台提供基于真实星体坐标的私人纪念命名登记，不代表国际天文学联合会（IAU）
+  或任何官方机构命名；恒星的官方专名以 IAU-CSN 名录为准。」（页脚 / 命名弹窗 / /credits 页三处同句）。

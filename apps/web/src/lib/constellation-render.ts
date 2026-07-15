@@ -72,6 +72,8 @@ export interface ConstellationRenderInfo {
   memberBaseDir: Float32Array;
   /** 成员星自行切向速度向量（rad/yr，缺测为零向量，memberCount×3）。 */
   memberPmVec: Float32Array;
+  /** 成员星 objectUid（9C：extras 加载后按 uid 刷新 pmVec 用）。 */
+  memberUids: string[];
 }
 
 /** 全 88 座合并后的渲染数据（一次 useMemo 构建，<2ms）。 */
@@ -91,6 +93,8 @@ export interface ConstellationRenderData {
   baseDir: Float32Array;
   /** 每顶点自行切向速度向量（rad/yr，与 TwinkleStars shader 同一推导，vertexCount×3）。 */
   pmVec: Float32Array;
+  /** 每顶点 objectUid（9C：extras 加载后按 uid 刷新 pmVec 用）。 */
+  vertexUids: string[];
   vertexCount: number;
   cons: ConstellationRenderInfo[];
   byAbbr: Map<string, ConstellationRenderInfo>;
@@ -120,8 +124,10 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     segs: [THREE.Vector3, THREE.Vector3][]; // 单位向量
     /** 各段两端点的自行切向速度（rad/yr，与 segs 同序，深时重算用）。 */
     segPms: [THREE.Vector3, THREE.Vector3][];
-    /** 端点按 uid 去重后的成员星（单位向量 + 光环像素尺寸 + 自行速度）。 */
-    members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3 }[];
+    /** 各段两端点 uid（与 segs 同序；9C extras 到达后刷新 pm 用）。 */
+    segUids: [string, string][];
+    /** 端点按 uid 去重后的成员星（单位向量 + 光环像素尺寸 + 自行速度 + uid）。 */
+    members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3; uid: string }[];
   }
   const resolved: ResolvedCon[] = [];
   let totalSegs = 0;
@@ -129,7 +135,8 @@ export function buildConstellationRenderData(): ConstellationRenderData {
   for (const con of CONSTELLATION_LINES) {
     const segs: [THREE.Vector3, THREE.Vector3][] = [];
     const segPms: [THREE.Vector3, THREE.Vector3][] = [];
-    const members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3 }[] = [];
+    const segUids: [string, string][] = [];
+    const members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3; uid: string }[] = [];
     const seen = new Set<string>();
     for (const [ua, ub] of con.segments) {
       const a = CATALOG_BY_UID.get(ua);
@@ -143,6 +150,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       const pmB = pmTangentVec(b, pb);
       segs.push([pa, pb]);
       segPms.push([pmA, pmB]);
+      segUids.push([ua, ub]);
       // 成员星去重：光环尺寸 ≈ 恒星点尺寸 ×2.6（强调而不吞没本体）。
       if (!seen.has(ua)) {
         seen.add(ua);
@@ -150,6 +158,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
           vec: pa,
           sizePx: THREE.MathUtils.clamp(magnitudeToSize(a.magnitude) * 2.6, 14, 52),
           pm: pmA,
+          uid: ua,
         });
       }
       if (!seen.has(ub)) {
@@ -158,11 +167,12 @@ export function buildConstellationRenderData(): ConstellationRenderData {
           vec: pb,
           sizePx: THREE.MathUtils.clamp(magnitudeToSize(b.magnitude) * 2.6, 14, 52),
           pm: pmB,
+          uid: ub,
         });
       }
     }
     if (segs.length === 0) continue;
-    resolved.push({ abbr: con.con, segs, segPms, members });
+    resolved.push({ abbr: con.con, segs, segPms, segUids, members });
     totalSegs += segs.length;
   }
 
@@ -175,6 +185,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
   const aEnd = new Float32Array(vertexCount);
   const baseDir = new Float32Array(vertexCount * 3);
   const pmVec = new Float32Array(vertexCount * 3);
+  const vertexUids: string[] = new Array<string>(vertexCount);
   const cons: ConstellationRenderInfo[] = [];
 
   let v = 0; // 顶点游标
@@ -200,7 +211,9 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       const t1 = (SEGMENT_STAGGER_SEC * i + SEGMENT_RISE_SEC) / riseDurSec;
       const phase = (globalSeg * 2.399963) % (Math.PI * 2); // 黄金角散布
       const pms = con.segPms[i]!;
+      const uids = con.segUids[i]!;
       [a, b].forEach((p, end) => {
+        vertexUids[v] = uids[end]!;
         positions[v * 3] = p.x * LINE_RADIUS;
         positions[v * 3 + 1] = p.y * LINE_RADIUS;
         positions[v * 3 + 2] = p.z * LINE_RADIUS;
@@ -229,7 +242,9 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     const memberPhases = new Float32Array(memberCount);
     const memberBaseDir = new Float32Array(memberCount * 3);
     const memberPmVec = new Float32Array(memberCount * 3);
+    const memberUids: string[] = new Array<string>(memberCount);
     con.members.forEach((m, i) => {
+      memberUids[i] = m.uid;
       memberPositions[i * 3] = m.vec.x * LINE_RADIUS;
       memberPositions[i * 3 + 1] = m.vec.y * LINE_RADIUS;
       memberPositions[i * 3 + 2] = m.vec.z * LINE_RADIUS;
@@ -259,6 +274,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       memberCount,
       memberBaseDir,
       memberPmVec,
+      memberUids,
     });
   });
 
@@ -271,6 +287,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     aEnd,
     baseDir,
     pmVec,
+    vertexUids,
     vertexCount,
     cons,
     byAbbr: new Map(cons.map((c) => [c.abbr, c])),
@@ -343,6 +360,49 @@ export function applyConstellationDeepTime(years: number): void {
     for (let i = 0; i < con.memberCount; i++) {
       displacePoint(con.memberPositions, con.memberBaseDir, con.memberPmVec, i, years);
     }
+  }
+}
+
+/**
+ * 按目录现值原地刷新全部 pmVec/memberPmVec（Phase 9C）。
+ *
+ * 9C 主表 lean 化后，目录 pm 由 star-extras 异步回填（applyStarExtrasToCatalog）；
+ * 本渲染数据是模块级懒单例，若在回填【之前】已构建（星座层通常先挂载），
+ * pmVec 全零 → 深时形变失效。extras 就绪后（useStarExtra.ensureStarExtrasReady）
+ * 调用本函数：按构建期留存的 vertexUids/memberUids 重推切向速度（与构建期同一
+ * pmTangentVec 公式），若当前正处深时形变则用新 pm 立即重应用。
+ * 未构建（星座层从未挂载）直接返回——之后的 build 读的已是回填后的目录。
+ */
+export function refreshConstellationPmFromCatalog(): void {
+  if (!cached) return;
+  const { pmVec, baseDir, vertexUids, vertexCount, cons } = cached;
+  const pn = new THREE.Vector3();
+  for (let i = 0; i < vertexCount; i++) {
+    const obj = CATALOG_BY_UID.get(vertexUids[i] ?? '');
+    if (!obj) continue;
+    pn.set(baseDir[i * 3]!, baseDir[i * 3 + 1]!, baseDir[i * 3 + 2]!);
+    const pm = pmTangentVec(obj, pn);
+    pmVec[i * 3] = pm.x;
+    pmVec[i * 3 + 1] = pm.y;
+    pmVec[i * 3 + 2] = pm.z;
+  }
+  for (const con of cons) {
+    for (let i = 0; i < con.memberCount; i++) {
+      const obj = CATALOG_BY_UID.get(con.memberUids[i] ?? '');
+      if (!obj) continue;
+      pn.set(con.memberBaseDir[i * 3]!, con.memberBaseDir[i * 3 + 1]!, con.memberBaseDir[i * 3 + 2]!);
+      const pm = pmTangentVec(obj, pn);
+      con.memberPmVec[i * 3] = pm.x;
+      con.memberPmVec[i * 3 + 1] = pm.y;
+      con.memberPmVec[i * 3 + 2] = pm.z;
+    }
+  }
+  // 正处深时形变：用新 pm 立即重应用（重置去重哨兵后复用同一入口，版本号随之自增，
+  // 渲染层在 useFrame 里对版本号变化置 needsUpdate）。J2000 原位（0）无需动 positions。
+  if (appliedDeepTimeYears !== 0) {
+    const years = appliedDeepTimeYears;
+    appliedDeepTimeYears = Number.NaN; // 哨兵：绕过 applyConstellationDeepTime 的同值短路
+    applyConstellationDeepTime(years);
   }
 }
 

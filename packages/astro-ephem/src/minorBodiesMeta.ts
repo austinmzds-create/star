@@ -9,8 +9,15 @@
  * 文案不含任何官方命名/产权暗示。
  */
 
-/** 内置小天体 ID（小写英文）。 */
-export type MinorBodyId = 'ceres' | 'vesta' | 'pallas' | 'halley' | 'encke' | 'ponsbrooks';
+/** 内置小天体 ID（小写英文，编译期闭集——根数常量表按此穷举）。 */
+export type BuiltinMinorBodyId = 'ceres' | 'vesta' | 'pallas' | 'halley' | 'encke' | 'ponsbrooks';
+
+/**
+ * 小天体 ID（9C 起放宽为 string）：内置 6 体 + 运行时动态注册的彗星
+ * （/api/v1/minor-bodies 源，registerMinorBody）。未注册 id 的查询仍抛错，
+ * 类型放宽不改变运行时契约。
+ */
+export type MinorBodyId = string;
 
 /** 小天体元数据（纯数据行）。 */
 export interface MinorBodyMeta {
@@ -118,13 +125,39 @@ const MINOR_BODIES: readonly MinorBodyMeta[] = [
   },
 ];
 
-/** 列出全部 6 个小天体元数据（只读）。 */
+/** 动态注册的小天体元数据（9C，注册顺序稳定；内置 6 体恒在最前）。 */
+const DYNAMIC_BODIES: MinorBodyMeta[] = [];
+
+/** 列出全部小天体元数据（内置 6 体 + 动态注册，只读快照）。 */
 export function listMinorBodies(): readonly MinorBodyMeta[] {
+  return DYNAMIC_BODIES.length === 0 ? MINOR_BODIES : [...MINOR_BODIES, ...DYNAMIC_BODIES];
+}
+
+/** 仅列出内置 6 体（回退语义/测试基线）。 */
+export function listBuiltinMinorBodies(): readonly MinorBodyMeta[] {
   return MINOR_BODIES;
 }
 
 const BY_UID = new Map<string, MinorBodyMeta>(MINOR_BODIES.map((b) => [b.objectUid, b]));
 const BY_ID = new Map<MinorBodyId, MinorBodyMeta>(MINOR_BODIES.map((b) => [b.id, b]));
+
+/**
+ * 注册一个动态小天体的元数据（9C，/api/v1/minor-bodies 动态彗星）。
+ * 幂等：同 id 重复注册直接忽略（feed 每次启动全量拉取，去重责任在此收口）。
+ * 校验：uid 必须 'MB-' 前缀且不与既有冲突——违约抛错（编程错误，非数据降级）。
+ */
+export function registerMinorBodyMeta(meta: MinorBodyMeta): void {
+  if (BY_ID.has(meta.id)) return; // 幂等
+  if (!meta.objectUid.startsWith(MINOR_BODY_UID_PREFIX)) {
+    throw new Error(`小天体 uid 必须以 ${MINOR_BODY_UID_PREFIX} 开头: ${meta.objectUid}`);
+  }
+  if (BY_UID.has(meta.objectUid)) {
+    throw new Error(`小天体 uid 冲突: ${meta.objectUid}`);
+  }
+  DYNAMIC_BODIES.push(meta);
+  BY_UID.set(meta.objectUid, meta);
+  BY_ID.set(meta.id, meta);
+}
 
 /** 按 id 取元数据（id 为受限联合类型，必命中）。 */
 export function getMinorBodyMeta(id: MinorBodyId): MinorBodyMeta {

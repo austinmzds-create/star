@@ -107,6 +107,27 @@ export const COMET_PHOTOMETRY: Partial<Record<MinorBodyId, CometPhotometry>> = {
   ponsbrooks: { absMag: 5.0, slopeK: 15.0, sourceNote: 'MPC CometEls.txt g=5.0 k=6.0（2026-07-15）' },
 };
 
+/** 动态注册的彗星光度参数（9C：/api/v1/minor-bodies 的 M1，K 缺省 10=2.5n|n=4 标准假设）。 */
+const DYNAMIC_PHOTOMETRY = new Map<MinorBodyId, CometPhotometry>();
+
+/**
+ * 注册动态彗星的光度参数（幂等，不覆盖内置）。
+ * JPL SBDB 的 M1 即彗星总星等参数；斜率缺测时取 K=10（n=4，彗星光度学标准假设，
+ * 演示级——尾长/亮度仅作渲染示意，绝不用于观测承诺）。
+ */
+export function registerCometPhotometry(id: MinorBodyId, photometry: CometPhotometry): void {
+  if (COMET_PHOTOMETRY[id] || DYNAMIC_PHOTOMETRY.has(id)) return;
+  if (!Number.isFinite(photometry.absMag) || !Number.isFinite(photometry.slopeK)) {
+    throw new Error(`彗星光度参数非法：${id}`);
+  }
+  DYNAMIC_PHOTOMETRY.set(id, photometry);
+}
+
+/** 取彗星光度参数（内置优先，动态其次；无则 undefined）。 */
+export function getCometPhotometry(id: MinorBodyId): CometPhotometry | undefined {
+  return COMET_PHOTOMETRY[id] ?? DYNAMIC_PHOTOMETRY.get(id);
+}
+
 /** 彗星总视星等 m = M_abs + 5·log10(Δ) + K·log10(r)（标准彗星总星等式）。 */
 export function cometApparentMagnitude(
   photometry: CometPhotometry,
@@ -304,7 +325,7 @@ export function computeCometTailGeometry(
   options?: DustSkeletonOptions,
 ): CometTailGeometry | null {
   if (getMinorBodyMeta(id).kind !== 'comet') return null;
-  const photometry = COMET_PHOTOMETRY[id];
+  const photometry = getCometPhotometry(id); // 内置 + 动态注册（9C）
   if (!photometry) return null;
 
   const eq = getMinorBodyEquatorial(id, date);

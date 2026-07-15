@@ -17,9 +17,15 @@ import { raDecToVector3 } from '@star/astro-core';
 import {
   getMinorBodyEquatorial,
   listMinorBodies,
+  registerCometPhotometry,
+  registerMinorBodyMeta,
+  registerMinorBodyOrbit,
   type MinorBodyId,
+  type MinorBodyMeta,
 } from '@star/astro-ephem';
 import * as THREE from 'three';
+import { fetchMinorBodiesFeed, type MinorBodyFeedEntry } from './api';
+import { appendDynamicMinorRows } from './solarSystem';
 import { SPHERE_RADIUS } from './universe';
 
 /** 单个小天体的当前状态（坐标为最近一次 recomputeMinorBodies 时刻的值）。 */
@@ -78,6 +84,145 @@ function createRegistry(): MinorRegistry {
 }
 
 export const minor: MinorRegistry = createRegistry();
+
+// ── 动态花名册（Phase 9C）：/api/v1/minor-bodies 动态注册现役亮彗星 ─────────
+//
+// 启动（MinorBodiesLayer 挂载）时拉一次 feed：合法彗星逐体注册进 astro-ephem
+// （meta + 轨道 + 光度）并追加状态槽；失败/未配置 API 一律静默回退内置 6 体常量。
+// rosterVersion 供渲染层（MinorBodiesLayer/CometTailLayer）useSyncExternalStore
+// 订阅——版本变化即重建几何缓冲；内置 6 体恒在花名册最前，槽位稳定。
+
+/** 彗星渲染预算（跨域契约）：全场景彗尾/尾线成本封顶；超出按 M1 取最亮。 */
+export const MAX_COMET_ROSTER = 8;
+
+let rosterVersion = 0;
+const rosterListeners = new Set<() => void>();
+
+/** 当前花名册版本（0 = 仅内置 6 体）。 */
+export function getMinorRosterVersion(): number {
+  return rosterVersion;
+}
+
+/** 订阅花名册变化（useSyncExternalStore 契约：返回退订函数）。 */
+export function subscribeMinorRoster(listener: () => void): () => void {
+  rosterListeners.add(listener);
+  return () => rosterListeners.delete(listener);
+}
+
+/** 内置彗星的既有别名/编号（动态 feed 去重用：1P/2P/12P 已有手养元数据与光度）。 */
+const BUILTIN_COMET_DESIGNATIONS = ['1P', '2P', '12P'];
+
+/** feed 名字是否与内置彗星重复（如 '1P/Halley'）。 */
+function isBuiltinComet(name: string): boolean {
+  const head = name.trim().split('/')[0]?.trim().toUpperCase();
+  return head !== undefined && BUILTIN_COMET_DESIGNATIONS.includes(head);
+}
+
+/** feed id → 稳定 uid（'MB-DYN-' 前缀 + 大写字母数字，与内置 uid 无碰撞空间）。 */
+function feedIdToUid(id: string): string {
+  return 'MB-DYN-' + id.toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+/**
+ * 注册单颗动态彗星（meta + 轨道 + 光度 + 状态槽 + 搜索目录行）。
+ * 任一步校验失败抛错——调用方逐体 try/catch 跳过，绝不带病渲染。
+ */
+function registerDynamicComet(body: MinorBodyFeedEntry): void {
+  const id = 'dyn-' + body.id.toLowerCase();
+  const uid = feedIdToUid(body.id);
+  if (minor.states.has(uid)) return; // 幂等
+  const meta: MinorBodyMeta = {
+    id,
+    objectUid: uid,
+    kind: 'comet',
+    nameZh: body.nameZh ?? body.name,
+    nameEn: body.name,
+    aliases: [body.name, ...(body.nameZh ? [body.nameZh] : [])],
+    colorHex: '#9fc8e8', // 动态彗星统一冰蓝（区分内置手调色，Additive 下和谐）
+    typicalMagnitude: body.m1 ?? 12,
+    // 合规红线：只述事实，无命名/产权暗示；isNamable=false 由目录行落实
+    descriptionZh:
+      `${body.nameZh ?? body.name}：现役彗星，轨道根数来自 JPL Small-Body Database` +
+      `（历元 JD ${body.epochJd.toFixed(1)}，服务端每日刷新）；二体开普勒外推，演示级精度。`,
+  };
+  // 先注册轨道（校验最严，失败则 meta 不落）——顺序保证不留半注册状态
+  registerMinorBodyOrbit(id, {
+    e: body.e,
+    qAu: body.qAu,
+    aAu: body.aAu,
+    iDeg: body.iDeg,
+    omDeg: body.omDeg,
+    wDeg: body.wDeg,
+    tpJd: body.tpJd,
+    maDeg: body.maDeg,
+    epochJd: body.epochJd,
+    sourceNote: `JPL SBDB（/api/v1/minor-bodies 每日刷新），epoch JD ${body.epochJd.toFixed(1)}`,
+  });
+  registerMinorBodyMeta(meta);
+  if (Number.isFinite(body.m1)) {
+    // K 斜率 feed 未含：取 n=4 标准假设（K=10，演示级，见 astro-ephem 注释）
+    registerCometPhotometry(id, {
+      absMag: body.m1!,
+      slopeK: 10,
+      sourceNote: 'JPL SBDB M1（K 取 n=4 标准假设）',
+    });
+  }
+  minor.states.set(uid, {
+    uid,
+    id,
+    kind: 'comet',
+    nameZh: meta.nameZh,
+    colorHex: meta.colorHex,
+    raDeg: 0,
+    decDeg: 0,
+    distanceAu: 0,
+    helioDistanceAu: 0,
+    tailVisible: false,
+    vec: new THREE.Vector3(),
+  });
+  appendDynamicMinorRows([meta]); // 搜索目录 + byUid（信息卡/搜索面板可见）
+}
+
+let ensurePromise: Promise<void> | null = null;
+
+/**
+ * 确保动态花名册已加载（单例，幂等；MinorBodiesLayer 挂载时调用）。
+ * feed 失败 / 未配置 API → 静默回退内置 6 体（现状行为零变化）。
+ * 预算纪律：彗星总数（含内置 3）封顶 MAX_COMET_ROSTER，超出按 M1 最亮优先；
+ * feed 中与内置重复的 1P/2P/12P 剔除（内置有手养中文名与 MPC 光度参数，保留）。
+ */
+export function ensureMinorBodiesRoster(): Promise<void> {
+  if (!ensurePromise) {
+    ensurePromise = (async () => {
+      const feed = await fetchMinorBodiesFeed();
+      if (!feed) return;
+      const builtinComets = [...minor.states.values()].filter((s) => s.kind === 'comet').length;
+      const budget = Math.max(0, MAX_COMET_ROSTER - builtinComets);
+      const candidates = feed.bodies
+        .filter((b) => b && b.kind === 'comet' && typeof b.name === 'string' && !isBuiltinComet(b.name))
+        .sort((a, b) => (a.m1 ?? 99) - (b.m1 ?? 99)) // M1 越小越亮
+        .slice(0, budget);
+      let added = 0;
+      for (const body of candidates) {
+        try {
+          registerDynamicComet(body);
+          added++;
+        } catch (err) {
+          // 单体坏根数只跳过该体（e 超域/缺 tp 等），不拖垮整批
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[minorRegistry] 动态彗星注册失败，已跳过：', body.id, err);
+          }
+        }
+      }
+      if (added > 0) {
+        minor.computedAtMs = 0; // 强制下一次 recompute（新槽位坐标还是 0）
+        rosterVersion++;
+        for (const fn of rosterListeners) fn();
+      }
+    })();
+  }
+  return ensurePromise;
+}
 
 /**
  * 整批重算 6 个小天体（开普勒 + HelioVector，<1.5ms）。

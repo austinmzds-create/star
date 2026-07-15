@@ -21,7 +21,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { curlDownload, parseCsvLine, round } from './etl-utils.mjs';
+import { curlDownload, decodeBrightStars, parseCsvLine, round } from './etl-utils.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
@@ -355,7 +355,7 @@ function selfCheck(objects) {
   // 与核心恒星表 uid 无冲突。
   if (existsSync(BRIGHT_STARS_JSON)) {
     const bright = JSON.parse(readFileSync(BRIGHT_STARS_JSON, 'utf8'));
-    const starUids = new Set((bright.stars ?? []).map((s) => s.u));
+    const starUids = new Set(decodeBrightStars(bright).map((s) => s.u));
     for (const u of uids) {
       if (starUids.has(u)) throw new Error(`DSO uid 与恒星表冲突：${u}`);
     }

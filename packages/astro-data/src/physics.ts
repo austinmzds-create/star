@@ -199,9 +199,33 @@ function interpAnchors(x: number, anchors: readonly (readonly [number, number])[
   return anchors[anchors.length - 1]![1];
 }
 
-/** Ballesteros 公式：B-V 色指数 → 有效温度（generated JSON 暂无 ci 列，本轮仅留接口）。 */
+/**
+ * Ballesteros 公式（2012，黑体近似）：B−V 色指数 → 有效温度（K）。
+ * T = 4600·(1/(0.92·BV+1.7) + 1/(0.92·BV+0.62))。
+ * 输入钳到 [-0.4, 3.5]（HYG 核心层实测 ci ∈ [-0.31, 3.33]；BV→-0.674 时分母过零）。
+ * 数据源：star-extras.json 的 ci 列（Phase 9C），经 opts.ci 传入。
+ */
 function tempFromBv(bv: number): number {
-  return 4600 * (1 / (0.92 * bv + 1.7) + 1 / (0.92 * bv + 0.62));
+  const b = Math.min(3.5, Math.max(-0.4, bv));
+  return 4600 * (1 / (0.92 * b + 1.7) + 1 / (0.92 * b + 0.62));
+}
+
+/**
+ * 温度 → 光谱连续刻度（TEMP_ANCHORS 的逆内插，温度随刻度单调递减）。
+ * ci 反解出温度后，用它换算 BC（热改正）刻度，让光度/质量/寿命链路与
+ * 测光温度自洽（而非仍用光谱型档位的 BC）。两端 clamp。
+ */
+function scaleFromTemp(tempK: number): number {
+  const first = TEMP_ANCHORS[0]!;
+  if (tempK >= first[1]) return first[0];
+  for (let i = 1; i < TEMP_ANCHORS.length; i++) {
+    const hi = TEMP_ANCHORS[i]!;
+    if (tempK >= hi[1]) {
+      const lo = TEMP_ANCHORS[i - 1]!;
+      return lo[0] + ((tempK - lo[1]) / (hi[1] - lo[1])) * (hi[0] - lo[0]);
+    }
+  }
+  return TEMP_ANCHORS[TEMP_ANCHORS.length - 1]![0];
 }
 
 /** 颜色印象（按光谱类；无光谱类时按温度分档兜底）。 */
@@ -237,11 +261,14 @@ const SUN_TEMP_K = 5772;
  * - 恒星：光谱/星等/距离 → 完整计算链（缺哪环哪环的字段为 null）。
  * - DSO（galaxy/nebula/cluster）：转 deriveDsoProfile（类型模板 + Messier 手工精确表）。
  * - 星历/太阳系天体：返回 null。
- * opts.nowYear 固定「现在」便于测试；opts.bv 为 B-V 色指数兜底温度（暂无数据源，留接口）。
+ * opts.nowYear 固定「现在」便于测试；
+ * opts.ci 为 B−V 色指数（Phase 9C，star-extras.json）：提供时用 Ballesteros 公式
+ * 测光反解温度【替代】光谱型档位估算（连续、更准），BC/光度/质量/寿命链路随之精化；
+ * opts.bv 为旧接口别名（无 ci 时的兜底通道，语义同 ci），保持向后兼容。
  */
 export function derivePhysical(
   obj: CelestialObject,
-  opts?: { nowYear?: number; bv?: number },
+  opts?: { nowYear?: number; bv?: number; ci?: number },
 ): PhysicalProfile | null {
   if (obj.isEphemeris || NON_DERIVABLE_TYPES.has(obj.type)) return null;
   if (obj.type !== 'star') return deriveDsoProfile(obj, opts);
@@ -249,28 +276,38 @@ export function derivePhysical(
   const nowYear = opts?.nowYear ?? new Date().getFullYear();
   const dist = obj.distanceLy != null && obj.distanceLy > 0 ? obj.distanceLy : null;
   const parsed = parseSpectralType(obj.spectralType);
+  const ci = opts?.ci ?? opts?.bv;
 
-  // 1-2. 温度与颜色（光谱锚点优先，B-V 兜底；皆无 → null，后续 BC 取 0 近似）
+  // 1-2. 温度与颜色：ci 测光反解优先（Ballesteros，连续）> 光谱锚点档位 > 皆无 → null。
+  // 白矮星不套 Ballesteros（其 B−V 与主序温标不同源，维持既有 null 语义）。
   let tempK: number | null = null;
-  if (!parsed.whiteDwarf && parsed.scale != null) {
+  let ciDerived = false;
+  if (!parsed.whiteDwarf && ci != null && Number.isFinite(ci)) {
+    tempK = Math.round(tempFromBv(ci));
+    ciDerived = true;
+  } else if (!parsed.whiteDwarf && parsed.scale != null) {
     tempK = Math.round(interpAnchors(parsed.scale, TEMP_ANCHORS));
-  } else if (!parsed.whiteDwarf && opts?.bv != null) {
-    tempK = Math.round(tempFromBv(opts.bv));
   }
-  const colorDesc = parsed.classLetter
-    ? COLOR_DESC[parsed.classLetter]
-    : tempK != null
-      ? colorDescFromTemp(tempK)
-      : '';
+  // 颜色印象：ci 温度在手时按温度连续分档（与测光自洽）；否则沿用光谱类。
+  const colorDesc = ciDerived && tempK != null
+    ? colorDescFromTemp(tempK)
+    : parsed.classLetter
+      ? COLOR_DESC[parsed.classLetter]
+      : tempK != null
+        ? colorDescFromTemp(tempK)
+        : '';
 
   // 3. 绝对星等（距离缺失 → 光度链全 null）
   const absoluteMag =
     dist != null ? Math.round((obj.magnitude - 5 * Math.log10(dist / LY_PER_PARSEC) + 5) * 100) / 100 : null;
 
-  // 4. 光度：Mbol = Mv + BC，L = 10^((4.74-Mbol)/2.5)
+  // 4. 光度：Mbol = Mv + BC，L = 10^((4.74-Mbol)/2.5)。
+  // BC 刻度：ci 温度在手时用温度逆内插的刻度（scaleFromTemp，与测光温度自洽），
+  // 否则沿用光谱型刻度；皆无取 0 近似。
   let luminositySolar: number | null = null;
   if (absoluteMag != null) {
-    const bc = parsed.scale != null ? interpAnchors(parsed.scale, BC_ANCHORS) : 0;
+    const bcScale = ciDerived && tempK != null ? scaleFromTemp(tempK) : parsed.scale;
+    const bc = bcScale != null ? interpAnchors(bcScale, BC_ANCHORS) : 0;
     luminositySolar = sig(10 ** ((4.74 - (absoluteMag + bc)) / 2.5));
   }
 

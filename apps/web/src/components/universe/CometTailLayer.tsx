@@ -10,7 +10,13 @@ import * as THREE from 'three';
 import { getDeviceTier, subscribeDeviceTier } from '@/lib/deviceTier';
 import { EPHEM_SLERP_WINDOW_MS, slerpSphereVec } from '@/lib/ephemRegistry';
 import { fx, getGlobalFade } from '@/lib/fxBus';
-import { minor, setCometTailVisible, type MinorBodyState } from '@/lib/minorRegistry';
+import {
+  getMinorRosterVersion,
+  minor,
+  setCometTailVisible,
+  subscribeMinorRoster,
+  type MinorBodyState,
+} from '@/lib/minorRegistry';
 import { useUniverse } from '@/lib/store';
 import { SPHERE_RADIUS } from '@/lib/universe';
 
@@ -37,8 +43,12 @@ import { SPHERE_RADIUS } from '@/lib/universe';
  * 在万年尺度不可外推，与 MinorBodiesLayer 同节奏隐藏。
  */
 
-/** 支持同时渲染的彗星数上限（预算内当前恰 3 颗：哈雷/恩克/12P）。 */
-const MAX_COMETS = 3;
+/**
+ * 支持同时渲染的彗星数上限（9C 跨域契约：预算封顶 8——内置 3 + 动态 ≤5；
+ * 超出取最亮）。uniform 数组按 8 编译（8×(2+8) vec3 + 16 float，远在 WebGL
+ * 最低 uniform 配额内）；不活跃槽 uBright=0 → 粒子钳出裁剪域零光栅化成本。
+ */
+const MAX_COMETS = 8;
 /** 尘埃尾骨架点数（与 astro-ephem 默认一致，shader 里写死 8）。 */
 const SKEL_K = 8;
 /** 骨架/切向/亮度重算键：observeTime 量化 1h。 */
@@ -186,8 +196,17 @@ export function CometTailLayer() {
     (s) => ((s as unknown as { deepTimeYears?: number | null }).deepTimeYears ?? null) !== null,
   );
 
+  // 动态花名册（9C）：版本变化重建槽位与粒子缓冲（roster 由 MinorBodiesLayer
+  // 挂载时的 ensureMinorBodiesRoster 驱动，本层同 chunk 只订阅不发起）。
+  const roster = useSyncExternalStore(
+    subscribeMinorRoster,
+    getMinorRosterVersion,
+    getMinorRosterVersion,
+  );
+
   const built = useMemo(() => {
-    // 彗星槽位：注册表声明序（哈雷/恩克/12P），封顶 MAX_COMETS
+    // 彗星槽位：注册表声明序（内置 3 颗恒在前，动态注册序次之），封顶 MAX_COMETS。
+    // minorRegistry 侧注册已按 M1 最亮优先截断到同一预算，这里的 slice 只是双保险。
     const comets: MinorBodyState[] = [...minor.states.values()]
       .filter((s) => s.kind === 'comet')
       .slice(0, MAX_COMETS);
@@ -242,7 +261,7 @@ export function CometTailLayer() {
     /** 播放平滑插值起点（单位方向，version 变化时记 uniform 现值）。 */
     const prevDirs = comets.map(() => new THREE.Vector3(0, 1, 0));
     return { comets, geom, mat, uniforms, points, lastVisible, prevDirs };
-  }, [perComet]);
+  }, [perComet, roster]);
 
   useEffect(() => {
     return () => {

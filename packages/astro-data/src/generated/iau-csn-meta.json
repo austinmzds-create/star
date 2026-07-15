@@ -1,0 +1,19 @@
+{
+  "code": "iau-csn-20220404",
+  "name": "IAU Catalog of Star Names (IAU-CSN)",
+  "publisher": "IAU Division C Working Group on Star Names (WGSN)",
+  "version": "Last updated 2022-04-04",
+  "license": "CC BY 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+  "citationText": "官方星名来自 IAU Catalog of Star Names（IAU Working Group on Star Names，CC BY 4.0，署名 IAU）。本服务的纪念命名为私人象征性纪念，非 IAU 官方命名；恒星唯一官方专名体系见 IAU-CSN。",
+  "homepageUrl": "https://www.iau.org/public/themes/naming_stars/",
+  "downloadUrl": "https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt",
+  "retrievedAt": "2026-07-15T08:00:43.646Z",
+  "recordCount": 451,
+  "matchedCount": 339,
+  "approvalDateRange": [
+    "2015-12-15",
+    "2022-04-04"
+  ],
+  "refreshPolicy": "static-build"
+}

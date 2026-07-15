@@ -128,6 +128,50 @@ describe('derivePhysical · 恒星锚点校验', () => {
     expect(p.luminositySolar!).toBeLessThan(0.1);
   });
 
+  // —— Phase 9C：ci（B−V）测光温度（Ballesteros 公式，star-extras.json 数据源）——
+  // 断言前先手算核实（2026-07-15）：T(0.65)=4600(1/2.298+1/1.218)=5778K；
+  // T(0.009)=4600(1/1.7083+1/0.6283)=10014K（天狼星 HYG ci=0.009）。
+  it('ci 锚点：太阳 ci=0.65 → 5778K（5772±150 内）；有 ci 时替代光谱档位', () => {
+    const p = derivePhysical(
+      makeStar({ spectralType: 'G2V', magnitude: 4.83, distanceLy: 32.6 }),
+      { ci: 0.65 },
+    )!;
+    expect(Math.abs(p.tempK! - 5772)).toBeLessThanOrEqual(150);
+    expect(p.tempK).toBe(5778); // Ballesteros 精确值（回归锁）
+    expect(p.colorDesc).toBe('金黄如太阳');
+    // 光度链仍自洽（BC 由温度逆内插刻度换算）
+    expect(p.luminositySolar!).toBeGreaterThan(0.9);
+    expect(p.luminositySolar!).toBeLessThan(1.1);
+    expect(p.stage).toBe('main_sequence');
+  });
+
+  it('ci 锚点：天狼星 ci=0.009（HYG 实值）→ ≈10014K；质量/寿命链路仍在物理区间', () => {
+    const sirius = getCelestialByUid('HIP32349')!;
+    const p = derivePhysical(sirius, { ci: 0.009 })!;
+    expect(p.tempK).toBe(10014); // 先算后断言（Ballesteros 精确值）
+    expect(p.tempK!).toBeGreaterThanOrEqual(9600); // ~9900K 量级（Teff 实测 9940K）
+    expect(p.tempK!).toBeLessThanOrEqual(10400);
+    expect(p.massSolar!).toBeGreaterThanOrEqual(1.8);
+    expect(p.massSolar!).toBeLessThanOrEqual(2.6);
+    expect(p.stage).toBe('main_sequence');
+  });
+
+  it('ci 缺省走原光谱路径（向后兼容）；白矮星不套 Ballesteros；极端 ci 被钳制', () => {
+    // 无 ci：与既有行为逐字段一致
+    const a = derivePhysical(makeStar({ spectralType: 'K0III' }))!;
+    expect(a.tempK).toBe(5280);
+    // 白矮星 + ci：维持 null 温度语义（B−V 与主序温标不同源）
+    const wd = derivePhysical(makeStar({ spectralType: 'DA2' }), { ci: 0.2 })!;
+    expect(wd.stage).toBe('white_dwarf');
+    // 极端 ci 钳到 [-0.4, 3.5]，温度有限且为正
+    const hot = derivePhysical(makeStar({}), { ci: -5 })!;
+    expect(hot.tempK!).toBeGreaterThan(15000);
+    expect(Number.isFinite(hot.tempK!)).toBe(true);
+    const cool = derivePhysical(makeStar({}), { ci: 9 })!;
+    expect(cool.tempK!).toBeGreaterThan(1500);
+    expect(cool.tempK!).toBeLessThan(2500);
+  });
+
   it('星历/太阳系天体返回 null', () => {
     expect(derivePhysical(makeStar({ type: 'planet' }))).toBeNull();
     expect(derivePhysical(makeStar({ isEphemeris: true }))).toBeNull();

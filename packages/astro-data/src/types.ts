@@ -103,6 +103,28 @@ export interface CelestialObject {
   imageCredit?: string;
 }
 
+/**
+ * 恒星增强字段（Phase 9C，跨域契约冻结）：来自 generated/star-extras.json 异步 chunk，
+ * loadStarExtras() 懒加载消费——绝不进主 bundle（主页 First Load 回收纪律）。
+ * 覆盖范围 = 核心层（mag≤6.5）全部 uid + 手写目录中核心层外的星（比邻星）。
+ */
+export interface StarExtra {
+  /** 自行 RA 分量（mas/yr，已含 cosδ，HYG pmra 约定；round 0.1）。 */
+  pmRa?: number;
+  /** 自行 Dec 分量（mas/yr；round 0.1），与 pmRa 成对出现。 */
+  pmDec?: number;
+  /** B−V 色指数（round 0.01）：Ballesteros 公式反解色温的输入。 */
+  ci?: number;
+  /** 变星幅度：最暗端视星等（HYG var_min 语义，数值更大）。 */
+  varMin?: number;
+  /** 变星幅度：最亮端视星等（HYG var_max 语义），与 varMin 成对出现。 */
+  varMax?: number;
+  /** 是否双星/聚星系统（HYG base/comp/comp_primary 推导）。 */
+  multiple?: boolean;
+  /** IAU-CSN 官方星名（IAU WGSN，CC BY 4.0 署名 IAU；带变音符 UTF-8 版本）。 */
+  iauName?: string;
+}
+
 /** 搜索命中结果。 */
 export interface StarSearchResult {
   object: CelestialObject;

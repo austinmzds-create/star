@@ -7,8 +7,14 @@
  * 本地无 DB 的容器不要运行。
  */
 import { PrismaClient, type CelestialType } from '@prisma/client';
-import { derivePhysical, FULL_CATALOG, type CelestialObject } from '@star/astro-data';
+import {
+  derivePhysical,
+  FULL_CATALOG,
+  loadStarExtras,
+  type CelestialObject,
+} from '@star/astro-data';
 import { listEphemerisBodies, toCelestialObject } from '@star/astro-ephem';
+import { DATA_SOURCES } from '../src/data-source/data-source.constants';
 
 const prisma = new PrismaClient();
 
@@ -64,10 +70,18 @@ async function main(): Promise<void> {
   let starCount = 0;
   let aliasCount = 0;
 
+  // 恒星增强字段（Phase 9C）：star-extras.json 经 loadStarExtras 懒加载（tsx 的
+  // esbuild JSON 转换器支持动态 import）。ETL 未跑/文件缺失时返回空 Map——
+  // 落库回到光谱型档位估算，与 9B 行为一致，seed 绝不因增强层缺席而失败。
+  const extras = await loadStarExtras();
+
   for (const obj of FULL_CATALOG) {
     // 百科档案：derivePhysical 内部对 DSO 自动分派 deriveDsoProfile——
-    // DB 与内存目录永远同式（单一真源）；stage/fate 空串（未知）落库为 null
-    const p = derivePhysical(obj);
+    // DB 与内存目录永远同式（单一真源）；stage/fate 空串（未知）落库为 null。
+    // ci（B−V 色指数）在手时传入：温度经 Ballesteros 测光反解（连续、更准），
+    // 光度/质量/寿命链路随之精化（derivePhysical 冻结契约 opts.ci，Phase 9C）
+    const ci = extras.get(obj.objectUid)?.ci;
+    const p = derivePhysical(obj, ci != null ? { ci } : undefined);
     const data = {
       type: obj.type.toUpperCase() as CelestialType,
       nameEn: obj.nameEn,
@@ -182,8 +196,38 @@ async function main(): Promise<void> {
     aliasCount += created.count;
   }
 
+  // —— 数据来源主数据（Phase 9C 溯源体系）——
+  // 单一事实源：src/data-source/data-source.constants.ts（license/citation 逐字登记，绝不编造）。
+  // retrievedAt 为 null 的行（运行时源/预留源）以 seed 执行时刻代填，notes 已注明语义。
+  let sourceCount = 0;
+  const seededAt = new Date();
+  for (const src of DATA_SOURCES) {
+    const data = {
+      name: src.name,
+      publisher: src.publisher,
+      url: src.url,
+      downloadUrl: src.downloadUrl ?? null,
+      version: src.version,
+      license: src.license,
+      licenseUrl: src.licenseUrl ?? null,
+      citationZh: src.citationZh,
+      citationEn: src.citationEn,
+      magComplete: src.magComplete ?? null,
+      recordCount: src.recordCount ?? null,
+      refreshPolicy: src.refreshPolicy,
+      retrievedAt: src.retrievedAt ? new Date(src.retrievedAt) : seededAt,
+      notes: src.notes ?? null,
+    };
+    await prisma.dataSource.upsert({
+      where: { key: src.key },
+      create: { key: src.key, ...data },
+      update: data,
+    });
+    sourceCount++;
+  }
+
   console.log(
-    `种子完成：celestial_object ${starCount} 条 + 星历天体 ${ephCount} 条，celestial_name_alias ${aliasCount} 条`,
+    `种子完成：celestial_object ${starCount} 条 + 星历天体 ${ephCount} 条，celestial_name_alias ${aliasCount} 条，data_source ${sourceCount} 条`,
   );
 }
 

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useUniverse } from '@/lib/store';
 
@@ -65,11 +66,13 @@ const FALLBACK_LINES: string[] = [
 
 /**
  * 数据来源（非图像资产，常显）：credits.json 由 fetch-assets.mjs 生成、只管
- * 图像资产，轨道/星历数据来源在此静态列出（Phase 6B：卫星与小天体）。
+ * 图像资产，轨道/星历数据来源在此静态列出（Phase 9C：口径与 /credits 页
+ * 的 sources.ts 登记表一致——本面板是快捷摘要，完整逐字致谢句见 /credits）。
  */
 const DATA_SOURCE_LINES: string[] = [
-  'TLE 轨道数据：Celestrak（内置快照 + 运行时刷新；SGP4 推算，演示精度）',
-  '小天体轨道根数：JPL Small-Body Database；参考校验：JPL Horizons（二体模型，演示级 ±0.5°）',
+  'IAU 官方星名：IAU Catalog of Star Names（IAU-CSN，WGSN；CC BY 4.0，署名 IAU）',
+  'TLE 轨道数据：CelesTrak（站内服务端每 6 小时代理刷新；SGP4 推算，演示精度）',
+  '小天体轨道根数：NASA/JPL Small-Body Database（公有领域，服务端每日刷新）；参考校验：JPL Horizons（二体模型，演示级 ±0.5°）',
 ];
 
 export function CreditsPanel() {
@@ -181,6 +184,16 @@ export function CreditsPanel() {
                   </li>
                 ))}
               </ul>
+              {/* 完整版入口（Phase 9C）：/credits 独立路由——机构/版本/许可/
+                逐字致谢句/抓取时间/星等完备极限全量登记 */}
+              <Link
+                href="/credits"
+                prefetch={false}
+                onClick={closeCredits}
+                className="mt-3 inline-block text-[12.5px] text-nebula-100/85 underline underline-offset-4 transition hover:text-white"
+              >
+                查看完整「数据来源与版本」页 →
+              </Link>
             </div>
           </div>
         </div>

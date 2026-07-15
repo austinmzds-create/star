@@ -26,9 +26,9 @@ interface RawStar {
   aliases?: string[];
   desc?: string;
   /**
-   * 自行（mas/yr，pmRa 含 cosδ）。绝大多数手写星不写——由下方「自行回填」按
-   * uid 从 HYG generated 行补齐；仅 generated 覆盖不到的暗星（比邻星 mag 11 >
-   * 核心层阈值 6.5）手写，取值同源 HYG v41 缓存 CSV。
+   * 自行（mas/yr，pmRa 含 cosδ）。9C 起统一由 star-extras.json 异步回填
+   * （applyStarExtrasToCatalog）；此手写通道仅作 extras 覆盖不到时的兜底
+   * （比邻星 mag 11 在核心层外，但已列入 extras 允许名单），取值同源 HYG 缓存 CSV。
    */
   pmRa?: number;
   pmDec?: number;
@@ -178,9 +178,6 @@ interface GeneratedStar {
   dec: number;
   mag: number;
   dist?: number | null;
-  /** 自行（mas/yr，pmra 含 cosδ，HYG 透传；缺测省键）。 */
-  pmra?: number;
-  pmdec?: number;
   spect?: string;
   con?: string;
   bayer?: string;
@@ -253,10 +250,8 @@ function buildFromGenerated(r: GeneratedStar): CelestialObject {
     renderPriority: decideRenderPriority(r.mag, isFeatured),
     searchPriority: decideSearchPriority(r.mag, isFeatured),
     sourceCatalog: 'hyg-v41',
-    // 自行透传（Phase 9B 深时模式；缺测则省键，渲染侧视为不动）。
-    ...(r.pmra !== undefined && r.pmdec !== undefined
-      ? { pmRaMasYr: r.pmra, pmDecMasYr: r.pmdec }
-      : {}),
+    // 自行不再随主表透传（9C lean 化）：pm 走 star-extras.json 异步 chunk，
+    // 加载完成后由 applyStarExtrasToCatalog 回填 pmRaMasYr/pmDecMasYr。
   };
 }
 
@@ -264,28 +259,77 @@ function buildFromGenerated(r: GeneratedStar): CelestialObject {
 
 const featured: CelestialObject[] = RAW_STARS.map(buildStar);
 
+/** bright-stars.json 列式载荷形状（9C columnar-v1；ETL 单一约定见 build-catalog.mjs）。 */
+interface GeneratedColumnar {
+  n?: number;
+  cols?: {
+    ra?: number[];
+    dec?: number[];
+    mag?: number[];
+    /** 0 = 未知哨兵（真实距离不为 0）。 */
+    dist?: number[];
+    spect?: string[];
+    con?: string[];
+    bayer?: string[];
+    flam?: string[];
+    proper?: string[];
+    bf?: string[];
+    hip?: string[];
+    hd?: string[];
+    hr?: string[];
+  };
+}
+
+/**
+ * 列式 → 行式解码（模块加载期一次，8896 行 <3ms）。
+ * u 由 hip/hd/hr 按 HIP>HD>HR 派生（与 ETL 同一优先级约定，不落盘省 ~110KB）。
+ * 防御：结构异常/长度不齐退化为空数组（catalog 仅剩手写 60 颗，构建不崩）。
+ */
+function decodeGenerated(json: unknown): GeneratedStar[] {
+  const g = json as GeneratedColumnar | null;
+  const cols = g?.cols;
+  const n = g?.n;
+  if (!cols || typeof n !== 'number' || n <= 0) return [];
+  if (cols.ra?.length !== n || cols.dec?.length !== n || cols.mag?.length !== n) return [];
+  const out: GeneratedStar[] = [];
+  for (let i = 0; i < n; i++) {
+    const hip = cols.hip?.[i] || undefined;
+    const hd = cols.hd?.[i] || undefined;
+    const hr = cols.hr?.[i] || undefined;
+    let u: string | undefined;
+    if (hip) u = 'HIP' + hip;
+    else if (hd) u = 'HD' + hd;
+    else if (hr) u = 'HR' + hr;
+    if (!u) continue; // 理论不达（ETL 已剔孤儿），防御跳过
+    const dist = cols.dist?.[i];
+    out.push({
+      u,
+      ra: cols.ra[i]!,
+      dec: cols.dec[i]!,
+      mag: cols.mag[i]!,
+      dist: dist === 0 || dist === undefined ? null : dist, // 0 = 未知哨兵
+      spect: cols.spect?.[i] || undefined,
+      con: cols.con?.[i] || undefined,
+      bayer: cols.bayer?.[i] || undefined,
+      flam: cols.flam?.[i] || undefined,
+      proper: cols.proper?.[i] || undefined,
+      bf: cols.bf?.[i] || undefined,
+      hip,
+      hd,
+      hr,
+    });
+  }
+  return out;
+}
+
 // generated 载入（防御：缺失或结构异常时退化为空数组，catalog 仅剩手写 60 颗，构建不崩）。
-const generatedRaw = ((brightStars as { stars?: GeneratedStar[] })?.stars ?? []) as GeneratedStar[];
+const generatedRaw: GeneratedStar[] = decodeGenerated(brightStars);
 const generatedStars: CelestialObject[] = generatedRaw.map(buildFromGenerated);
 
-// —— 自行回填（Phase 9B 深时模式）——手写精选星在合并中优先（保留人工中文名/简介），
-// 但其行内没有自行数据；北斗/大角等叙事主角全是手写星，缺 pm 会让「星座时光机」里
-// 最亮的一批星纹丝不动。按 objectUid 反查 generated 行补 pmRaMasYr/pmDecMasYr
-// （60 次 Map 查询，模块加载期一次性；手写已带 pm 的如比邻星不覆盖）。
-{
-  const pmByUid = new Map<string, GeneratedStar>();
-  for (const r of generatedRaw) {
-    if (r.pmra !== undefined && r.pmdec !== undefined) pmByUid.set(r.u, r);
-  }
-  for (const f of featured) {
-    if (f.pmRaMasYr !== undefined) continue;
-    const g = pmByUid.get(f.objectUid);
-    if (g) {
-      f.pmRaMasYr = g.pmra;
-      f.pmDecMasYr = g.pmdec;
-    }
-  }
-}
+// —— 自行回填（9B→9C 演进）——9B 曾在此从 generated 行补手写星的 pm；9C 主表
+// lean 化后 generated 行不再携带 pm，回填改为运行时 applyStarExtrasToCatalog
+// （star-extras.ts，extras 异步 chunk 加载完成后一次性补齐全目录含手写星）。
+// RawStar 仍保留 pmRa/pmDec 手写通道（比邻星），extras 覆盖不到时的最后兜底。
 
 /** 归一化数字编号，去前导 0，便于跨源比较。 */
 const norm = (s?: string): string => s?.replace(/^0+/, '') ?? '';

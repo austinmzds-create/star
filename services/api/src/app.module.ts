@@ -4,6 +4,8 @@ import { AgentModule } from './agent/agent.module';
 import { AlbumModule } from './album/album.module';
 import { CelestialModule } from './celestial/celestial.module';
 import { CertificateModule } from './certificate/certificate.module';
+import { DataSourceModule } from './data-source/data-source.module';
+import { EphemerisFeedModule } from './ephemeris-feed/ephemeris-feed.module';
 import { HealthModule } from './health/health.module';
 import { MemorialModule } from './memorial/memorial.module';
 import { OrdersModule } from './orders/orders.module';
@@ -26,6 +28,8 @@ import { RedisModule } from './redis/redis.module';
     AlbumModule.forRoot(),
     OrdersModule,
     AdminModule,
+    EphemerisFeedModule.forRoot(),
+    DataSourceModule,
   ],
 })
 export class AppModule {}

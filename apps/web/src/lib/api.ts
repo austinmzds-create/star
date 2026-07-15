@@ -343,6 +343,89 @@ export async function createMemorialRegistration(
   }
 }
 
+// ─────────────────────────── 天文数据 feed（Phase 9C：/api/v1，跨域契约 1） ───────────────────────────
+
+/** /api/v1/minor-bodies 单体根数（后端 ephemeris-feed 域实现，逐字段冻结）。 */
+export interface MinorBodyFeedEntry {
+  id: string;
+  name: string;
+  nameZh?: string;
+  kind: 'comet' | 'asteroid';
+  epochJd: number;
+  e: number;
+  qAu?: number;
+  aAu?: number;
+  iDeg: number;
+  omDeg: number;
+  wDeg: number;
+  tpJd?: number;
+  maDeg?: number;
+  /** 彗星总星等参数 M1（JPL SBDB）。 */
+  m1?: number;
+  /** 彗核星等参数 M2。 */
+  m2?: number;
+}
+
+/** GET /api/v1/minor-bodies 成功 body。 */
+export interface MinorBodiesFeed {
+  updatedAt: string;
+  source: 'jpl-sbdb';
+  bodies: MinorBodyFeedEntry[];
+}
+
+/**
+ * 拉取小天体根数 feed（服务端每日刷新 JPL SBDB 的快照）。
+ * never-reject：未配置 API / 网络失败 / 形状异常一律返回 null——调用方回退内置 6 体常量。
+ */
+export async function fetchMinorBodiesFeed(): Promise<MinorBodiesFeed | null> {
+  if (!isApiConfigured()) return null;
+  try {
+    const res = await request<MinorBodiesFeed>('/api/v1/minor-bodies');
+    if (!res || !Array.isArray(res.bodies)) return null;
+    return res;
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] minor-bodies feed 拉取失败，回退内置常量：', err);
+    }
+    return null;
+  }
+}
+
+/** /api/v1/tle 单星条目（id 与 web 卫星 uid 对齐：'SAT-ISS' | 'SAT-TIANGONG' | 'SAT-HST'）。 */
+export interface TleFeedSat {
+  id: string;
+  name: string;
+  nameZh?: string;
+  l1: string;
+  l2: string;
+}
+
+/** GET /api/v1/tle 成功 body。 */
+export interface TleFeed {
+  updatedAt: string;
+  source: 'celestrak';
+  sats: TleFeedSat[];
+}
+
+/**
+ * 拉取卫星 TLE feed（服务端每 6h 集中刷新 Celestrak——客户端不再直连 Celestrak，
+ * 遵守其 usage policy 的 2h 更新节奏与封禁规则）。
+ * never-reject：失败返回 null——调用方回退内置快照 + localStorage 24h 缓存。
+ */
+export async function fetchTleFeed(): Promise<TleFeed | null> {
+  if (!isApiConfigured()) return null;
+  try {
+    const res = await request<TleFeed>('/api/v1/tle');
+    if (!res || !Array.isArray(res.sats)) return null;
+    return res;
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[api] TLE feed 拉取失败，回退内置快照：', err);
+    }
+    return null;
+  }
+}
+
 // ─────────────────────────── 宇宙来信（Agent Skill: cosmic-letter） ───────────────────────────
 
 /** 生成宇宙来信的输入（UI 形状）。occasion 传中文标签，发送前映射为 OccasionType 枚举码。 */
