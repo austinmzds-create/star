@@ -5,14 +5,15 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
-from ..models import (Cooperation, Influencer, LevelChangeLog, Product,
-                      Promotion, SampleOrder, User, VideoTask)
-from ..services import levels
+from ..models import (AccessGrant, Cooperation, Influencer, LevelChangeLog,
+                      OperationLog, OrderRecord, Product, Promotion,
+                      SampleOrder, User, VideoTask)
+from ..services import levels, storage
 from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -735,3 +736,156 @@ async def activity(influencer_id: int, user: User = Depends(current_user), db: S
                            "created_at": p.created_at.isoformat()})
 
     return {"samples": samples, "videos": videos, "promotions": promotions}
+
+
+# ---------- 方案B 需求1:产品合作大卡片 + 时间轴 + 全部动态 ----------
+
+def _serialize_log(l: OperationLog) -> dict:
+    return {"id": l.id, "event_type": l.event_type, "product_id": l.product_id,
+            "actor_id": l.actor_id, "actor_name": l.actor_name, "actor_role": l.actor_role,
+            "summary": l.summary, "detail": l.detail,
+            "created_at": l.created_at.isoformat()}
+
+
+@router.get("/{influencer_id}/collaborations")
+def collaborations(influencer_id: int, user: User = Depends(current_user),
+                   db: Session = Depends(get_db)):
+    """达人 × 各产品的合作大卡片:把现有表聚合成每个产品一张卡的统计(不新建重模型)。"""
+    from datetime import datetime, timedelta
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    coop_ids = db.scalars(select(Cooperation.id)
+                          .where(Cooperation.influencer_id == inf.id)).all() or [0]
+    # 汇总所有「有业务/被授权」的产品(授权 + 寄样 + 视频 + 出单)
+    pids = set()
+    pids.update(db.scalars(select(AccessGrant.product_id)
+                           .where(AccessGrant.influencer_id == inf.id)).all())
+    pids.update(db.scalars(select(SampleOrder.product_id)
+                           .where(SampleOrder.cooperation_id.in_(coop_ids))).all())
+    pids.update(db.scalars(select(VideoTask.product_id)
+                           .where(VideoTask.cooperation_id.in_(coop_ids))).all())
+    pids.update(db.scalars(select(OrderRecord.product_id)
+                           .where(OrderRecord.influencer_id == inf.id)).all())
+    pids = sorted(pid for pid in pids if pid)
+    owner = db.get(User, inf.owner_bd_id) if inf.owner_bd_id else None
+    if not pids:
+        return {"items": [], "owner_bd_id": inf.owner_bd_id,
+                "owner_bd_name": owner.display_name if owner else None,
+                "commission_tier": float(inf.commission_tier)}
+    products = {p.id: p for p in db.scalars(select(Product).where(Product.id.in_(pids))).all()}
+    cutoff = datetime.now() - timedelta(days=30)
+    cards = []
+    for pid in pids:
+        p = products.get(pid)
+        if not p:
+            continue
+        grant = db.scalars(select(AccessGrant)
+                           .where(AccessGrant.influencer_id == inf.id, AccessGrant.product_id == pid)
+                           .order_by(AccessGrant.granted_at)).first()
+        granter = db.get(User, grant.granted_by) if grant and grant.granted_by else None
+        total_gmv = db.scalar(select(func.coalesce(func.sum(OrderRecord.amount), 0))
+                              .where(OrderRecord.influencer_id == inf.id, OrderRecord.product_id == pid))
+        gmv_30d = db.scalar(select(func.coalesce(func.sum(OrderRecord.amount), 0))
+                            .where(OrderRecord.influencer_id == inf.id, OrderRecord.product_id == pid,
+                                   OrderRecord.order_date >= cutoff))
+        sample_total = db.scalar(select(func.count(SampleOrder.id))
+                                 .where(SampleOrder.cooperation_id.in_(coop_ids),
+                                        SampleOrder.product_id == pid)) or 0
+        signed = db.scalar(select(func.count(SampleOrder.id))
+                           .where(SampleOrder.cooperation_id.in_(coop_ids),
+                                  SampleOrder.product_id == pid,
+                                  SampleOrder.status == "signed")) or 0
+        video_total = db.scalar(select(func.count(VideoTask.id))
+                                .where(VideoTask.cooperation_id.in_(coop_ids),
+                                       VideoTask.product_id == pid)) or 0
+        video_pass = db.scalar(select(func.count(VideoTask.id))
+                               .where(VideoTask.cooperation_id.in_(coop_ids),
+                                      VideoTask.product_id == pid,
+                                      VideoTask.status == "approved")) or 0
+        video_fail = db.scalar(select(func.count(VideoTask.id))
+                               .where(VideoTask.cooperation_id.in_(coop_ids),
+                                      VideoTask.product_id == pid,
+                                      VideoTask.status.in_(("rejected", "blocked")))) or 0
+        promo_total = db.scalar(select(func.count(Promotion.id))
+                                .join(VideoTask, Promotion.video_task_id == VideoTask.id)
+                                .where(VideoTask.cooperation_id.in_(coop_ids),
+                                       VideoTask.product_id == pid)) or 0
+        last_promo = db.scalars(select(Promotion)
+                                .join(VideoTask, Promotion.video_task_id == VideoTask.id)
+                                .where(VideoTask.cooperation_id.in_(coop_ids),
+                                       VideoTask.product_id == pid)
+                                .order_by(Promotion.created_at.desc())).first()
+        op_count = db.scalar(select(func.count(OperationLog.id))
+                             .where(OperationLog.influencer_id == inf.id,
+                                    OperationLog.product_id == pid)) or 0
+        last_op = db.scalars(select(OperationLog)
+                             .where(OperationLog.influencer_id == inf.id,
+                                    OperationLog.product_id == pid)
+                             .order_by(OperationLog.created_at.desc())).first()
+        cards.append({
+            "product_id": p.id, "product_name": p.name, "price_text": p.price_text,
+            "shop_product_id": p.shop_product_id,
+            "product_image": storage.thumbnail_url(p.product_image, 120) if p.product_image else None,
+            "default_commission": float(p.default_commission) if p.default_commission else None,
+            "influencer_commission": float(inf.commission_tier),
+            "granted_by_name": granter.display_name if granter else None,
+            "granted_at": grant.granted_at.isoformat() if grant else None,
+            "owner_bd_name": owner.display_name if owner else None,
+            "total_gmv": float(total_gmv or 0), "gmv_30d": float(gmv_30d or 0),
+            "sample_total": sample_total, "sample_signed": signed,
+            "video_total": video_total, "video_pass": video_pass, "video_fail": video_fail,
+            "promo_total": promo_total,
+            "promo_status": last_promo.auth_status if last_promo else None,
+            "op_count": op_count,
+            "last_op_at": last_op.created_at.isoformat() if last_op else None,
+        })
+    # 最近有动态的产品排前面
+    cards.sort(key=lambda c: c["last_op_at"] or "", reverse=True)
+    return {"items": cards, "owner_bd_id": inf.owner_bd_id,
+            "owner_bd_name": owner.display_name if owner else None,
+            "commission_tier": float(inf.commission_tier)}
+
+
+@router.get("/{influencer_id}/collaborations/{product_id}/timeline")
+def collaboration_timeline(influencer_id: int, product_id: int,
+                           page: int = 1, page_size: int = 30,
+                           user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """单个产品的合作时间轴(该达人 + 该产品的 OperationLog 倒序)。"""
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    base = select(OperationLog).where(OperationLog.influencer_id == inf.id,
+                                      OperationLog.product_id == product_id)
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    rows = db.scalars(base.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    return {"items": [_serialize_log(l) for l in rows],
+            "total": total, "page": page, "page_size": page_size}
+
+
+@router.get("/{influencer_id}/logs")
+def influencer_logs(influencer_id: int, product_id: int | None = None,
+                    event_type: str | None = None, actor_id: int | None = None,
+                    page: int = 1, page_size: int = 30,
+                    user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """「全部动态」:该达人所有 OperationLog,可按产品/类型/操作人筛选 + 分页。"""
+    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    if not inf:
+        raise HTTPException(404, "达人不存在或无权限")
+    base = select(OperationLog).where(OperationLog.influencer_id == inf.id)
+    if product_id is not None:
+        base = base.where(OperationLog.product_id == product_id)
+    if event_type:
+        base = base.where(OperationLog.event_type == event_type)
+    if actor_id is not None:
+        base = base.where(OperationLog.actor_id == actor_id)
+    total = db.scalar(select(func.count()).select_from(base.subquery()))
+    page = max(1, page)
+    page_size = min(max(1, page_size), 100)
+    rows = db.scalars(base.order_by(OperationLog.created_at.desc(), OperationLog.id.desc())
+                      .offset((page - 1) * page_size).limit(page_size)).all()
+    return {"items": [_serialize_log(l) for l in rows],
+            "total": total, "page": page, "page_size": page_size}

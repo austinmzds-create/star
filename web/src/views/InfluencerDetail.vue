@@ -117,6 +117,55 @@
       <el-col :span="14">
         <el-card>
           <el-tabs v-model="tab">
+            <el-tab-pane name="collab">
+              <template #label>
+                <span class="tab-label-badge">产品合作 {{ collab.length }}</span>
+              </template>
+              <el-empty v-if="!collabLoading && !collab.length" description="暂无产品合作" :image-size="60" />
+              <el-skeleton v-if="collabLoading" :rows="4" animated />
+              <div v-for="c in collab" :key="c.product_id" class="collab-card">
+                <div class="cc-head" @click="toggleCollab(c.product_id)">
+                  <el-image v-if="c.product_image" :src="c.product_image" fit="cover" class="cc-img" />
+                  <div v-else class="cc-img cc-img-ph">无图</div>
+                  <div class="cc-title-wrap">
+                    <router-link :to="{ path: '/products', query: { open: c.product_id } }" class="cc-title link" @click.stop>
+                      {{ c.product_name }}
+                    </router-link>
+                    <div class="cc-meta muted">
+                      <span v-if="c.price_text">{{ c.price_text }}</span>
+                      <span v-if="c.shop_product_id">· 商品ID {{ c.shop_product_id }}</span>
+                      <span>· 达人佣金 {{ c.influencer_commission }}%<template v-if="c.default_commission != null"> / 默认 {{ c.default_commission }}%</template></span>
+                    </div>
+                    <div class="cc-meta muted">
+                      <span v-if="c.granted_by_name">{{ c.granted_by_name }} 开放</span>
+                      <span v-if="c.granted_at">· {{ ft(c.granted_at) }}</span>
+                      <span v-if="c.last_op_at">· 最近动态 {{ ft(c.last_op_at) }}</span>
+                    </div>
+                  </div>
+                  <el-icon class="cc-caret"><ArrowDown v-if="expandedCollab !== c.product_id" /><ArrowUp v-else /></el-icon>
+                </div>
+                <div class="cc-stats">
+                  <div class="cc-stat"><b>{{ money(c.total_gmv) }}</b><span>累计GMV</span></div>
+                  <div class="cc-stat"><b>{{ money(c.gmv_30d) }}</b><span>近30天</span></div>
+                  <div class="cc-stat"><b>{{ c.sample_signed }}/{{ c.sample_total }}</b><span>寄样签收</span></div>
+                  <div class="cc-stat"><b>{{ c.video_pass }}/{{ c.video_total }}</b><span>视频通过</span></div>
+                  <div class="cc-stat" v-if="c.video_fail"><b class="warn">{{ c.video_fail }}</b><span>未过</span></div>
+                  <div class="cc-stat"><b>{{ c.promo_total }}</b><span>投流{{ c.promo_status ? '·'+promoTag(c.promo_status).label : '' }}</span></div>
+                  <div class="cc-stat"><b>{{ c.op_count }}</b><span>操作数</span></div>
+                </div>
+                <div v-if="expandedCollab === c.product_id" class="cc-timeline">
+                  <el-skeleton v-if="timelineLoading" :rows="3" animated />
+                  <el-empty v-else-if="!timeline.length" description="暂无动态" :image-size="50" />
+                  <el-timeline v-else>
+                    <el-timeline-item v-for="l in timeline" :key="l.id" :timestamp="ft(l.created_at)"
+                      :type="logType(l.event_type)" size="small">
+                      {{ l.summary }}
+                    </el-timeline-item>
+                  </el-timeline>
+                </div>
+              </div>
+            </el-tab-pane>
+
             <el-tab-pane name="samples">
               <template #label>
                 <span class="tab-label-badge">
@@ -209,21 +258,32 @@
               </div>
             </el-tab-pane>
 
-            <el-tab-pane :label="`合作轮次 ${d.cooperations.length}`" name="coop">
-              <el-timeline>
-                <el-timeline-item v-for="c in d.cooperations" :key="c.id" :timestamp="ft(c.created_at)">
-                  第{{ c.round_no }}轮 · {{ c.level_snapshot }} · 佣金{{ c.commission_tier_snapshot }}% · {{ c.status }}
+            <el-tab-pane name="logs">
+              <template #label>
+                <span class="tab-label-badge">全部动态 {{ logsTotal }}</span>
+              </template>
+              <div class="logs-filter">
+                <el-select v-model="logFilter.product_id" placeholder="全部产品" clearable size="small"
+                  style="width:150px" @change="loadLogs">
+                  <el-option v-for="c in collab" :key="c.product_id" :label="c.product_name" :value="c.product_id" />
+                </el-select>
+                <el-select v-model="logFilter.event_type" placeholder="全部类型" clearable size="small"
+                  style="width:140px" @change="loadLogs">
+                  <el-option v-for="(label, key) in EVENT_LABELS" :key="key" :label="label" :value="key" />
+                </el-select>
+              </div>
+              <el-skeleton v-if="logsLoading" :rows="4" animated />
+              <el-empty v-else-if="!logs.length" description="暂无动态" :image-size="60" />
+              <el-timeline v-else>
+                <el-timeline-item v-for="l in logs" :key="l.id" :timestamp="ft(l.created_at)"
+                  :type="logType(l.event_type)" size="small">
+                  <span>{{ l.summary }}</span>
+                  <el-tag v-if="l.actor_role" size="small" effect="plain" class="log-role">{{ roleLabel(l.actor_role) }}</el-tag>
                 </el-timeline-item>
               </el-timeline>
-            </el-tab-pane>
-
-            <el-tab-pane :label="`变更记录 ${d.change_logs.length}`" name="logs">
-              <el-empty v-if="!d.change_logs.length" description="暂无变更" :image-size="60" />
-              <el-timeline>
-                <el-timeline-item v-for="(l, i) in d.change_logs" :key="i" :timestamp="ft(l.at)">
-                  {{ l.field }}: {{ l.old }} → {{ l.new }} <span v-if="l.reason" class="muted">({{ l.reason }})</span>
-                </el-timeline-item>
-              </el-timeline>
+              <el-pagination v-if="logsTotal > logFilter.page_size" background layout="prev, pager, next"
+                :total="logsTotal" :page-size="logFilter.page_size" :current-page="logFilter.page"
+                style="margin-top:12px; justify-content:flex-end" @current-change="onLogPage" />
             </el-tab-pane>
           </el-tabs>
         </el-card>
@@ -253,12 +313,13 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
-import { Van } from '@element-plus/icons-vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { ArrowDown, ArrowUp, Van } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import CopyText from '../components/CopyText.vue'
 import { formatTime as ft } from '../utils/time'
+import { money } from '../utils/format'
 import { LOGISTICS_STATUS, PROMO_STATUS, SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
 const route = useRoute()
@@ -272,7 +333,7 @@ const edit = reactive({})
 const tags = ref([])
 const tagInput = ref(null)
 const bds = ref([])
-const tab = ref('samples')
+const tab = ref('collab')
 const products = ref([])
 const quickVisible = ref(false)
 const quickType = ref('sample')
@@ -329,6 +390,76 @@ const videoTag = (s) => tag(VIDEO_STATUS, s)
 const promoTag = (s) => tag(PROMO_STATUS, s)
 const logi = (s) => LOGISTICS_STATUS[s] || s
 
+// ---- 产品合作卡片 + 时间轴 + 全部动态(方案B 需求1) ----
+const collab = ref([])
+const collabLoading = ref(false)
+const expandedCollab = ref(null)
+const timeline = ref([])
+const timelineLoading = ref(false)
+const logs = ref([])
+const logsTotal = ref(0)
+const logsLoading = ref(false)
+const logFilter = reactive({ product_id: null, event_type: null, page: 1, page_size: 30 })
+
+const EVENT_LABELS = {
+  product_granted: '开放产品', product_revoked: '收回产品', commission_changed: '佣金调整',
+  owner_transferred: '归属转移', profile_changed: '档案变更',
+  sample_created: '寄样创建', sample_approved: '寄样通过', sample_rejected: '寄样拒绝',
+  sample_shipped: '寄样发货', sample_signed: '寄样签收',
+  video_registered: '视频登记', video_approved: '视频通过', video_rejected: '视频驳回',
+  video_blocked: '视频卡审', promotion_started: '发起投流', promotion_changed: '投流流转',
+  order_recorded: '出单登记', order_updated: '出单修改', order_deleted: '出单删除',
+}
+const ROLE_LABELS = { admin: '管理员', bd: '商务', influencer: '达人', system: '系统' }
+const roleLabel = (r) => ROLE_LABELS[r] || r
+function logType(t) {
+  if (['sample_rejected', 'video_rejected', 'video_blocked', 'order_deleted', 'product_revoked'].includes(t)) return 'danger'
+  if (['sample_approved', 'video_approved', 'sample_signed'].includes(t)) return 'success'
+  if (['commission_changed', 'owner_transferred', 'promotion_changed'].includes(t)) return 'warning'
+  return 'primary'
+}
+
+async function loadCollab() {
+  collabLoading.value = true
+  try {
+    const r = await api.get(`/api/influencers/${route.params.id}/collaborations`)
+    collab.value = r.items || []
+  } finally {
+    collabLoading.value = false
+  }
+}
+async function toggleCollab(pid) {
+  if (expandedCollab.value === pid) { expandedCollab.value = null; return }
+  expandedCollab.value = pid
+  timeline.value = []
+  timelineLoading.value = true
+  try {
+    const r = await api.get(`/api/influencers/${route.params.id}/collaborations/${pid}/timeline`)
+    timeline.value = r.items || []
+  } finally {
+    timelineLoading.value = false
+  }
+}
+async function loadLogs() {
+  logsLoading.value = true
+  try {
+    const r = await api.get(`/api/influencers/${route.params.id}/logs`, {
+      params: {
+        product_id: logFilter.product_id || undefined,
+        event_type: logFilter.event_type || undefined,
+        page: logFilter.page, page_size: logFilter.page_size,
+      },
+    })
+    logs.value = r.items || []
+    logsTotal.value = r.total || 0
+  } finally {
+    logsLoading.value = false
+  }
+}
+function onLogPage(p) { logFilter.page = p; loadLogs() }
+
+watch(tab, (t) => { if (t === 'logs' && !logs.value.length) loadLogs() })
+
 const expandedSample = ref(null)
 const trackingId = ref(null)
 const events = (s) => s.logistics_status?.events || []
@@ -375,6 +506,8 @@ async function load() {
     promo_mode: d.value.promo_mode, owner_bd_id: d.value.owner_bd_id, reason: '',
   })
   act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  await loadCollab()
+  if (tab.value === 'logs') await loadLogs()
 }
 
 async function save() {
@@ -475,4 +608,21 @@ onMounted(async () => {
 .logi-latest .tm { color: #98a0b0; white-space: nowrap; }
 .logi-timeline { margin-top: 8px; padding-left: 4px; }
 .logi-empty { font-size: 12px; margin-top: 6px; }
+/* 产品合作卡片 */
+.collab-card { border: 1px solid #eef0f5; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+.cc-head { display: flex; align-items: center; gap: 12px; cursor: pointer; }
+.cc-img { width: 52px; height: 52px; border-radius: 8px; flex-shrink: 0; }
+.cc-img-ph { display: flex; align-items: center; justify-content: center; background: #f2f3f7; color: #b3bac9; font-size: 12px; }
+.cc-title-wrap { flex: 1; min-width: 0; }
+.cc-title { font-weight: 600; font-size: 15px; }
+.cc-meta { font-size: 12px; margin-top: 3px; display: flex; gap: 4px; flex-wrap: wrap; }
+.cc-caret { color: #b3bac9; }
+.cc-stats { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.cc-stat { flex: 1; min-width: 72px; background: #f8f9fc; border-radius: 8px; padding: 8px 6px; text-align: center; }
+.cc-stat b { display: block; font-size: 15px; color: #1f2637; }
+.cc-stat b.warn { color: #e6a23c; }
+.cc-stat span { font-size: 11px; color: #8a93a6; }
+.cc-timeline { margin-top: 12px; padding-top: 10px; border-top: 1px dashed #eef0f5; }
+.logs-filter { display: flex; gap: 8px; margin-bottom: 12px; }
+.log-role { margin-left: 6px; }
 </style>
