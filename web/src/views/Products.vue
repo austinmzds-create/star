@@ -154,7 +154,44 @@
           </el-tab-pane>
 
           <!-- 素材 -->
-          <el-tab-pane label="素材" name="materials">
+          <el-tab-pane :label="`素材 ${posts.length}`" name="materials">
+            <!-- 发布素材:直接上传多附件 + 写文案,无需先选类型 -->
+            <div class="tab-toolbar">
+              <el-button size="small" type="primary" @click="openPostDialog()">+ 发布素材</el-button>
+            </div>
+            <el-empty v-if="!posts.length" description="还没有素材,点「发布素材」直接上传" :image-size="50" />
+            <div v-for="post in posts" :key="post.id" class="post-card">
+              <div class="post-head">
+                <strong>{{ post.title || POST_CAT_LABEL[post.category] || '内容帖' }}</strong>
+                <el-tag v-if="post.status === 'draft'" size="small" type="info">草稿</el-tag>
+                <span class="muted post-meta">{{ post.author_name }} · {{ ft(post.created_at) }}</span>
+                <div class="post-ops">
+                  <el-button size="small" text @click="openPostDialog(post)">编辑</el-button>
+                  <el-button size="small" text :type="post.status === 'published' ? 'info' : 'success'"
+                    @click="togglePost(post)">{{ post.status === 'published' ? '下架' : '发布' }}</el-button>
+                  <el-button size="small" text type="danger" @click="delPost(post)">删除</el-button>
+                </div>
+              </div>
+              <div v-if="post.assets.length" class="post-assets">
+                <template v-for="a in post.assets" :key="a.id">
+                  <el-image v-if="a.type === 'image'" :src="a.thumb || a.url" fit="cover" class="post-img"
+                    :preview-src-list="[a.url]" preview-teleported />
+                  <a v-else :href="a.url" target="_blank" class="post-file">
+                    <el-icon><Link v-if="a.type === 'link'" /><VideoCamera v-else-if="a.type === 'video'" /><Document v-else /></el-icon>
+                    {{ a.filename || a.source_link || a.type }}
+                  </a>
+                </template>
+              </div>
+              <div class="post-caption">{{ post.caption }}</div>
+              <div class="post-foot muted">
+                <el-button size="small" text @click="copyText(post.caption)">复制文案</el-button>
+                <span v-if="!post.downloadable">· 仅查看不可下载</span>
+              </div>
+            </div>
+
+            <el-divider content-position="left">
+              <span class="muted" style="font-size:12px">按类型归档(旧素材)</span>
+            </el-divider>
             <el-tabs v-model="mtype" tab-position="left" class="mat-tabs">
               <el-tab-pane v-for="t in MAT_TYPES" :key="t.v" :label="`${t.l} ${countOf(t.v)}`" :name="t.v">
                 <!-- 添加区 -->
@@ -223,41 +260,6 @@
           </el-tab-pane>
 
           <!-- 朋友圈内容帖(标题 + 说明文案 + 多附件,达人端同款) -->
-          <el-tab-pane :label="`内容帖 ${posts.length}`" name="posts">
-            <div class="tab-toolbar">
-              <el-button size="small" type="primary" @click="openPostDialog()">+ 发布素材</el-button>
-            </div>
-            <el-empty v-if="!posts.length" description="暂无内容帖" :image-size="50" />
-            <div v-for="post in posts" :key="post.id" class="post-card">
-              <div class="post-head">
-                <strong>{{ post.title || POST_CAT_LABEL[post.category] || '内容帖' }}</strong>
-                <el-tag v-if="post.status === 'draft'" size="small" type="info">草稿</el-tag>
-                <span class="muted post-meta">{{ post.author_name }} · {{ ft(post.created_at) }}</span>
-                <div class="post-ops">
-                  <el-button size="small" text @click="openPostDialog(post)">编辑</el-button>
-                  <el-button size="small" text :type="post.status === 'published' ? 'info' : 'success'"
-                    @click="togglePost(post)">{{ post.status === 'published' ? '下架' : '发布' }}</el-button>
-                  <el-button size="small" text type="danger" @click="delPost(post)">删除</el-button>
-                </div>
-              </div>
-              <div v-if="post.assets.length" class="post-assets">
-                <template v-for="a in post.assets" :key="a.id">
-                  <el-image v-if="a.type === 'image'" :src="a.thumb || a.url" fit="cover" class="post-img"
-                    :preview-src-list="[a.url]" preview-teleported />
-                  <a v-else :href="a.url" target="_blank" class="post-file">
-                    <el-icon><Link v-if="a.type === 'link'" /><VideoCamera v-else-if="a.type === 'video'" /><Document v-else /></el-icon>
-                    {{ a.filename || a.source_link || a.type }}
-                  </a>
-                </template>
-              </div>
-              <div class="post-caption">{{ post.caption }}</div>
-              <div class="post-foot muted">
-                <el-button size="small" text @click="copyText(post.caption)">复制文案</el-button>
-                <span v-if="!post.downloadable">· 仅查看不可下载</span>
-              </div>
-            </div>
-          </el-tab-pane>
-
           <!-- 授权达人 -->
           <el-tab-pane label="授权达人" name="grants">
             <div class="mat-add">
@@ -401,11 +403,6 @@
     <!-- 发布/编辑内容帖 -->
     <el-dialog v-model="postDialogVisible" :title="postForm.id ? '编辑内容帖' : '发布素材'" width="560px" append-to-body>
       <el-form label-width="72px">
-        <el-form-item label="分类">
-          <el-radio-group v-model="postForm.category">
-            <el-radio-button v-for="(l, k) in POST_CAT_LABEL" :key="k" :value="k">{{ l }}</el-radio-button>
-          </el-radio-group>
-        </el-form-item>
         <el-form-item label="标题"><el-input v-model="postForm.title" placeholder="可选,达人端显示" /></el-form-item>
         <el-form-item label="附件">
           <div class="post-upload">
@@ -666,12 +663,19 @@ function addLink() {
   linkInput.value = ''
 }
 function removeAsset(i) { postForm.assets.splice(i, 1) }
+function inferCategory(assets) {
+  const types = assets.map((a) => a.type)
+  if (types.includes('video')) return 'video'
+  if (types.includes('image')) return 'image'
+  if (types.some((t) => ['pdf', 'file', 'link'].includes(t))) return 'doc'
+  return 'copy'
+}
 async function savePost(status) {
   if (!postForm.caption || !postForm.caption.trim()) return ElMessage.warning('说明文案必填')
   savingPost.value = true
   try {
     const payload = {
-      category: postForm.category, title: postForm.title || null, caption: postForm.caption,
+      category: inferCategory(postForm.assets), title: postForm.title || null, caption: postForm.caption,
       downloadable: postForm.downloadable, status,
       assets: postForm.assets.map((a) => ({ type: a.type, oss_key: a.oss_key || null,
         source_link: a.source_link || null, filename: a.filename || null })),
