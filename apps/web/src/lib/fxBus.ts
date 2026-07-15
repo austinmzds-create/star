@@ -9,20 +9,35 @@ import type { Mesh } from 'three';
  *   TwinkleStars / MilkyWayLayer 在各自 useFrame 里把它乘进最终亮度
  *   （uniform 直写，零 React）。序曲被打断即写回 1，渲染层无需感知序曲存在。
  *
+ * 【跨域契约（Phase 10 追加）】setConstellationFocusDim：
+ *   星座聚焦「聚光灯」压暗系数 0–1（默认 1）。「视觉炫酷」域在
+ *   ConstellationLayer 里每帧写入（1=常态 / ~0.45=聚焦压暗其余天空）。
+ *   getGlobalFade 返回【序曲 fade × 聚焦 dim】两路乘积——TwinkleStars /
+ *   ExtendedStars / MilkyWayLayer 已读此值，零改动自动吃到聚焦压暗，且与
+ *   序曲淡入天然叠加、互不打架。写入口分离保证两域各自独立推进。
+ *
  * 其余导出为后处理域内部共享状态（PostFX 低频写、各渲染层帧循环读），
  * 不属于跨域契约，其它域不得依赖。
  */
 
-let globalFade = 1;
+/** 序曲淡入系数（「动效序曲」域写）。 */
+let prologueFade = 1;
+/** 星座聚焦聚光灯压暗系数（「视觉炫酷」域写）。 */
+let focusDim = 1;
 
 /** 写全局亮度 0–1（越界自动夹取）。「动效序曲」域唯一允许调用的写入口。 */
 export function setGlobalFade(v: number): void {
-  globalFade = v < 0 ? 0 : v > 1 ? 1 : v;
+  prologueFade = v < 0 ? 0 : v > 1 ? 1 : v;
 }
 
-/** 读全局亮度（TwinkleStars/MilkyWayLayer 每帧读，乘进最终亮度）。 */
+/** 写星座聚焦压暗系数 0–1（越界自动夹取）。「视觉炫酷」域唯一写入口。 */
+export function setConstellationFocusDim(v: number): void {
+  focusDim = v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+/** 读全局亮度（TwinkleStars/ExtendedStars/MilkyWayLayer 每帧读，乘进最终亮度）。 */
 export function getGlobalFade(): number {
-  return globalFade;
+  return prologueFade * focusDim;
 }
 
 // ---------------------------------------------------------------------------

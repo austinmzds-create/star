@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { raDecToVector3 } from '@star/astro-core';
 import type { DeviceTier } from '@/lib/deviceTier';
+import { useUniverse } from '@/lib/store';
 import {
   MAS_YR_TO_RAD_YR,
   magnitudeToSize,
@@ -48,6 +49,7 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
   const sizes = new Float32Array(count);
   const phases = new Float32Array(count);
   const pms = new Float32Array(count * 2);
+  const mags = new Float32Array(count); // Phase 10：真实星等（防未来放宽档位；全在 6.5–7.5）
   // 自行列解码（9B）：int16 语义 × 0.5 = mas/yr，再预转 rad/yr 供 aPm。
   // 长度不齐/缺列（旧缓存）→ 全 0，星不动（isValidPayload 只强校验必需列）。
   const hasPm = data.pmra?.length === count && data.pmdec?.length === count;
@@ -56,6 +58,7 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
     const ra = data.ra[i] ?? 0;
     const dec = data.dec[i] ?? 0;
     const mag = data.mag[i] ?? 7.5;
+    mags[i] = mag;
     const v = raDecToVector3({ raDeg: ra, decDeg: dec }, SPHERE_RADIUS * 0.995);
     positions[i * 3] = v.x;
     positions[i * 3 + 1] = v.y;
@@ -77,7 +80,7 @@ function buildExtendedAttributes(data: ExtendedStarsJson): StarAttributes {
     phases[i] = (i * 2.399963) % (Math.PI * 2);
   }
 
-  return { positions, colors, sizes, phases, count, pms };
+  return { positions, colors, sizes, phases, count, pms, mags };
 }
 
 /** 结构校验：字段缺失/长度不齐时视为坏数据，静默放弃。 */
@@ -100,9 +103,14 @@ function isValidPayload(data: unknown): data is ExtendedStarsJson {
 
 export function ExtendedStars({ tier }: { tier: DeviceTier }) {
   const [attributes, setAttributes] = useState<StarAttributes | null>(null);
+  // 真实模式（Phase 10）：扩展层 mag 全在 6.5–7.5，任何裸眼档（≤6.5）都会整层
+  // 被 shader 隐掉——直接短路省掉 1.7 万点顶点+塌零的白跑。satisfies「真实模式
+  // 关闭扩展层」，且切回 'all' 时组件重挂再懒加载。
+  const realism = useUniverse((s) => s.skyRealism);
 
   useEffect(() => {
     if (tier === 'low') return; // 降级：低端设备不加载扩展层
+    if (realism !== 'all') return;
     let cancelled = false;
     let idleId: number | null = null;
     let timerId: number | null = null;
@@ -133,9 +141,10 @@ export function ExtendedStars({ tier }: { tier: DeviceTier }) {
       }
       if (timerId !== null) window.clearTimeout(timerId);
     };
-  }, [tier]);
+  }, [tier, realism]);
 
-  if (!attributes) return null;
+  // 真实模式整层关闭（即便已加载过 attributes 也不渲染，省填充率）
+  if (realism !== 'all' || !attributes) return null;
   // 复用核心层同一套点着色器：恒星 draw call 2 → 3（预算内）
   return <TwinkleStars attributes={attributes} twinkle={0.9} sizeScale={0.8} renderOrder={1} />;
 }

@@ -12,6 +12,7 @@ import {
   type EphemBodyState,
 } from '@/lib/ephemRegistry';
 import { fx, setSunLightMesh } from '@/lib/fxBus';
+import { ensureStaticEntries, updatePlanetPickRadii } from '@/lib/pickRegistry';
 import { useUniverse } from '@/lib/store';
 
 /**
@@ -47,7 +48,11 @@ import { useUniverse } from '@/lib/store';
  * 椭圆），仅在 version 变化时重画，不追天文精确。
  */
 
-const TEX_SIZE = 128;
+// 盘面/土星纹理 256²、月相 192²（Phase 10 §4.4 放大保真：retina×3 下不糊；
+// 矢量 arc/ellipse 随画布放大天然更清，canvas 生成一次常驻，显存增量 <1MB）。
+const TEX_SIZE = 256;
+const MOON_TEX = 192;
+const MOON_R = 60;
 
 /** 盘面纹理：主色径向渐变圆盘；太阳带十字光芒，土星带扁环。 */
 function makeDiskTexture(colorHex: string, kind: EphemBodyState['kind']): THREE.CanvasTexture {
@@ -56,7 +61,7 @@ function makeDiskTexture(colorHex: string, kind: EphemBodyState['kind']): THREE.
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const c = size / 2;
-  const r = kind === 'sun' ? 30 : 40;
+  const r = kind === 'sun' ? 60 : 80;
 
   if (kind === 'sun') {
     // 强光晕
@@ -69,12 +74,12 @@ function makeDiskTexture(colorHex: string, kind: EphemBodyState['kind']): THREE.
     ctx.fillRect(0, 0, size, size);
     // 十字光芒
     ctx.strokeStyle = 'rgba(255,244,210,0.5)';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 4;
     ctx.beginPath();
-    ctx.moveTo(c - 56, c);
-    ctx.lineTo(c + 56, c);
-    ctx.moveTo(c, c - 56);
-    ctx.lineTo(c, c + 56);
+    ctx.moveTo(c - 112, c);
+    ctx.lineTo(c + 112, c);
+    ctx.moveTo(c, c - 112);
+    ctx.lineTo(c, c + 112);
     ctx.stroke();
   }
 
@@ -101,7 +106,7 @@ function makeSaturnTexture(colorHex: string): THREE.CanvasTexture {
   canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const c = size / 2;
-  const r = 30;
+  const r = 60;
 
   // 环（画在盘面之下，倾斜椭圆）
   ctx.save();
@@ -109,14 +114,14 @@ function makeSaturnTexture(colorHex: string): THREE.CanvasTexture {
   ctx.rotate(-0.35);
   ctx.scale(1, 0.32);
   ctx.strokeStyle = 'rgba(233,220,180,0.85)';
-  ctx.lineWidth = 8;
+  ctx.lineWidth = 16;
   ctx.beginPath();
-  ctx.arc(0, 0, 52, 0, Math.PI * 2);
+  ctx.arc(0, 0, 104, 0, Math.PI * 2);
   ctx.stroke();
   ctx.strokeStyle = 'rgba(210,196,158,0.4)';
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 8;
   ctx.beginPath();
-  ctx.arc(0, 0, 62, 0, Math.PI * 2);
+  ctx.arc(0, 0, 124, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 
@@ -177,9 +182,9 @@ function makeLabelTexture(text: string): { tex: THREE.CanvasTexture; aspect: num
  * 相位角 0 新月 / 90 上弦 / 180 满月 / 270 下弦；<180 视为盈（右侧亮）。
  */
 function drawMoonPhase(ctx: CanvasRenderingContext2D, phaseAngleDeg: number): void {
-  const size = TEX_SIZE;
+  const size = MOON_TEX;
   const c = size / 2;
-  const r = 40;
+  const r = MOON_R;
   const a = ((phaseAngleDeg % 360) + 360) % 360;
   const rad = (a * Math.PI) / 180;
   const waxing = a <= 180;
@@ -216,11 +221,19 @@ function drawMoonPhase(ctx: CanvasRenderingContext2D, phaseAngleDeg: number): vo
   ctx.fill();
 }
 
-/** 世界单位尺寸（相机在中心、天球 1000，FOV60 下 ≈1 单位 ≈1px）。 */
-function diskWorldSize(body: EphemBodyState): number {
+// 行星放大曲线（Phase 10 §4.2）：保底 + 增益 + 上限。暗行星（水/天/海）统一
+// 保底 24 一眼可辨；亮的按序拉开到 40（远小于日 90/月 64，层级正确）。日月不放大。
+const MIN_PLANET_PX = 24;
+const PLANET_GAIN = 2.0;
+const PLANET_CAP = 46;
+
+/** 世界单位尺寸（相机在中心、天球 1000，FOV60 下 ≈1 单位 ≈1px）；magnify 关时回退原尺寸。 */
+function diskWorldSize(body: EphemBodyState, magnify: boolean): number {
   if (body.kind === 'sun') return 90;
   if (body.kind === 'moon') return 64;
-  return body.displaySize * 1.3;
+  const raw = body.displaySize * 1.3;
+  if (!magnify) return raw;
+  return THREE.MathUtils.clamp(body.displaySize * PLANET_GAIN, MIN_PLANET_PX, PLANET_CAP);
 }
 
 interface BodyRec {
@@ -262,6 +275,8 @@ const extScratchDate = new Date(0);
 
 export function PlanetsLayer({ tier }: { tier: DeviceTier }) {
   const showLabels = useUniverse((s) => s.showLabels);
+  // 跨域契约 §1：planetsEnlarged 归「真实天空」域写入，本层只读消费（放大开关）
+  const planetMagnify = useUniverse((s) => s.planetsEnlarged);
   // 跨域契约 §3：deepTimeYears 归「地平锁定」域写入，本层只读判 null
   const deepTimeActive = useUniverse((s) => s.deepTimeYears !== null);
   const versionRef = useRef(-1);
@@ -285,15 +300,17 @@ export function PlanetsLayer({ tier }: { tier: DeviceTier }) {
     disposables.push(haloTex);
     const recs: BodyRec[] = [];
 
+    // 初始尺寸读放大开关现值（命令式，不订阅——toggle 由 useEffect 重设 scale）
+    const initMagnify = useUniverse.getState().planetsEnlarged;
     for (const body of ephem.bodies.values()) {
-      const size = diskWorldSize(body);
+      const size = diskWorldSize(body, initMagnify);
 
       // 盘面
       let diskTex: THREE.CanvasTexture;
       let moonCtx: CanvasRenderingContext2D | null = null;
       if (body.bodyId === 'moon') {
         const canvas = document.createElement('canvas');
-        canvas.width = canvas.height = TEX_SIZE;
+        canvas.width = canvas.height = MOON_TEX;
         moonCtx = canvas.getContext('2d')!;
         drawMoonPhase(moonCtx, body.phaseAngleDeg ?? 180);
         diskTex = new THREE.CanvasTexture(canvas);
@@ -436,6 +453,25 @@ export function PlanetsLayer({ tier }: { tier: DeviceTier }) {
       rec.labelMaterial.opacity = rec.labelBaseOpacity * fadeRef.current;
     }
   }, [showLabels]);
+
+  // 行星放大开关（Phase 10 §4.3）：toggle 时遍历 recs 重设盘/晕/标签偏移的
+  // scale（不重建纹理/几何，O(9) 一次零帧成本）；并同步拾取热区半径（§4.5）。
+  // 首挂载也走这里（planetMagnify 初值），故 pick 半径首建即对齐。
+  const LABEL_H = 15;
+  useEffect(() => {
+    for (const rec of recsRef.current) {
+      const size = diskWorldSize(rec.body, planetMagnify);
+      rec.disk.scale.set(size, size, 1);
+      if (rec.halo) {
+        const hs = rec.body.kind === 'sun' ? size * 2.8 : size * 2.2;
+        rec.halo.scale.set(hs, hs, 1);
+      }
+      // 标签锚点随盘面尺寸上移（渲染在天体下方）
+      rec.label.center.set(0.5, 0.5 + (size * 0.65) / LABEL_H + 0.5);
+    }
+    ensureStaticEntries();
+    updatePlanetPickRadii(planetMagnify);
+  }, [planetMagnify]);
 
   /** 盘面颜色 = HDR 超白基数 × 消光偏红 tint（boost 变化与 version 变化共用）。 */
   function applyDiskColor(rec: BodyRec, boost: number): void {

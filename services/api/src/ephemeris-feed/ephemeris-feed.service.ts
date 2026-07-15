@@ -12,6 +12,7 @@ import { builtinMinorBodiesResponse, builtinTleResponse } from './builtin-snapsh
 import {
   ASTEROID_TARGETS,
   celestrakGpUrl,
+  celestrakGroupUrl,
   FEED_QUEUE,
   FETCH_TIMEOUT_MS,
   JOB_REFRESH_MINOR_BODIES,
@@ -21,6 +22,8 @@ import {
   RETRY_DELAYS_MS,
   SBDB_QUERY_URL,
   sbdbSingleUrl,
+  STARLINK_GROUP,
+  STARLINK_MAX,
   TLE_INTERVAL_MS,
   TLE_TARGETS,
 } from './feed.constants';
@@ -32,7 +35,7 @@ import {
   type SbdbQueryResponse,
   type SbdbSingleResponse,
 } from './sbdb.parser';
-import { parseCelestrakTle, type ParsedTle } from './tle.parser';
+import { parseCelestrakGroupTle, parseCelestrakTle, type ParsedTle } from './tle.parser';
 
 /** BullMQ Queue 的最小使用面（避免在无 Redis 环境强依赖 bullmq 类型，模式同 CertificateService）。 */
 interface QueueLike {
@@ -284,7 +287,14 @@ export class EphemerisFeedService implements OnApplicationBootstrap, OnModuleDes
           continue;
         }
         const parsed = parseCelestrakTle(await resp.text(), target.noradId);
-        sats.push({ id: target.id, name: parsed.name, nameZh: target.nameZh, l1: parsed.l1, l2: parsed.l2 });
+        sats.push({
+          id: target.id,
+          name: parsed.name,
+          nameZh: target.nameZh,
+          l1: parsed.l1,
+          l2: parsed.l2,
+          group: 'famous',
+        });
         this.tleLastSuccessMs.set(target.id, nowMs);
         await this.persistTle(target, parsed, new Date(nowMs));
       } catch (e) {
@@ -293,11 +303,60 @@ export class EphemerisFeedService implements OnApplicationBootstrap, OnModuleDes
         if (kept) sats.push(kept);
       }
     }
-    if (sats.length === 0) {
+
+    // 星链组：与著名三星同一 6h 节流锚点内一次拉取；失败/未更新保留上次成功值。
+    // 逐颗解析宽容，服务端按历元最新截断 STARLINK_MAX，前端再按 deviceTier 降载。
+    let starlink: TleSatDto[];
+    try {
+      starlink = await this.fetchStarlinkGroup(nowMs, prev);
+    } catch (e) {
+      this.logger.warn(`星链组 TLE 刷新失败（保留上次成功值）：${(e as Error).message}`);
+      starlink = [...prev.values()].filter((s) => s.group === 'starlink');
+    }
+
+    // 著名三星全失败但星链有值时也不应报错——只要有任一可服务数据即成功。
+    if (sats.length === 0 && starlink.length === 0) {
       throw new Error('TLE 刷新全部失败且无历史成功值');
     }
-    this.tleCache = { updatedAt: new Date(nowMs).toISOString(), source: 'celestrak', sats };
+    this.tleCache = {
+      updatedAt: new Date(nowMs).toISOString(),
+      source: 'celestrak',
+      sats: [...sats, ...starlink],
+    };
     return this.tleCache;
+  }
+
+  /**
+   * 拉取星链整组 TLE（数千颗），按 TLE 历元最新排序后截断到 STARLINK_MAX。
+   * 历元最新 = 最近发射批、轨道最紧凑、SGP4 外推误差最小、过境最亮，择优取前 N。
+   * 304（If-Modified-Since 命中）→ 保留上次成功的星链子集；不落 DB（内存缓存
+   * 即可服务，避免为 120 行动态数据加库表与迁移；冷启动自动重拉）。
+   */
+  private async fetchStarlinkGroup(
+    nowMs: number,
+    prev: Map<string, TleSatDto>,
+  ): Promise<TleSatDto[]> {
+    const headers: Record<string, string> = {};
+    const since = this.tleLastSuccessMs.get('starlink');
+    if (since) headers['If-Modified-Since'] = new Date(since).toUTCString();
+    const resp = await this.fetchWithRetry(celestrakGroupUrl(STARLINK_GROUP), { headers });
+    if (resp.status === 304) {
+      return [...prev.values()].filter((s) => s.group === 'starlink');
+    }
+    const parsed = parseCelestrakGroupTle(await resp.text());
+    // 历元降序（无历元的排末尾），截断上限
+    parsed.sort((a, b) => (b.epochAt?.getTime() ?? 0) - (a.epochAt?.getTime() ?? 0));
+    const top = parsed.slice(0, STARLINK_MAX);
+    this.tleLastSuccessMs.set('starlink', nowMs);
+    this.logger.log(`星链组 TLE 刷新成功：解析 ${parsed.length} 颗，取历元最新 ${top.length} 颗`);
+    return top.map((p) => ({
+      id: `SAT-STARLINK-${p.noradId}`,
+      name: p.name,
+      nameZh: p.name,
+      l1: p.l1,
+      l2: p.l2,
+      group: 'starlink' as const,
+    }));
   }
 
   /** 逐星 upsert（单星独立持久化）；DB 不可用/写失败仅告警。 */

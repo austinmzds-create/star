@@ -18,7 +18,9 @@
  * pickRegistry 动态条目持同一引用，TargetHighlight 每帧 copy 自动追星。
  */
 
-import { raDecToVector3 } from '@star/astro-core';
+import { computeVisibility, raDecToVector3 } from '@star/astro-core';
+import type { CelestialObject } from '@star/astro-data';
+import { getEquatorial } from '@star/astro-ephem';
 import {
   eciToGeodetic,
   geodeticToEcf,
@@ -34,6 +36,10 @@ import { parseTleEpoch, SATELLITE_DEFS, tleChecksumOk } from './tles';
 
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
+/** 地球平均半径（km）：星链受照判定的圆柱地影半径。 */
+const R_EARTH_KM = 6371;
+/** 星链光点统一色（冷白青）。 */
+const STARLINK_COLOR = '#a8c4ff';
 
 /** 单颗卫星的当前状态（坐标为最近一次 recomputeSatellites 时刻的站心值）。 */
 export interface SatState {
@@ -55,6 +61,15 @@ export interface SatState {
   valid: boolean;
   /** 天球世界坐标——固定引用、原地 mutate，勿替换实例。 */
   vec: THREE.Vector3;
+  /** 本帧卫星是否被太阳照亮（圆柱地影近似，演示级；见 recomputeSatellites）。 */
+  sunlit: boolean;
+  /**
+   * 本帧「现在可见 · 过境中」：卫星受照 && 观测点已足够暗（太阳高度<−6°）
+   * && 卫星仰角>10°。星链层据此染色/高亮；信息卡可据此显徽章。
+   */
+  visiblePass: boolean;
+  /** 分档：著名内置三星 'famous'；星链动态成员 'starlink'。 */
+  group: 'famous' | 'starlink';
 }
 
 interface SatRegistry {
@@ -89,6 +104,9 @@ function createStates(): Map<string, SatState> {
       tleEpoch: parseTleEpoch(def.tle[0]),
       valid: false,
       vec: new THREE.Vector3(),
+      sunlit: false,
+      visiblePass: false,
+      group: 'famous',
     });
   }
   return map;
@@ -173,6 +191,19 @@ export function recomputeSatellites(dateMs: number, city: City): void {
   const oy = oEcf.x * sinG + oEcf.y * cosG;
   const oz = oEcf.z;
 
+  // ── 晨昏 + 太阳方向（每帧一次，非逐星）——星链「现在可见」判定的公共量 ──
+  // 太阳地心 J2000 赤道坐标 → (a) 观测点太阳高度角判民用晨昏；(b) ECI 单位方向
+  // 供受照判定。sunEq 每帧不变，循环内复用 sx/sy/sz，避免逐星重算太阳位置。
+  const observer = { latitudeDeg: city.latitudeDeg, longitudeDeg: city.longitudeDeg };
+  const sunEq = getEquatorial('sun', scratchDate);
+  const sunAltDeg = computeVisibility(sunEq, observer, scratchDate).horizontal.altitudeDeg;
+  const darkEnough = sunAltDeg < -6; // 民用晨昏：天已足够暗
+  const sRa = sunEq.raDeg * DEG2RAD;
+  const sDec = sunEq.decDeg * DEG2RAD;
+  const sx = Math.cos(sDec) * Math.cos(sRa);
+  const sy = Math.cos(sDec) * Math.sin(sRa);
+  const sz = Math.sin(sDec);
+
   for (const slot of satrecs.values()) {
     const state = sats.states.get(slot.uid);
     if (!state) continue;
@@ -203,6 +234,27 @@ export function recomputeSatellites(dateMs: number, city: City): void {
             SPHERE_RADIUS * 0.99,
           );
           state.vec.set(v.x, v.y, v.z); // 原地 mutate：pickRegistry 持同一引用
+
+          // 受照判定（ECI 圆柱地影近似，忽略半影/折射，演示级）：
+          // 日向轴投影 >0 → 朝阳半侧必受照；否则查到日-地轴垂距是否在地影柱外。
+          const proj = pos.x * sx + pos.y * sy + pos.z * sz;
+          let sunlit: boolean;
+          if (proj > 0) {
+            sunlit = true;
+          } else {
+            const px = pos.x - proj * sx;
+            const py = pos.y - proj * sy;
+            const pz = pos.z - proj * sz;
+            sunlit = Math.hypot(px, py, pz) > R_EARTH_KM;
+          }
+          state.sunlit = sunlit;
+          // 「现在可见」：受照 && 天已暗 && 卫星仰角 > 10°（站心 RA/Dec 复用上面已算值）
+          const satAltDeg = computeVisibility(
+            { raDeg: state.raDeg, decDeg: state.decDeg },
+            observer,
+            scratchDate,
+          ).horizontal.altitudeDeg;
+          state.visiblePass = darkEnough && sunlit && satAltDeg > 10;
           ok = true;
         }
       } catch {
@@ -210,6 +262,10 @@ export function recomputeSatellites(dateMs: number, city: City): void {
       }
     }
     state.valid = ok;
+    if (!ok) {
+      state.sunlit = false;
+      state.visiblePass = false;
+    }
   }
   sats.computedAtMs = dateMs;
   sats.version += 1;
@@ -257,4 +313,110 @@ export async function refreshTles(): Promise<void> {
     // 强制下一次 recompute 生效（时间戳去重会挡住同 ms 的重算）
     sats.computedAtMs = 0;
   }
+}
+
+// ============================== 星链（动态注入）==============================
+
+/** 本次会话已注入的星链 uid（供清理时精准移除 states/satrecs，停止其逐帧 SGP4）。 */
+const starlinkUids = new Set<string>();
+
+/** 构造星链动态目录行（供 getObjectByUid / hover / 信息卡解析名字；合规 isNamable=false）。 */
+function makeStarlinkRow(uid: string, nameZh: string): CelestialObject {
+  const norad = uid.slice('SAT-STARLINK-'.length);
+  return {
+    objectUid: uid,
+    type: 'satellite',
+    nameEn: nameZh, // 组内英文名（STARLINK-xxxxx）即展示名
+    nameZh,
+    aliases: [nameZh, 'Starlink', '星链'],
+    constellation: 'Earth Orbit',
+    constellationZh: '近地轨道',
+    raDeg: 0, // 占位：实时坐标见 satRegistry
+    decDeg: 0,
+    magnitude: -1,
+    distanceLy: null,
+    catalogIds: norad ? { norad } : {},
+    isNamable: false, // 合规红线：人造卫星绝不进命名池
+    isFeatured: false,
+    isEphemeris: false,
+    descriptionZh: 'Starlink 通信卫星星座成员 · 近地轨道 · TLE 演示精度',
+    renderPriority: 120,
+    searchPriority: 5, // 低优先级：不淹没恒星/著名天体搜索结果
+    sourceCatalog: 'celestrak-tle-snapshot',
+  };
+}
+
+/**
+ * 注入星链动态卫星（earth 模式的 StarlinkLayer 挂载时调用）。
+ *
+ * 从自家 /api/v1/tle 拉全 feed，取 id 前缀 'SAT-STARLINK-' 的条目，按 deviceTier
+ * 上限 cap 截断后建 state + satrec，并把目录行 append 进搜索目录（名字可解析）。
+ * 客户端零 Celestrak 直连（服务端已集中拉取，政策红线）。失败静默——无星链即空层。
+ *
+ * 截断纪律：只注入前 cap 颗即停——recomputeSatellites 逐帧遍历 satrecs，
+ * 未注入的不产生 SGP4 成本（mid 档 60 颗、high 档 120 颗，见性能预算）。
+ */
+export async function injectStarlink(cap: number): Promise<void> {
+  if (cap <= 0) return;
+  if (!satrecs) satrecs = buildSatrecs();
+  const { fetchTleFeed } = await import('../api');
+  const feed = await fetchTleFeed();
+  if (!feed) return; // 未配置 API / 网络失败 → 空层（确定性回退，不编造）
+  const newRows: CelestialObject[] = [];
+  let n = 0;
+  for (const row of feed.sats) {
+    if (n >= cap) break;
+    if (!row.id.startsWith('SAT-STARLINK-')) continue;
+    const line1 = row.l1?.trimEnd();
+    const line2 = row.l2?.trimEnd();
+    if (!line1 || !line2) continue;
+    const rec = validateTle(line1, line2);
+    if (!rec) continue;
+    n++;
+    const nameZh = row.nameZh ?? row.name ?? row.id;
+    if (!sats.states.has(row.id)) {
+      sats.states.set(row.id, {
+        uid: row.id,
+        nameZh,
+        colorHex: STARLINK_COLOR,
+        raDeg: 0,
+        decDeg: 0,
+        rangeKm: 0,
+        heightKm: 0,
+        speedKmS: 0,
+        tleEpoch: parseTleEpoch(line1),
+        valid: false,
+        vec: new THREE.Vector3(),
+        sunlit: false,
+        visiblePass: false,
+        group: 'starlink',
+      });
+      newRows.push(makeStarlinkRow(row.id, nameZh));
+    }
+    satrecs.set(row.id, { uid: row.id, satrec: rec });
+    starlinkUids.add(row.id);
+  }
+  sats.computedAtMs = 0; // 触发下帧重算
+  if (newRows.length > 0) {
+    const { appendDynamicSatelliteRows } = await import('../solarSystem');
+    appendDynamicSatelliteRows(newRows); // 幂等：同 uid 跳过
+  }
+}
+
+/**
+ * 清理星链动态注入（StarlinkLayer 卸载时调用）：从 states/satrecs 移除，
+ * 使 recomputeSatellites 不再对其做 SGP4。搜索目录行保留无害（幂等可再注入）。
+ */
+export function clearStarlink(): void {
+  for (const uid of starlinkUids) {
+    sats.states.delete(uid);
+    satrecs?.delete(uid);
+  }
+  starlinkUids.clear();
+  sats.computedAtMs = 0;
+}
+
+/** 当前已注入的星链 uid 列表（StarlinkLayer 遍历渲染/注册用）。 */
+export function getStarlinkUids(): readonly string[] {
+  return [...starlinkUids];
 }

@@ -4,7 +4,7 @@
  *
  * 下载三组资产到 apps/web/public/：
  *   milkyway — NASA SVS Deep Star Maps 2020 银河全景（赤道坐标 equirectangular，4k + 2k）
- *   dso      — 16 个著名 Messier 天体真实照片（Wikimedia Commons 缩图，全部 PD / CC-BY）
+ *   dso      — 36 个著名 Messier 天体真实照片（Wikimedia Commons 缩图，PD / CC-BY / CC-BY-SA）
  *   planets  — 9 体行星/日月贴图 + 土星环（Solar System Scope，CC-BY-4.0）
  *
  * 并由同一清单（单一事实源）生成 public/credits.json 与 docs/credits.md，
@@ -104,10 +104,12 @@ const MILKYWAY_ASSETS = [
   },
 ];
 
-// —— B. DSO 真实照片（16 个 Messier，Commons 缩图 ≤800px，全部 PD / CC-BY，零 BY-SA）——
+// —— B. DSO 真实照片（36 个 Messier，Commons 缩图 ≤800px，PD / CC-BY / CC-BY-SA，均逐文件署名）——
 /**
  * @type {Array<{uid:string, zh:string, file:string, author:string, license:string}>}
  * 与 packages/astro-data 的 DSO_IMAGE_META 一一对应（uid → imageKey = uid 小写）。
+ * Phase 10 扩容条目（M82…M15）均经 Commons imageinfo API 逐文件核验许可与作者；
+ * 核验不过（改名/删除/非白名单许可）者脚本跳过，运行时该天体自动回落程序化艺术图，绝不编造署名。
  */
 const DSO_PHOTOS = [
   { uid: 'M31', zh: '仙女座星系', file: 'Andromeda Galaxy (with h-alpha).jpg', author: 'Adam Evans', license: 'CC BY 2.0' },
@@ -126,6 +128,28 @@ const DSO_PHOTOS = [
   { uid: 'M101', zh: '风车星系', file: 'M101 hires STScI-PRC2006-10a.jpg', author: 'ESA & NASA (Hubble)', license: 'CC BY 4.0' },
   { uid: 'M104', zh: '草帽星系', file: 'M104 ngc4594 sombrero galaxy hi-res.jpg', author: 'NASA/ESA & Hubble Heritage Team', license: 'Public Domain' },
   { uid: 'M1', zh: '蟹状星云', file: 'Crab Nebula.jpg', author: 'NASA, ESA, J. Hester & A. Loll (ASU)', license: 'Public Domain' },
+  // —— Phase 10 扩容（16→36）：星系 ——
+  { uid: 'M82', zh: '雪茄星系', file: 'M82 HST ACS 2006-14-a-large_web.jpg', author: 'NASA, ESA, Hubble Heritage Team (STScI/AURA)', license: 'Public Domain' },
+  { uid: 'M63', zh: '葵花星系', file: 'M63 (NGC 5055).jpg', author: 'NASA/ESA, Hubble Legacy Archive (STScI)', license: 'Public Domain' },
+  { uid: 'M64', zh: '黑眼星系', file: 'M64 (The Black Eye Galaxy) (noao-m64chadwell).jpg', author: 'KPNO/NOIRLab/NSF/AURA/B. Chadwell/F. Haase', license: 'CC BY 4.0' },
+  { uid: 'M83', zh: '南风车星系', file: 'Messier83 - Heic1403a.jpg', author: 'NASA, ESA, Hubble Heritage Team (STScI/AURA)', license: 'Public Domain' },
+  { uid: 'M94', zh: '猫眼星系', file: 'Starburst galaxy Messier 94.jpg', author: 'ESA/Hubble & NASA', license: 'CC BY 4.0' },
+  { uid: 'M106', zh: '梅西耶106', file: 'Messier 106 visible and infrared composite.jpg', author: 'NASA, ESA, Hubble Heritage Team (STScI/AURA) & R. Gendler', license: 'Public Domain' },
+  { uid: 'M74', zh: '幻影星系', file: 'Messier 74 by HST.jpg', author: 'NASA, ESA & Hubble Heritage (STScI/AURA)-ESA/Hubble', license: 'Public Domain' },
+  { uid: 'M87', zh: '室女A星系', file: 'Messier 87 Hubble WikiSky.jpg', author: 'NASA, STScI, WikiSky', license: 'Public Domain' },
+  { uid: 'M65', zh: '梅西耶65', file: 'Messier 65 through the years.jpg', author: 'ESA/Hubble & NASA', license: 'Public Domain' },
+  { uid: 'M66', zh: '梅西耶66', file: 'Phot-33c-03-fullres.jpg', author: 'ESO', license: 'CC BY 4.0' },
+  { uid: 'M77', zh: '梅西耶77', file: 'Messier 77 spiral galaxy by HST.jpg', author: 'NASA, ESA & A. van der Hoeven', license: 'Public Domain' },
+  { uid: 'M108', zh: '梅西耶108', file: 'Messier108 - SDSS DR 14 (panorama).jpg', author: 'Sloan Digital Sky Survey', license: 'CC BY 4.0' },
+  { uid: 'M109', zh: '梅西耶109', file: 'M109 (noao-m109hatfield).jpg', author: 'KPNO/NOIRLab/NSF/AURA/G. Hatfield & F. Haase', license: 'CC BY 4.0' },
+  { uid: 'M110', zh: '梅西耶110', file: 'Not So Dead After All (48763200193).jpg', author: 'European Space Agency', license: 'CC BY 2.0' },
+  // —— Phase 10 扩容（16→36）：星云 / 星团 ——
+  { uid: 'M76', zh: '小哑铃星云', file: 'Messier 76 – The Little Dumbbell Nebula in Perseus.jpg', author: 'Tom Wildoner', license: 'CC BY-SA 4.0' },
+  { uid: 'M97', zh: '夜枭星云', file: 'M97, NGC 3587 (noao-m97).jpg', author: 'NOIRLab/NSF/AURA', license: 'CC BY 4.0' },
+  { uid: 'M78', zh: '梅西耶78', file: 'Messier 78.jpg', author: 'ESO/Igor Chekalin', license: 'CC BY 4.0' },
+  { uid: 'M43', zh: '德梅兰星云', file: 'M43 HST.jpg', author: 'NASA, ESA, M. Robberto (STScI/ESA) & HST Orion Treasury Team', license: 'Public Domain' },
+  { uid: 'M2', zh: '梅西耶2', file: 'Messier 2 Hubble WikiSky.jpg', author: 'NASA, STScI, WikiSky', license: 'Public Domain' },
+  { uid: 'M15', zh: '梅西耶15', file: 'Messier 15 HST.jpg', author: 'ESA/Hubble & NASA', license: 'Public Domain' },
 ];
 
 /** @type {AssetSpec[]} */

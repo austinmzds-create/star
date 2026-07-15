@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { subscribeHover } from '@/lib/hoverBus';
+import { type HoverInfo, subscribeHover } from '@/lib/hoverBus';
 import { kindLabelZh } from '@/lib/objectPresenter';
 import { getObjectByUid } from '@/lib/solarSystem';
 
@@ -15,6 +15,8 @@ import { getObjectByUid } from '@/lib/solarSystem';
  */
 export function HoverTooltip() {
   const [uid, setUid] = useState<string | null>(null);
+  // 说明气泡（Phase 10「悬停万物」）：线/区域命中走这条，与天体名牌互斥。
+  const [info, setInfo] = useState<HoverInfo | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(
@@ -22,8 +24,8 @@ export function HoverTooltip() {
       subscribeHover((s) => {
         const el = rootRef.current;
         if (!el) return;
-        if (s.uid) {
-          // 贴近屏幕右/下边缘时翻转到光标另一侧，避免名牌被裁切
+        if (s.uid || s.info) {
+          // 贴近屏幕右/下边缘时翻转到光标另一侧，避免被裁切
           const flipX = s.x > window.innerWidth - 190;
           const flipY = s.y > window.innerHeight - 80;
           el.style.transform =
@@ -34,6 +36,7 @@ export function HoverTooltip() {
           el.style.opacity = '0';
         }
         setUid(s.uid);
+        setInfo(s.info);
       }),
     [],
   );
@@ -52,6 +55,16 @@ export function HoverTooltip() {
             {kindLabelZh(obj)}
           </span>
           <span className="text-nebula-200/60">{obj.magnitude.toFixed(1)} 等</span>
+        </div>
+      )}
+      {/* 线/区域说明气泡（黄道/天赤道/网格圈/地平线/银河/星座连线） */}
+      {!obj && info && (
+        <div className="glass flex items-center gap-2 whitespace-nowrap rounded-xl px-3 py-1.5 text-[12px]">
+          <span aria-hidden className="text-[13px]">
+            {info.icon}
+          </span>
+          <span className="font-medium text-white">{info.title}</span>
+          {info.sub && <span className="text-nebula-200/60">{info.sub}</span>}
         </div>
       )}
     </div>

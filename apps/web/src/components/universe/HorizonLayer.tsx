@@ -39,6 +39,18 @@ import { SPHERE_RADIUS } from '@/lib/universe';
  * 关闭开关整层 return null（暗罩+大圆+方位标+罗盘一起消失，几何缓存保留）。
  */
 
+/**
+ * 当前观测者天顶向量（渲染/世界系；Phase 10 悬停万物的地平线探针读取器）。
+ * free 模式赤道系天顶（天旋 group 恒等 ⇒ 世界系）与 earth 模式 (0,1,0) 都在
+ * 世界系与地平暗罩球一致——lib/skyProbe 的地平线命中直接用世界方向点乘它。
+ * null = 地平线层未显示（不给「悬停一条看不见的线」的困惑）。
+ */
+const zenithReader = new THREE.Vector3();
+let zenithValid = false;
+export function getHorizonZenith(): THREE.Vector3 | null {
+  return zenithValid ? zenithReader : null;
+}
+
 /** 地平线大圆采样点数（每 3° 一点）。 */
 const HORIZON_POINTS = 120;
 /** 大圆半径：略在星点内侧。 */
@@ -377,7 +389,10 @@ export function HorizonLayer() {
   // 低频重建：城市/时刻/模式变化 → 大圆顶点、方位标、天顶向量、晨昏色调
   useEffect(() => {
     const built = builtRef.current;
-    if (!showHorizon || !built) return;
+    if (!showHorizon || !built) {
+      zenithValid = false; // 地平线未显示：探针不给「悬停看不见的线」的困惑
+      return;
+    }
     const date = new Date(observeTime ?? Date.now());
     const observer = { latitudeDeg: city.latitudeDeg, longitudeDeg: city.longitudeDeg };
     const earth = viewMode === 'earth';
@@ -429,6 +444,9 @@ export function HorizonLayer() {
       );
       built.uniforms.uZenith.value.set(zv.x, zv.y, zv.z).normalize();
     }
+    // 天顶探针读取器同步（Phase 10）：copy 世界系天顶，供 skyProbe 地平线命中
+    zenithReader.copy(built.uniforms.uZenith.value);
+    zenithValid = true;
 
     // ⑤ 太阳高度角 → 晨昏色调/辉光（太阳坐标读 ephemRegistry，勿重复调引擎）
     let sunAltDeg = -90;

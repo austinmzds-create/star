@@ -69,3 +69,45 @@ export function parseCelestrakTle(text: string, expectedNoradId: number): Parsed
   }
   return { name: nameLine?.trim() || String(expectedNoradId), l1, l2, epochAt: parseTleEpoch(l1) };
 }
+
+/** 组内单条解析结果（比 ParsedTle 多携带 NORAD 目录号，供构造 uid）。 */
+export interface ParsedGroupTle extends ParsedTle {
+  noradId: number;
+}
+
+/**
+ * 解析 Celestrak gp.php?GROUP=…&FORMAT=TLE 的整组响应（成千上万颗，
+ * 每颗三行：名称行 + l1 + l2）。
+ *
+ * 逐颗宽容：单颗结构/长度/校验和/目录号非法则【静默跳过】（不抛错）——
+ * 整组里个别坏行不能拖垮整批；返回全部通过校验的条目。绝不产出半截或伪造行。
+ */
+export function parseCelestrakGroupTle(text: string): ParsedGroupTle[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter((l) => l.length > 0);
+  const out: ParsedGroupTle[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l1 = lines[i]!;
+    if (!l1.startsWith('1 ')) continue;
+    const l2 = lines[i + 1];
+    if (!l2 || !l2.startsWith('2 ')) continue;
+    // 名称行：紧邻上一行且非 TLE 数据行时采用，否则回落目录号
+    const prev = i > 0 ? lines[i - 1]! : '';
+    const nameLine = prev && !prev.startsWith('1 ') && !prev.startsWith('2 ') ? prev.trim() : '';
+    if (l1.length !== 69 || l2.length !== 69) continue;
+    if (!tleChecksumOk(l1) || !tleChecksumOk(l2)) continue;
+    const noradId = Number(l1.slice(2, 7));
+    if (!Number.isFinite(noradId)) continue;
+    out.push({
+      name: nameLine || `STARLINK-${noradId}`,
+      l1,
+      l2,
+      epochAt: parseTleEpoch(l1),
+      noradId,
+    });
+    i++; // 跳过已消费的 l2
+  }
+  return out;
+}

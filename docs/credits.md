@@ -6,7 +6,7 @@
 星辰纪念为私人纪念服务，与 IAU 及任何官方命名机构无关。以下登记站内使用的全部第三方影像素材
 （仅采用 Public Domain 或 CC-BY 许可，CC-BY 素材已按要求署名）与开放数据来源。
 
-生成时间：2026-07-11T19:07:01.255Z
+生成时间：2026-07-15T17:55:36.853Z
 
 ## 银河底图
 
@@ -35,6 +35,26 @@
 | `dso-photos/m101.jpg` | 风车星系 M101 | ESA & NASA (Hubble) | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:M101_hires_STScI-PRC2006-10a.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M101%20hires%20STScI-PRC2006-10a.jpg?width=800) |
 | `dso-photos/m104.jpg` | 草帽星系 M104 | NASA/ESA & Hubble Heritage Team | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:M104_ngc4594_sombrero_galaxy_hi-res.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M104%20ngc4594%20sombrero%20galaxy%20hi-res.jpg?width=800) |
 | `dso-photos/m1.jpg` | 蟹状星云 M1 | NASA, ESA, J. Hester & A. Loll (ASU) | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Crab_Nebula.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Crab%20Nebula.jpg?width=800) |
+| `dso-photos/m82.jpg` | 雪茄星系 M82 | NASA, ESA, Hubble Heritage Team (STScI/AURA) | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:M82_HST_ACS_2006-14-a-large_web.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M82%20HST%20ACS%202006-14-a-large_web.jpg?width=800) |
+| `dso-photos/m63.jpg` | 葵花星系 M63 | NASA/ESA, Hubble Legacy Archive (STScI) | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:M63_(NGC_5055).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M63%20(NGC%205055).jpg?width=800) |
+| `dso-photos/m64.jpg` | 黑眼星系 M64 | KPNO/NOIRLab/NSF/AURA/B. Chadwell/F. Haase | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:M64_(The_Black_Eye_Galaxy)_(noao-m64chadwell).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M64%20(The%20Black%20Eye%20Galaxy)%20(noao-m64chadwell).jpg?width=800) |
+| `dso-photos/m83.jpg` | 南风车星系 M83 | NASA, ESA, Hubble Heritage Team (STScI/AURA) | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier83_-_Heic1403a.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier83%20-%20Heic1403a.jpg?width=800) |
+| `dso-photos/m94.jpg` | 猫眼星系 M94 | ESA/Hubble & NASA | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:Starburst_galaxy_Messier_94.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Starburst%20galaxy%20Messier%2094.jpg?width=800) |
+| `dso-photos/m106.jpg` | 梅西耶106 M106 | NASA, ESA, Hubble Heritage Team (STScI/AURA) & R. Gendler | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_106_visible_and_infrared_composite.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%20106%20visible%20and%20infrared%20composite.jpg?width=800) |
+| `dso-photos/m74.jpg` | 幻影星系 M74 | NASA, ESA & Hubble Heritage (STScI/AURA)-ESA/Hubble | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_74_by_HST.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2074%20by%20HST.jpg?width=800) |
+| `dso-photos/m87.jpg` | 室女A星系 M87 | NASA, STScI, WikiSky | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_87_Hubble_WikiSky.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2087%20Hubble%20WikiSky.jpg?width=800) |
+| `dso-photos/m65.jpg` | 梅西耶65 M65 | ESA/Hubble & NASA | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_65_through_the_years.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2065%20through%20the%20years.jpg?width=800) |
+| `dso-photos/m66.jpg` | 梅西耶66 M66 | ESO | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:Phot-33c-03-fullres.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Phot-33c-03-fullres.jpg?width=800) |
+| `dso-photos/m77.jpg` | 梅西耶77 M77 | NASA, ESA & A. van der Hoeven | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_77_spiral_galaxy_by_HST.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2077%20spiral%20galaxy%20by%20HST.jpg?width=800) |
+| `dso-photos/m108.jpg` | 梅西耶108 M108 | Sloan Digital Sky Survey | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:Messier108_-_SDSS_DR_14_(panorama).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier108%20-%20SDSS%20DR%2014%20(panorama).jpg?width=800) |
+| `dso-photos/m109.jpg` | 梅西耶109 M109 | KPNO/NOIRLab/NSF/AURA/G. Hatfield & F. Haase | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:M109_(noao-m109hatfield).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M109%20(noao-m109hatfield).jpg?width=800) |
+| `dso-photos/m110.jpg` | 梅西耶110 M110 | European Space Agency | CC BY 2.0 | [来源页](https://commons.wikimedia.org/wiki/File:Not_So_Dead_After_All_(48763200193).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Not%20So%20Dead%20After%20All%20(48763200193).jpg?width=800) |
+| `dso-photos/m76.jpg` | 小哑铃星云 M76 | Tom Wildoner | CC BY-SA 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:Messier_76_%E2%80%93_The_Little_Dumbbell_Nebula_in_Perseus.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2076%20%E2%80%93%20The%20Little%20Dumbbell%20Nebula%20in%20Perseus.jpg?width=800) |
+| `dso-photos/m97.jpg` | 夜枭星云 M97 | NOIRLab/NSF/AURA | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:M97%2C_NGC_3587_(noao-m97).jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M97%2C%20NGC%203587%20(noao-m97).jpg?width=800) |
+| `dso-photos/m78.jpg` | 梅西耶78 M78 | ESO/Igor Chekalin | CC BY 4.0 | [来源页](https://commons.wikimedia.org/wiki/File:Messier_78.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2078.jpg?width=800) |
+| `dso-photos/m43.jpg` | 德梅兰星云 M43 | NASA, ESA, M. Robberto (STScI/ESA) & HST Orion Treasury Team | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:M43_HST.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/M43%20HST.jpg?width=800) |
+| `dso-photos/m2.jpg` | 梅西耶2 M2 | NASA, STScI, WikiSky | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_2_Hubble_WikiSky.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%202%20Hubble%20WikiSky.jpg?width=800) |
+| `dso-photos/m15.jpg` | 梅西耶15 M15 | ESA/Hubble & NASA | Public Domain | [来源页](https://commons.wikimedia.org/wiki/File:Messier_15_HST.jpg) | [文件](https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2015%20HST.jpg?width=800) |
 
 ## 行星贴图
 
@@ -55,29 +75,12 @@
 
 | 名称 | 许可 | 地址 |
 | --- | --- | --- |
-| HYG v4.1 星表（Phase 9C 起自行/色指数/变星/双星字段经 star-extras.json 异步加载） | CC BY-SA 4.0（数据） | https://github.com/astronexus/HYG-Database |
-| IAU-CSN 官方星名名录（IAU WGSN；文件版本 2022-04-04，451 条、339 条与站内星表匹配；「IAU 官方星名」徽章与免责声明权威锚点） | CC BY 4.0（署名 IAU） | https://www.pas.rochester.edu/~emamajek/WGSN/IAU-CSN.txt |
+| HYG v4.1 星表 | CC BY-SA 4.0（数据） | https://github.com/astronexus/HYG-Database |
 | OpenNGC 深空天体目录 | CC BY-SA 4.0（数据） | https://github.com/mattiaverga/OpenNGC |
-| d3-celestial 星座连线（88 座 / 743 线段，与 HYG 100% 匹配） | BSD-3-Clause | https://github.com/ofrohn/d3-celestial |
 | astronomy-engine 天文历表 | MIT | https://github.com/cosinekitty/astronomy |
-| TLE 轨道数据（ISS/天宫/哈勃：内置快照注明 epoch + Phase 9C 起由站内服务端每 6h 代理刷新，客户端不直连上游；TLE 会过期，站内标注「人造卫星 · 演示精度」。致谢句原文：Orbital data courtesy of CelesTrak） | 公开数据（Celestrak，遵守其官方使用政策） | https://celestrak.org |
-| 小天体轨道根数（内置常量注明历元 + Phase 9C 起服务端每日自 SBDB Query API 刷新现役亮彗星；位置经开普勒/近抛物线方程计算，参考值对照 JPL Horizons，站内标注「演示级，±0.5°」；礼节署名 NASA/JPL Solar System Dynamics） | 公有领域（JPL SBDB / Horizons，US Gov） | https://ssd.jpl.nasa.gov |
-| 流星雨常识表（约 10 大流星雨极大期/ZHR/辐射点，内置静态常量） | 公域天文常识（历表可参考 IMO） | https://www.imo.net |
-| satellite.js（SGP4 传播库，Phase 6B 唯一新增 npm 依赖） | MIT | https://github.com/shashwatak/satellite-js |
 
 ## 展示口径注记
 
 - 小角径深空天体（如 M57 环状星云，真实角径仅约 1.3′）按真实尺寸渲染将不可见，站内显示尺寸经放大（0.6–1.0°），大角径天体（M31/M45 等）按真实角尺寸摆放。
 - 银河全景为 NASA SVS Deep Star Maps 2020 的天球赤道坐标版本，内含 Gaia DR2 星表渲染的微星场。
 - 行星贴图来自 Solar System Scope（CC-BY-4.0），部分为艺术加工的可视化贴图（如金星取大气层版本）。
-- **Phase 6B 数据来源补记**：上表 TLE / 小天体轨道根数 / 流星雨表 / satellite.js 四行为**非图像数据来源**，
-  由文档手工登记并与站内 CreditsPanel 的静态「数据来源」段落保持一致；`fetch-assets.mjs` 只管理**图像资产**清单，
-  重跑该脚本重新生成本文件时需保留（或由脚本清单收编）这四行与本条注记。
-- 卫星与小天体的观测坐标全部经公式计算（SGP4 / 开普勒方程），不采用任何编造坐标；二者均不可命名（`isNamable=false`）。
-- **Phase 9C 公信力补记**：站内新增 `/credits`「数据来源与版本」正式页面（`apps/web/src/app/credits/`），
-  逐源登记机构/版本/许可/逐字致谢句/数据获取时间，并声明**星等完备极限**——
-  恒星 mag≤6.5 全天完备（核心层 8,896 颗）、6.5–7.5 为渲染增强层（16,852 颗）、
-  深空 Messier 110 全量 + NGC/IC V≤10（574 条）。上表新增 IAU-CSN 与 d3-celestial 两行为
-  Phase 9C 手工登记，重跑 `fetch-assets.mjs` 时需与 Phase 6B 四行一并保留。
-  全站免责声明统一为：「本平台提供基于真实星体坐标的私人纪念命名登记，不代表国际天文学联合会（IAU）
-  或任何官方机构命名；恒星的官方专名以 IAU-CSN 名录为准。」（页脚 / 命名弹窗 / /credits 页三处同句）。

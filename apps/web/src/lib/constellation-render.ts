@@ -74,6 +74,15 @@ export interface ConstellationRenderInfo {
   memberPmVec: Float32Array;
   /** 成员星 objectUid（9C：extras 加载后按 uid 刷新 pmVec 用）。 */
   memberUids: string[];
+  /** 成员星亮度排名（0=最亮 α 星…；心跳/ping 分级用，memberCount）。 */
+  memberRanks: Float32Array;
+  /**
+   * 艺术图自动对齐（Phase 10 §2.2）：由连线端点包围盒在质心切平面内导出，
+   * 供无手调 meta 的座作画锚定回退（已校准 20 座仍优先用 CONSTELLATION_ART）。
+   */
+  artAnchor: THREE.Vector3;
+  artSizeDeg: number;
+  artRollDeg: number;
 }
 
 /** 全 88 座合并后的渲染数据（一次 useMemo 构建，<2ms）。 */
@@ -98,7 +107,47 @@ export interface ConstellationRenderData {
   vertexCount: number;
   cons: ConstellationRenderInfo[];
   byAbbr: Map<string, ConstellationRenderInfo>;
+
+  // ── 发光丝带几何（Phase 10 §1：high/mid tier；每段 6 顶点非索引，2 三角） ──
+  /** 段数（= vertexCount/2）。ribbon 顶点数 = segCount×6。 */
+  segCount: number;
+  /** ribbon 本顶点端点世界坐标（×LINE_RADIUS，深时原地覆写；rCount×3）。 */
+  ribbonPos: Float32Array;
+  /** ribbon 同段另一端点世界坐标（算屏幕方向用；rCount×3）。 */
+  ribbonOther: Float32Array;
+  /** ribbon 顶点：−1/+1 丝带上下沿（rCount）。 */
+  ribbonSide: Float32Array;
+  /** ribbon 顶点：本段基础像素半宽（按较亮端分级；rCount）。 */
+  ribbonWidth: Float32Array;
+  /** ribbon 顶点：星座索引（rCount）。 */
+  ribbonCon: Float32Array;
+  /** ribbon 顶点：本段点亮起点/终点（座内归一化，rCount）。 */
+  ribbonT0: Float32Array;
+  ribbonT1: Float32Array;
+  /** ribbon 顶点：呼吸/流光相位（rCount）。 */
+  ribbonPhase: Float32Array;
+  /** ribbon 顶点：沿段坐标（本端点是段起 0 / 段终 1，rCount）。 */
+  ribbonEnd: Float32Array;
+  /** ribbon 深时不变基（本端点单位方向 + 自行速度；rCount×3）。 */
+  ribbonBaseThis: Float32Array;
+  ribbonPmThis: Float32Array;
+  /** ribbon 深时不变基（另一端点单位方向 + 自行速度；rCount×3）。 */
+  ribbonBaseOther: Float32Array;
+  ribbonPmOther: Float32Array;
 }
+
+/**
+ * ribbon 每段 6 顶点模板：[本端点(0=A/1=B), 丝带侧(−1/+1)]。
+ * 两三角覆盖四边形：A₋ A₊ B₋ / B₋ A₊ B₊（本端点决定 aEnd/深时基）。
+ */
+const RIBBON_ROWS: readonly [number, number][] = [
+  [0, -1],
+  [0, 1],
+  [1, -1],
+  [1, -1],
+  [0, 1],
+  [1, 1],
+];
 
 /**
  * 恒星自行切向速度向量（rad/yr）：east/north 切向量与 TwinkleStars 顶点 shader
@@ -126,6 +175,8 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     segPms: [THREE.Vector3, THREE.Vector3][];
     /** 各段两端点 uid（与 segs 同序；9C extras 到达后刷新 pm 用）。 */
     segUids: [string, string][];
+    /** 各段两端点星等（与 segs 同序；ribbon 按较亮端定粗细用）。 */
+    segMags: [number, number][];
     /** 端点按 uid 去重后的成员星（单位向量 + 光环像素尺寸 + 自行速度 + uid）。 */
     members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3; uid: string }[];
   }
@@ -136,6 +187,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     const segs: [THREE.Vector3, THREE.Vector3][] = [];
     const segPms: [THREE.Vector3, THREE.Vector3][] = [];
     const segUids: [string, string][] = [];
+    const segMags: [number, number][] = [];
     const members: { vec: THREE.Vector3; sizePx: number; pm: THREE.Vector3; uid: string }[] = [];
     const seen = new Set<string>();
     for (const [ua, ub] of con.segments) {
@@ -151,6 +203,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       segs.push([pa, pb]);
       segPms.push([pmA, pmB]);
       segUids.push([ua, ub]);
+      segMags.push([a.magnitude, b.magnitude]);
       // 成员星去重：光环尺寸 ≈ 恒星点尺寸 ×2.6（强调而不吞没本体）。
       if (!seen.has(ua)) {
         seen.add(ua);
@@ -172,7 +225,7 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       }
     }
     if (segs.length === 0) continue;
-    resolved.push({ abbr: con.con, segs, segPms, segUids, members });
+    resolved.push({ abbr: con.con, segs, segPms, segUids, segMags, members });
     totalSegs += segs.length;
   }
 
@@ -188,7 +241,25 @@ export function buildConstellationRenderData(): ConstellationRenderData {
   const vertexUids: string[] = new Array<string>(vertexCount);
   const cons: ConstellationRenderInfo[] = [];
 
-  let v = 0; // 顶点游标
+  // 发光丝带（§1）：每段 6 顶点（非索引）。全 88 座合并仍一次 draw。
+  const segCount = totalSegs;
+  const rCount = segCount * 6;
+  const ribbonPos = new Float32Array(rCount * 3);
+  const ribbonOther = new Float32Array(rCount * 3);
+  const ribbonSide = new Float32Array(rCount);
+  const ribbonWidth = new Float32Array(rCount);
+  const ribbonCon = new Float32Array(rCount);
+  const ribbonT0 = new Float32Array(rCount);
+  const ribbonT1 = new Float32Array(rCount);
+  const ribbonPhase = new Float32Array(rCount);
+  const ribbonEnd = new Float32Array(rCount);
+  const ribbonBaseThis = new Float32Array(rCount * 3);
+  const ribbonPmThis = new Float32Array(rCount * 3);
+  const ribbonBaseOther = new Float32Array(rCount * 3);
+  const ribbonPmOther = new Float32Array(rCount * 3);
+
+  let v = 0; // 顶点游标（base 2/seg）
+  let rv = 0; // ribbon 顶点游标（6/seg）
   let globalSeg = 0;
 
   resolved.forEach((con, index) => {
@@ -206,12 +277,18 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     }
     const radiusDeg = THREE.MathUtils.radToDeg(maxAngle);
 
+    // §1.4 描线节奏：起始时刻按 easeOut 分布（主干先勾、末梢渐次「先快后缓」）。
+    const spreadSec = riseDurSec - SEGMENT_RISE_SEC; // = STAGGER×(n−1)
+    const denom = Math.max(n - 1, 1);
     con.segs.forEach(([a, b], i) => {
-      const t0 = (SEGMENT_STAGGER_SEC * i) / riseDurSec;
-      const t1 = (SEGMENT_STAGGER_SEC * i + SEGMENT_RISE_SEC) / riseDurSec;
+      const xf = i / denom;
+      const startSec = (1 - (1 - xf) * (1 - xf)) * spreadSec; // ease(x)=1−(1−x)²
+      const t0 = startSec / riseDurSec;
+      const t1 = (startSec + SEGMENT_RISE_SEC) / riseDurSec;
       const phase = (globalSeg * 2.399963) % (Math.PI * 2); // 黄金角散布
       const pms = con.segPms[i]!;
       const uids = con.segUids[i]!;
+      const mags = con.segMags[i]!;
       [a, b].forEach((p, end) => {
         vertexUids[v] = uids[end]!;
         positions[v * 3] = p.x * LINE_RADIUS;
@@ -232,6 +309,48 @@ export function buildConstellationRenderData(): ConstellationRenderData {
         aEnd[v] = end; // 0=段起点 1=段终点，片元插值 → 沿段坐标
         v++;
       });
+
+      // ── ribbon 6 顶点（§1.1）：本段基础半宽按较亮端 magnitudeToSize 分级 ──
+      const width = THREE.MathUtils.clamp(
+        1.6 + (6.5 - Math.min(mags[0], mags[1])) * 0.32,
+        1.6,
+        4.2,
+      );
+      const ends: [THREE.Vector3, THREE.Vector3] = [a, b];
+      const endPms: [THREE.Vector3, THREE.Vector3] = [pms[0], pms[1]];
+      for (const [thisEnd, side] of RIBBON_ROWS) {
+        const otherEnd = 1 - thisEnd;
+        const pt = ends[thisEnd]!;
+        const po = ends[otherEnd]!;
+        const pmT = endPms[thisEnd]!;
+        const pmO = endPms[otherEnd]!;
+        ribbonPos[rv * 3] = pt.x * LINE_RADIUS;
+        ribbonPos[rv * 3 + 1] = pt.y * LINE_RADIUS;
+        ribbonPos[rv * 3 + 2] = pt.z * LINE_RADIUS;
+        ribbonOther[rv * 3] = po.x * LINE_RADIUS;
+        ribbonOther[rv * 3 + 1] = po.y * LINE_RADIUS;
+        ribbonOther[rv * 3 + 2] = po.z * LINE_RADIUS;
+        ribbonBaseThis[rv * 3] = pt.x;
+        ribbonBaseThis[rv * 3 + 1] = pt.y;
+        ribbonBaseThis[rv * 3 + 2] = pt.z;
+        ribbonPmThis[rv * 3] = pmT.x;
+        ribbonPmThis[rv * 3 + 1] = pmT.y;
+        ribbonPmThis[rv * 3 + 2] = pmT.z;
+        ribbonBaseOther[rv * 3] = po.x;
+        ribbonBaseOther[rv * 3 + 1] = po.y;
+        ribbonBaseOther[rv * 3 + 2] = po.z;
+        ribbonPmOther[rv * 3] = pmO.x;
+        ribbonPmOther[rv * 3 + 1] = pmO.y;
+        ribbonPmOther[rv * 3 + 2] = pmO.z;
+        ribbonSide[rv] = side;
+        ribbonWidth[rv] = width;
+        ribbonCon[rv] = index;
+        ribbonT0[rv] = t0;
+        ribbonT1[rv] = t1;
+        ribbonPhase[rv] = phase;
+        ribbonEnd[rv] = thisEnd;
+        rv++;
+      }
       globalSeg++;
     });
 
@@ -258,6 +377,41 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       memberPhases[i] = (i * 2.399963) % (Math.PI * 2);
     });
 
+    // 成员亮度排名（§1.5 心跳/ping 分级）：sizePx 越大越亮 → 降序即 α 星 rank 0。
+    const memberRanks = new Float32Array(memberCount);
+    const order = Array.from({ length: memberCount }, (_, i) => i).sort(
+      (i, j) => (memberSizes[j] ?? 0) - (memberSizes[i] ?? 0),
+    );
+    order.forEach((mi, rank) => {
+      memberRanks[mi] = rank;
+    });
+
+    // 艺术图自动对齐（§2.2）：质心切平面内投影成员端点算包围盒 → 锚点/尺寸。
+    const up0 =
+      Math.abs(centroid.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    const uAxis = up0.clone().addScaledVector(centroid, -up0.dot(centroid)).normalize();
+    const rAxis = new THREE.Vector3().crossVectors(centroid, uAxis);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const m of con.members) {
+      const x = Math.atan2(m.vec.dot(rAxis), m.vec.dot(centroid));
+      const y = Math.atan2(m.vec.dot(uAxis), m.vec.dot(centroid));
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const artSizeDeg = THREE.MathUtils.radToDeg(Math.max(maxX - minX, maxY - minY)) * 1.3;
+    const artAnchor = centroid
+      .clone()
+      .addScaledVector(rAxis, Math.tan(cx))
+      .addScaledVector(uAxis, Math.tan(cy))
+      .normalize();
+
     const meta = CONSTELLATION_ABBR[con.abbr];
     cons.push({
       abbr: con.abbr,
@@ -275,6 +429,10 @@ export function buildConstellationRenderData(): ConstellationRenderData {
       memberBaseDir,
       memberPmVec,
       memberUids,
+      memberRanks,
+      artAnchor,
+      artSizeDeg,
+      artRollDeg: 0,
     });
   });
 
@@ -291,6 +449,20 @@ export function buildConstellationRenderData(): ConstellationRenderData {
     vertexCount,
     cons,
     byAbbr: new Map(cons.map((c) => [c.abbr, c])),
+    segCount,
+    ribbonPos,
+    ribbonOther,
+    ribbonSide,
+    ribbonWidth,
+    ribbonCon,
+    ribbonT0,
+    ribbonT1,
+    ribbonPhase,
+    ribbonEnd,
+    ribbonBaseThis,
+    ribbonPmThis,
+    ribbonBaseOther,
+    ribbonPmOther,
   };
 }
 
@@ -356,6 +528,14 @@ export function applyConstellationDeepTime(years: number): void {
   for (let i = 0; i < vertexCount; i++) {
     displacePoint(positions, baseDir, pmVec, i, years);
   }
+  // 发光丝带端点：this/other 两路各自形变（与 base 同公式，保证与星点贴合）。
+  const { ribbonPos, ribbonBaseThis, ribbonPmThis, ribbonOther, ribbonBaseOther, ribbonPmOther } =
+    cached;
+  const rCount = cached.segCount * 6;
+  for (let i = 0; i < rCount; i++) {
+    displacePoint(ribbonPos, ribbonBaseThis, ribbonPmThis, i, years);
+    displacePoint(ribbonOther, ribbonBaseOther, ribbonPmOther, i, years);
+  }
   for (const con of cons) {
     for (let i = 0; i < con.memberCount; i++) {
       displacePoint(con.memberPositions, con.memberBaseDir, con.memberPmVec, i, years);
@@ -397,6 +577,24 @@ export function refreshConstellationPmFromCatalog(): void {
       con.memberPmVec[i * 3 + 2] = pm.z;
     }
   }
+  // 丝带 pm：从刚刷新的 base pmVec 按确定性布局回填（ribbon 端点即 base 端点，
+  // 段 s 的 base 端点索引 = 2s+end；rv=6s+k 的 this/other 端由 RIBBON_ROWS 决定）。
+  const { ribbonPmThis, ribbonPmOther, segCount } = cached;
+  for (let s = 0; s < segCount; s++) {
+    for (let k = 0; k < 6; k++) {
+      const thisEnd = RIBBON_ROWS[k]![0];
+      const otherEnd = 1 - thisEnd;
+      const rvi = (s * 6 + k) * 3;
+      const bThis = (s * 2 + thisEnd) * 3;
+      const bOther = (s * 2 + otherEnd) * 3;
+      ribbonPmThis[rvi] = pmVec[bThis]!;
+      ribbonPmThis[rvi + 1] = pmVec[bThis + 1]!;
+      ribbonPmThis[rvi + 2] = pmVec[bThis + 2]!;
+      ribbonPmOther[rvi] = pmVec[bOther]!;
+      ribbonPmOther[rvi + 1] = pmVec[bOther + 1]!;
+      ribbonPmOther[rvi + 2] = pmVec[bOther + 2]!;
+    }
+  }
   // 正处深时形变：用新 pm 立即重应用（重置去重哨兵后复用同一入口，版本号随之自增，
   // 渲染层在 useFrame 里对版本号变化置 needsUpdate）。J2000 原位（0）无需动 positions。
   if (appliedDeepTimeYears !== 0) {
@@ -426,6 +624,7 @@ export function pickConstellationAt(
   py: number,
   camera: THREE.Camera,
   rect: { width: number; height: number },
+  centroidFallback = true,
 ): string | null {
   const data = getConstellationRenderData();
   const { positions, aCon, cons } = data;
@@ -461,6 +660,9 @@ export function pickConstellationAt(
     }
   }
   if (bestAbbr) return bestAbbr;
+  // 悬停变体（Phase 10）：只认真正压在线上（≤22px），不走质心兜底——否则整个
+  // 星座腹地都会触发气泡，太吵。
+  if (!centroidFallback) return null;
 
   // 兜底：质心投影就近（覆盖「点在星座图形内部但离线较远」的情形）。
   let bestC = PICK_CENTROID_PX;
@@ -476,4 +678,17 @@ export function pickConstellationAt(
     }
   }
   return bestAbbr;
+}
+
+/**
+ * 悬停专用星座命中（Phase 10「悬停万物」）：仅测连线段（≤22px），跳过质心兜底
+ * ——悬停只认真正压在线上的位置，不给「悬停一片腹地都弹气泡」的困扰。
+ */
+export function pickConstellationHoverAt(
+  px: number,
+  py: number,
+  camera: THREE.Camera,
+  rect: { width: number; height: number },
+): string | null {
+  return pickConstellationAt(px, py, camera, rect, false);
 }

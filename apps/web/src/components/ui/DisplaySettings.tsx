@@ -24,6 +24,14 @@ export function DisplaySettings() {
   const closeSettings = useUniverse((s) => s.closeSettings);
   const openCredits = useUniverse((s) => s.openCredits);
 
+  // 真实天空 + 行星放大（Phase 10）
+  const skyRealism = useUniverse((s) => s.skyRealism);
+  const lightPollution = useUniverse((s) => s.lightPollution);
+  const setSkyRealism = useUniverse((s) => s.setSkyRealism);
+  const setLightPollution = useUniverse((s) => s.setLightPollution);
+  const planetsEnlarged = useUniverse((s) => s.planetsEnlarged);
+  const togglePlanetsEnlarged = useUniverse((s) => s.togglePlanetsEnlarged);
+
   const showMilkyWay = useUniverse((s) => s.showMilkyWay);
   const showLabels = useUniverse((s) => s.showLabels);
   const showConstellations = useUniverse((s) => s.showConstellations);
@@ -33,7 +41,10 @@ export function DisplaySettings() {
   const showHorizon = useUniverse((s) => s.showHorizon);
   const showPlanetTrails = useUniverse((s) => s.showPlanetTrails);
   const showSatellites = useUniverse((s) => s.showSatellites);
+  const showStarlink = useUniverse((s) => s.showStarlink);
   const showMinorBodies = useUniverse((s) => s.showMinorBodies);
+  // 注：planetsEnlarged/togglePlanetsEnlarged 选择器在上方「真实天空」区已声明
+  // （跨域契约 §1，字段归「真实天空」域）；本处「行星放大」开关 UI 归「视觉炫酷」域。
   const city = useUniverse((s) => s.city);
 
   const toggleMilkyWay = useUniverse((s) => s.toggleMilkyWay);
@@ -45,6 +56,7 @@ export function DisplaySettings() {
   const toggleHorizon = useUniverse((s) => s.toggleHorizon);
   const togglePlanetTrails = useUniverse((s) => s.togglePlanetTrails);
   const toggleSatellites = useUniverse((s) => s.toggleSatellites);
+  const toggleStarlink = useUniverse((s) => s.toggleStarlink);
   const toggleMinorBodies = useUniverse((s) => s.toggleMinorBodies);
   const setCity = useUniverse((s) => s.setCity);
 
@@ -97,6 +109,21 @@ export function DisplaySettings() {
                 </button>
               </div>
 
+              <Section title="真实天空">
+                {/* 四段档：全部星 = skyRealism 'all'；城市/郊区/荒野 = 'naked' + 光污染档
+                  （契约两字段冻结，UI 合并为一个直觉分段控件） */}
+                <RealSkySegments
+                  current={skyRealism === 'all' ? 'all' : lightPollution}
+                  onSelect={(key) => {
+                    if (key === 'all') setSkyRealism('all');
+                    else {
+                      setSkyRealism('naked');
+                      setLightPollution(key);
+                    }
+                  }}
+                />
+              </Section>
+
               <Section title="氛围">
                 <SwitchRow label="银河" checked={showMilkyWay} onToggle={toggleMilkyWay} />
                 <SwitchRow label="名称标签" checked={showLabels} onToggle={toggleLabels} />
@@ -131,16 +158,28 @@ export function DisplaySettings() {
 
               <Section title="动态天体">
                 <SwitchRow
-                  label="人造卫星"
+                  label="著名卫星"
                   hint="ISS/天宫/哈勃 · 演示精度"
                   checked={showSatellites}
                   onToggle={toggleSatellites}
+                />
+                <SwitchRow
+                  label="星链 Starlink"
+                  hint="站在地球上看 · 过境光点"
+                  checked={showStarlink}
+                  onToggle={toggleStarlink}
                 />
                 <SwitchRow
                   label="小行星与彗星"
                   hint="谷神星等 · 演示级 ±0.5°"
                   checked={showMinorBodies}
                   onToggle={toggleMinorBodies}
+                />
+                <SwitchRow
+                  label="行星放大"
+                  hint="暗行星也一眼可见"
+                  checked={planetsEnlarged}
+                  onToggle={togglePlanetsEnlarged}
                 />
               </Section>
 
@@ -228,6 +267,48 @@ export function DisplaySettings() {
         </>
       )}
     </AnimatePresence>
+  );
+}
+
+/** 真实天空四段档 key（'all' + 三个光污染档）。 */
+type RealSkyKey = 'all' | 'city' | 'suburb' | 'wild';
+
+const REAL_SKY_OPTIONS: Array<{ key: RealSkyKey; label: string; hint: string }> = [
+  { key: 'all', label: '全部星', hint: '满天繁星 · 纪念的浪漫底色' },
+  { key: 'city', label: '城市', hint: '≈4.0 等 · 城区灯下能见的亮星' },
+  { key: 'suburb', label: '郊区', hint: '≈6.0 等 · 郊野裸眼极限' },
+  { key: 'wild', label: '荒野', hint: '≈6.5 等 · 无光害的星空' },
+];
+
+/** 真实天空分段控件：四枚 pill 横排，选中态 bg-nebula-500/70，带当前档副文案。 */
+function RealSkySegments({
+  current,
+  onSelect,
+}: {
+  current: RealSkyKey;
+  onSelect: (key: RealSkyKey) => void;
+}) {
+  const active = REAL_SKY_OPTIONS.find((o) => o.key === current) ?? REAL_SKY_OPTIONS[0]!;
+  return (
+    <div className="py-1.5">
+      <div className="flex gap-1">
+        {REAL_SKY_OPTIONS.map((o) => (
+          <button
+            key={o.key}
+            onClick={() => onSelect(o.key)}
+            aria-pressed={o.key === current}
+            className={`flex-1 rounded-lg px-1 py-1.5 text-[12px] transition ${
+              o.key === current
+                ? 'bg-nebula-500/70 text-white'
+                : 'bg-white/5 text-nebula-200/60 hover:bg-white/10'
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="mt-1.5 text-[10.5px] text-nebula-200/45">{active.hint}</div>
+    </div>
   );
 }
 

@@ -13,6 +13,8 @@ import {
   REDUCED_MOTION_DUR_SEC,
 } from '@/lib/constellation-render';
 import { isCoarsePointer, prefersReducedMotion } from '@/lib/device';
+import type { DeviceTier } from '@/lib/deviceTier';
+import { setConstellationFocusDim } from '@/lib/fxBus';
 import { worldToSkyLocal } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
 import { ConstellationArtPlane } from './ConstellationArt';
@@ -29,13 +31,13 @@ import { ConstellationName } from './ConstellationNames';
  * showConstellations=false 时整层不挂载，几何/纹理随卸载释放。
  */
 
-export function ConstellationLayer() {
+export function ConstellationLayer({ tier }: { tier: DeviceTier }) {
   const show = useUniverse((s) => s.showConstellations);
   if (!show) return null;
-  return <ConstellationLayerInner />;
+  return <ConstellationLayerInner tier={tier} />;
 }
 
-function ConstellationLayerInner() {
+function ConstellationLayerInner({ tier }: { tier: DeviceTier }) {
   const camera = useThree((s) => s.camera);
   const data = useMemo(() => getConstellationRenderData(), []);
   const coarse = useMemo(() => isCoarsePointer(), []);
@@ -43,6 +45,15 @@ function ConstellationLayerInner() {
 
   // 各座点亮进度（0..1）：ref 内原地推进，shader/子组件按帧读取。
   const progressRef = useRef<Float32Array>(new Float32Array(data.cons.length));
+
+  // ── 聚焦聚光灯（§3）：非激活座压暗系数（1↔0.45，damp λ5）+ 激活座索引 ──
+  // focusDim 每帧写 fxBus（TwinkleStars/ExtendedStars/MilkyWay 读 getGlobalFade
+  // 自动吃到全局压暗）与 ConstellationLines uFocusDim（同一 ref）。
+  const focusDimRef = useRef(1);
+  const activeIndexRef = useRef(-1);
+  const lastFocusDimRef = useRef(1);
+  // 卸载（隐藏星座层）时必须复位全局压暗，否则恒星/银河永远暗着。
+  useEffect(() => () => setConstellationFocusDim(1), []);
 
   // 「进度 > 0 的座」列表（低频 React state：仅集合/排序变化时 set，动画帧内零更新）。
   const [visibleAbbrs, setVisibleAbbrs] = useState<string[]>([]);
@@ -98,6 +109,18 @@ function ConstellationLayerInner() {
     const state = useUniverse.getState();
     const active = state.activeConstellation;
     const progress = progressRef.current;
+
+    // ── 0. 聚焦聚光灯：有激活座 → 全局压暗其余天空（damp λ5 ≈0.4s） ──
+    const activeInfo = active ? data.byAbbr.get(active) : undefined;
+    activeIndexRef.current = activeInfo ? activeInfo.index : -1;
+    const dimTarget = activeInfo ? 0.45 : 1;
+    const dim = THREE.MathUtils.damp(focusDimRef.current, dimTarget, 5, delta);
+    focusDimRef.current = dim;
+    // 收敛后停写（|Δ|<1e-3 恢复零成本；写 fxBus 供恒星/银河层读）
+    if (Math.abs(dim - lastFocusDimRef.current) > 1e-4) {
+      lastFocusDimRef.current = dim;
+      setConstellationFocusDim(dim);
+    }
 
     // ── 1. 进度推进：激活座升向 1（历时 = 依次点亮总时长），其余以 0.4s 匀速回落 ──
     for (let i = 0; i < data.cons.length; i++) {
@@ -195,15 +218,24 @@ function ConstellationLayerInner() {
 
   return (
     <>
-      <ConstellationLines data={data} progressRef={progressRef} reducedMotion={reducedMotion} />
+      <ConstellationLines
+        key={`lines-${tier}`}
+        data={data}
+        progressRef={progressRef}
+        reducedMotion={reducedMotion}
+        tier={tier}
+        focusDimRef={focusDimRef}
+        activeIndexRef={activeIndexRef}
+      />
       {nameAbbrs.map((abbr) => {
         const info = data.byAbbr.get(abbr);
         return info ? (
           <ConstellationMemberGlow
-            key={abbr}
+            key={`${abbr}-${tier}`}
             info={info}
             progressRef={progressRef}
             reducedMotion={reducedMotion}
+            tier={tier}
           />
         ) : null;
       })}
@@ -221,6 +253,7 @@ function ConstellationLayerInner() {
             meta={meta}
             progressRef={progressRef}
             coarse={coarse}
+            reducedMotion={reducedMotion}
           />
         ) : null;
       })}

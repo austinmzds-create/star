@@ -410,6 +410,30 @@ const DSO_IMAGE_META: Record<string, { imageKey: string; imageCredit: string }> 
   M101: { imageKey: 'm101', imageCredit: 'ESA & NASA（哈勃空间望远镜），CC BY 4.0' },
   M104: { imageKey: 'm104', imageCredit: 'NASA/ESA 与 Hubble Heritage Team，公有领域' },
   M1: { imageKey: 'm1', imageCredit: 'NASA, ESA, J. Hester & A. Loll (ASU)，公有领域' },
+  // Phase 10 扩容（16→36）：均经 Commons imageinfo API 逐文件核验许可与作者（PD/CC-BY/CC-BY-SA），
+  // 与 apps/web/scripts/fetch-assets.mjs 的 DSO_PHOTOS 及 test/dso-images.test.ts 的 IMAGE_UIDS 一一对应。
+  // 星系
+  M82: { imageKey: 'm82', imageCredit: 'NASA, ESA, Hubble Heritage Team (STScI/AURA)，公有领域' },
+  M63: { imageKey: 'm63', imageCredit: 'NASA/ESA（哈勃遗产档案 HLA/STScI），公有领域' },
+  M64: { imageKey: 'm64', imageCredit: 'KPNO/NOIRLab/NSF/AURA/B. Chadwell/F. Haase，CC BY 4.0' },
+  M83: { imageKey: 'm83', imageCredit: 'NASA, ESA, Hubble Heritage Team (STScI/AURA)，公有领域' },
+  M94: { imageKey: 'm94', imageCredit: 'ESA/Hubble 与 NASA，CC BY 4.0' },
+  M106: { imageKey: 'm106', imageCredit: 'NASA, ESA, Hubble Heritage Team (STScI/AURA) 与 R. Gendler，公有领域' },
+  M74: { imageKey: 'm74', imageCredit: 'NASA, ESA 与 Hubble Heritage (STScI/AURA)-ESA/Hubble 合作，公有领域' },
+  M87: { imageKey: 'm87', imageCredit: 'NASA, STScI, WikiSky，公有领域' },
+  M65: { imageKey: 'm65', imageCredit: 'ESA/Hubble 与 NASA，公有领域' },
+  M66: { imageKey: 'm66', imageCredit: 'ESO，CC BY 4.0' },
+  M77: { imageKey: 'm77', imageCredit: 'NASA, ESA 与 A. van der Hoeven，公有领域' },
+  M108: { imageKey: 'm108', imageCredit: 'Sloan Digital Sky Survey (SDSS)，CC BY 4.0' },
+  M109: { imageKey: 'm109', imageCredit: 'KPNO/NOIRLab/NSF/AURA/G. Hatfield 与 F. Haase，CC BY 4.0' },
+  M110: { imageKey: 'm110', imageCredit: 'European Space Agency，CC BY 2.0' },
+  // 星云 / 星团
+  M76: { imageKey: 'm76', imageCredit: 'Tom Wildoner，CC BY-SA 4.0' },
+  M97: { imageKey: 'm97', imageCredit: 'NOIRLab/NSF/AURA，CC BY 4.0' },
+  M78: { imageKey: 'm78', imageCredit: 'ESO/Igor Chekalin，CC BY 4.0' },
+  M43: { imageKey: 'm43', imageCredit: 'NASA, ESA, M. Robberto (STScI/ESA) 与 HST Orion Treasury Team，公有领域' },
+  M2: { imageKey: 'm2', imageCredit: 'NASA, STScI, WikiSky，公有领域' },
+  M15: { imageKey: 'm15', imageCredit: 'ESA/Hubble 与 NASA，公有领域' },
 };
 
 /** 四舍五入到 n 位小数（angularSizeDeg 换算用）。 */
@@ -443,7 +467,7 @@ function buildDso(r: GeneratedDso): CelestialObject {
     ...(r.names ?? []),
   ]).filter((a) => a !== nameEn && a !== nameZh);
 
-  // 真实影像元数据（仅 16 个著名 Messier）与真实角尺寸（majAx 角分 → 度，全量免费收益）。
+  // 真实影像元数据（36 个著名 Messier）与真实角尺寸（majAx 角分 → 度，全量免费收益）。
   const imageMeta = DSO_IMAGE_META[r.u];
 
   return {

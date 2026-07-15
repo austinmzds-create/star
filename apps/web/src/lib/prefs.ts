@@ -8,6 +8,10 @@
  *   star.ambientVolume  number   环境音音量 0–1
  *   star.viewMode.v1    'free'|'earth'  观察模式（Phase 9B 地平锁定；带版本号
  *                       ——若未来翻转默认值需换 v2 新键弃读旧键，见下）
+ *   star.skyRealism.v1      'all'|'naked'          真实天空模式（Phase 10）
+ *   star.lightPollution.v1  'city'|'suburb'|'wild' 光污染档（Phase 10；naked 生效）
+ *   star.planetsEnlarged.v1 boolean                行星放大开关（Phase 10）
+ *   star.realSkyHintSeen.v1 boolean                进 earth 建议切裸眼的一次性提示已处理
  *
  * 显示类开关（showMinorBodies/showSatellites 等）刻意【不持久化】：
  * 默认值翻转（如 Phase 8 把 showMinorBodies 改为默认开）即对全量用户生效，

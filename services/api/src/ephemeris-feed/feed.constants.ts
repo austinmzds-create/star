@@ -50,6 +50,21 @@ export const ASTEROID_TARGETS: readonly { sstr: string; id: string; nameZh: stri
 export const celestrakGpUrl = (noradId: number): string =>
   `https://celestrak.org/NORAD/elements/gp.php?CATNR=${noradId}&FORMAT=TLE`;
 
+/**
+ * Celestrak GP API（按预定义组名取整组 TLE，一次返回数千颗）。
+ * 与逐颗 CATNR 拉取同域名同礼仪：并入同一 6h 节流锚点，绝不高频重复拉。
+ */
+export const celestrakGroupUrl = (group: string): string =>
+  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${group}&FORMAT=TLE`;
+
+/** 星链组名（Celestrak 组标识）。 */
+export const STARLINK_GROUP = 'starlink';
+/**
+ * 星链服务端择优截断硬上限：整组数千颗按 TLE 历元最新排序取前 N。
+ * 与前端性能预算（deviceTier）对齐——high 全取、mid 再降半、low 不挂层。
+ */
+export const STARLINK_MAX = 120;
+
 /** TLE 目标组（NORAD id 与 web 卫星 uid 对齐）。 */
 export const TLE_TARGETS: readonly { id: string; noradId: number; nameZh: string }[] = [
   { id: 'SAT-ISS', noradId: 25544, nameZh: '国际空间站' },

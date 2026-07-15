@@ -422,7 +422,14 @@ export function renderDsoArt(obj: CelestialObject, size: number): HTMLCanvasElem
     return canvas;
   }
 
-  const stage = deriveDsoProfile(obj).stage;
+  // 防御性收口（Phase 10）：分类异常绝不抛到 React 渲染栈——兜底光晕，保证「永不留黑洞」。
+  let stage: string;
+  try {
+    stage = deriveDsoProfile(obj).stage;
+  } catch {
+    drawGlowFallback(ctx, size);
+    return canvas;
+  }
   switch (stage) {
     case 'galaxy':
       // 椭圆星系描述明示；其余 8 成画旋涡（真实旋涡占比亦占多数）

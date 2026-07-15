@@ -1,7 +1,14 @@
 import { EphemerisFeedController } from './ephemeris-feed.controller';
 import { EphemerisFeedService } from './ephemeris-feed.service';
 import { BUILTIN_TLE_SATS } from './builtin-snapshot';
-import { celestrakGpUrl, SBDB_QUERY_URL, sbdbSingleUrl, TLE_TARGETS } from './feed.constants';
+import {
+  celestrakGpUrl,
+  celestrakGroupUrl,
+  SBDB_QUERY_URL,
+  sbdbSingleUrl,
+  STARLINK_GROUP,
+  TLE_TARGETS,
+} from './feed.constants';
 import type { MinorBodyDto } from './feed.types';
 import {
   CELESTRAK_ISS_FIXTURE,
@@ -41,7 +48,18 @@ function makeService(
   return svc;
 }
 
-/** 按 url 分发 fixture 的 fetch mock（SBDB 批量 + 三个单体 + Celestrak 三星全部成功）。 */
+/**
+ * 星链组 fixture：复用两条真实有效 TLE（ISS/HST 快照，校验和/长度均合法），
+ * 仅换名称行为 STARLINK-*，供组解析器提取真实 NORAD 构造 SAT-STARLINK-{norad}。
+ * 不伪造校验和 —— 用现成合法两行行体是唯一确定性做法。
+ */
+function starlinkGroupText(): string {
+  const a = BUILTIN_TLE_SATS[0]!; // ISS 行体（norad 25544）
+  const b = BUILTIN_TLE_SATS[2]!; // HST 行体（norad 20580）
+  return `STARLINK-1001\r\n${a.l1}\r\n${a.l2}\r\nSTARLINK-1002\r\n${b.l1}\r\n${b.l2}\r\n`;
+}
+
+/** 按 url 分发 fixture 的 fetch mock（SBDB 批量 + 三个单体 + Celestrak 三星 + 星链组全部成功）。 */
 function happyFetch(): jest.Mock {
   const tianGong = BUILTIN_TLE_SATS[1]!;
   const hst = BUILTIN_TLE_SATS[2]!;
@@ -55,9 +73,14 @@ function happyFetch(): jest.Mock {
       return resp({ text: `CSS (TIANHE)\r\n${tianGong.l1}\r\n${tianGong.l2}\r\n` });
     if (url === celestrakGpUrl(20580))
       return resp({ text: `HST\r\n${hst.l1}\r\n${hst.l2}\r\n` });
+    if (url === celestrakGroupUrl(STARLINK_GROUP)) return resp({ text: starlinkGroupText() });
     throw new Error(`测试未覆盖的 URL: ${url}`);
   });
 }
+
+/** 仅著名三星（过滤掉星链动态条目），用于对既有著名卫星契约的断言。 */
+const famousIds = (res: { sats: { id: string; group?: string }[] }): string[] =>
+  res.sats.filter((s) => s.group !== 'starlink').map((s) => s.id);
 
 /** 断言 MinorBodyDto 满足冻结契约的必填键与类型。 */
 function assertBodyShape(b: MinorBodyDto): void {
@@ -162,7 +185,8 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     const svc = makeService(happyFetch());
     const res = (await svc.refreshTle())!;
     expect(res.source).toBe('celestrak');
-    expect(res.sats.map((s) => s.id)).toEqual(TLE_TARGETS.map((t) => t.id));
+    // 著名三星在前，顺序与目标组一致（星链动态条目追加其后）
+    expect(famousIds(res)).toEqual(TLE_TARGETS.map((t) => t.id));
     for (const s of res.sats) {
       expect(s.l1).toHaveLength(69);
       expect(s.l2).toHaveLength(69);
@@ -170,6 +194,33 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     }
     expect(res.sats[0]!.name).toBe('ISS (ZARYA)');
     expect(res.sats[0]!.nameZh).toBe('国际空间站');
+    expect(res.sats[0]!.group).toBe('famous');
+  });
+
+  it('refreshTle：星链组按历元择优截断并以 SAT-STARLINK-{norad} 命名', async () => {
+    const svc = makeService(happyFetch());
+    const res = (await svc.refreshTle())!;
+    const starlink = res.sats.filter((s) => s.group === 'starlink');
+    expect(starlink.length).toBeGreaterThan(0);
+    for (const s of starlink) {
+      expect(s.id).toMatch(/^SAT-STARLINK-\d+$/);
+      expect(s.l1).toHaveLength(69);
+      expect(s.l2).toHaveLength(69);
+    }
+    // 著名三星永远排在星链之前
+    expect(famousIds(res)).toEqual(TLE_TARGETS.map((t) => t.id));
+  });
+
+  it('星链组失败但著名三星成功 → 整轮仍成功（只缺星链）', async () => {
+    const happy = happyFetch();
+    const noStarlink = jest.fn(async (url: string) => {
+      if (url === celestrakGroupUrl(STARLINK_GROUP)) return resp({ status: 500 });
+      return happy(url);
+    });
+    const svc = makeService(noStarlink);
+    const res = (await svc.refreshTle())!;
+    expect(famousIds(res)).toEqual(TLE_TARGETS.map((t) => t.id));
+    expect(res.sats.filter((s) => s.group === 'starlink')).toHaveLength(0);
   });
 
   it('节流：6h 内二次调用不再打上游（Celestrak 礼仪硬约束）；force 可越过', async () => {
@@ -181,7 +232,8 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     expect(fetchMock.mock.calls.length).toBe(calls); // 未增加
     expect(again).not.toBeNull();
     await svc.refreshTle({ force: true });
-    expect(fetchMock.mock.calls.length).toBe(calls + 3);
+    // force 越过节流：3 颗著名卫星 + 1 次星链组拉取 = 4 次上游请求
+    expect(fetchMock.mock.calls.length).toBe(calls + 4);
   });
 
   it('304 Not Modified：带 If-Modified-Since 且保留现值', async () => {
@@ -196,8 +248,8 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     });
     svc['fetchFn'] = seen304 as unknown as typeof fetch;
     const second = (await svc.refreshTle({ force: true }))!;
-    expect(seen304).toHaveBeenCalledTimes(3);
-    expect(second.sats).toEqual(first.sats); // 现值即最新值
+    expect(seen304).toHaveBeenCalledTimes(4); // 3 著名 + 1 星链组
+    expect(second.sats).toEqual(first.sats); // 现值即最新值（著名 + 星链均保留）
   });
 
   it('单星失败不影响其余（逐星独立 + 保留上次成功值）', async () => {
@@ -208,7 +260,7 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     });
     const svc = makeService(partial);
     const res = (await svc.refreshTle())!;
-    expect(res.sats.map((s) => s.id)).toEqual(['SAT-ISS', 'SAT-HST']); // 天宫本轮缺席（无历史值）
+    expect(famousIds(res)).toEqual(['SAT-ISS', 'SAT-HST']); // 天宫本轮缺席（无历史值）
   });
 
   it('校验和被破坏的行拒收（该星保留缺席，绝不吞坏数据）', async () => {
@@ -220,7 +272,7 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     });
     const svc = makeService(corrupt);
     const res = (await svc.refreshTle())!;
-    expect(res.sats.map((s) => s.id)).toEqual(['SAT-TIANGONG', 'SAT-HST']);
+    expect(famousIds(res)).toEqual(['SAT-TIANGONG', 'SAT-HST']);
   });
 
   it('全部失败且无历史值 → 抛错；getTle 降级内置快照（永不 500）', async () => {
@@ -239,8 +291,8 @@ describe('EphemerisFeedService · TLE（Celestrak 代理）', () => {
     );
     const svc = makeService(banned);
     await expect(svc.refreshTle()).rejects.toThrow();
-    // 3 颗星各 1 次请求，无重试（对比：非 403 会是 3×3 次）
-    expect(banned).toHaveBeenCalledTimes(3);
+    // 3 颗著名星 + 1 次星链组各 1 次请求，无重试（对比：非 403 会各重试）
+    expect(banned).toHaveBeenCalledTimes(4);
   });
 });
 

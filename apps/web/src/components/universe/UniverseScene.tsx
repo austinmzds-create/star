@@ -18,6 +18,7 @@ import { getComposerActive, subscribeComposerActive } from '@/lib/fxBus';
 import { setPerfTier } from '@/lib/perfBus';
 import { ensureStaticEntries } from '@/lib/pickRegistry';
 import { beginSkyModeTransition, getSkyQuaternion, setSkyTarget, tickSkyFrame } from '@/lib/skyFrame';
+import { setSkyLimitTarget, tickSkyLimit } from '@/lib/skyLimit';
 import { useUniverse } from '@/lib/store';
 import { buildCatalogRenderData, generateAmbientField } from '@/lib/universe';
 import { CameraRig } from './CameraRig';
@@ -40,6 +41,11 @@ import { TwinkleStars } from './TwinkleStars';
 // satellite.js 只被 SatellitesLayer 的 chunk 引用——首屏 bundle 零增量。
 const SatellitesLayer = lazy(() =>
   import('./SatellitesLayer').then((m) => ({ default: m.SatellitesLayer })),
+);
+// 星链层（Phase 10）：与 SatellitesLayer 共用 satellite.js 懒 chunk；仅在开启星链
+// 子档且非低端设备时挂载，内部仅 earth 模式渲染过境光点。
+const StarlinkLayer = lazy(() =>
+  import('./StarlinkLayer').then((m) => ({ default: m.StarlinkLayer })),
 );
 const MinorBodiesLayer = lazy(() =>
   import('./MinorBodiesLayer').then((m) => ({ default: m.MinorBodiesLayer })),
@@ -153,7 +159,17 @@ function SkyRotationGroup({ children }: { children: ReactNode }) {
       );
     };
     apply(true); // 首帧直接就位（含 prefs 已水合为 earth 的场景），不做入场动画
+    // 裸眼极限（Phase 10）：首帧就位（含 prefs 已水合为 naked 的场景），
+    // 与天旋 target 同一订阅回调驱动。
+    {
+      const s = useUniverse.getState();
+      setSkyLimitTarget(s.skyRealism, s.lightPollution);
+    }
     return useUniverse.subscribe((s, prev) => {
+      // 真实天空/光污染档变化 → 更新裸眼极限目标（各星层 useFrame 直读补间值）
+      if (s.skyRealism !== prev.skyRealism || s.lightPollution !== prev.lightPollution) {
+        setSkyLimitTarget(s.skyRealism, s.lightPollution);
+      }
       if (
         s.viewMode === prev.viewMode &&
         s.observeTime === prev.observeTime &&
@@ -167,6 +183,7 @@ function SkyRotationGroup({ children }: { children: ReactNode }) {
   }, []);
   useFrame((_, delta) => {
     tickSkyFrame(delta);
+    tickSkyLimit(delta);
     ref.current?.quaternion.copy(getSkyQuaternion());
   });
   return <group ref={ref}>{children}</group>;
@@ -185,6 +202,7 @@ export function UniverseScene() {
   );
   // 动态天体层开关（低频布尔；层组件本身再做各自的懒加载/注册）
   const showSatellites = useUniverse((s) => s.showSatellites);
+  const showStarlink = useUniverse((s) => s.showStarlink);
   const showMinorBodies = useUniverse((s) => s.showMinorBodies);
   const catalog = useMemo(() => {
     const data = buildCatalogRenderData();
@@ -243,7 +261,7 @@ export function UniverseScene() {
             {/* 著名 DSO 真实照片：≤16 张（NASA/ESO/Commons，空闲错峰懒加载） */}
             <DsoPhotoLayer key={`dso-${tier}`} />
             {/* 星座层：88 座连线依次点亮 + 中文名淡入 + 20 幅自绘艺术图 */}
-            <ConstellationLayer />
+            <ConstellationLayer tier={tier} />
             {/* 行星日月：observeTime 驱动的星历实时位置。key=tier：换档重建
               光晕/GodRays 光源盘配置（组件内 useMemo 一次性构建，不热更） */}
             <PlanetsLayer key={`planets-${tier}`} tier={tier} />
@@ -252,6 +270,11 @@ export function UniverseScene() {
             {/* 人造卫星（6B-7）：ISS/天宫/哈勃，SGP4 站心 RA/Dec 实时位置 + 尾迹
               （懒 chunk，2 draw）——站心坐标仍是赤道系投影，随天旋 group 正确旋转 */}
             {showSatellites && <SatellitesLayer />}
+            {/* 星链（Phase 10）：earth 模式过境光点。low 档不挂（性能预算）；
+              high 120 / mid 60 上限。内部 visible 再按 viewMode==='earth' 门控 */}
+            {showStarlink && tier !== 'low' && (
+              <StarlinkLayer cap={tier === 'mid' ? 60 : 120} />
+            )}
             {/* 小行星与彗星（6B-8）：谷神/灶神/智神/哈雷，JPL 根数开普勒轨道（懒 chunk，1 draw） */}
             {showMinorBodies && <MinorBodiesLayer />}
             {/* 流星雨（9B）：辐射点 marker + 程序化流星（组件归流星雨域，挂载行归本域） */}

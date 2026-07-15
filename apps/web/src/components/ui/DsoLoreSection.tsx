@@ -1,23 +1,23 @@
 'use client';
 
 /**
- * StarInfoCard「了解更多」展开区（仅 16 个带照片+长文的著名 Messier 天体）：
- * 折叠态一枚次级按钮；展开态 = 照片缩略图（点击开 lightbox）+ 科普长文 + 署名。
- * 本地 useState，不进 store。不 import lib/dso-photos.ts（它 import three），
- * 照片 URL 走 dso-lore.ts 的 dsoLightboxUrl（同一 /dso-photos/{key}.jpg 资产）。
+ * StarInfoCard「了解更多」长文补充区（携带 imageKey 的著名 Messier 天体）：
+ * 折叠态一枚次级按钮；展开态 = 科普长文 + 影像署名。
  *
- * 本组件由 StarInfoCard 以 next/dynamic 引入：16 篇长文（~12KB 文本）
- * 与 lightbox 只在选中带照片的 DSO 时才拉取，不进主页首包。
- * DSO_LORE 查表因此收在组件内（无长文时渲染 null）。
+ * Phase 10 修复：本组件不再承担「放大照片」职责——放大统一交给上方 ViewerPreviewBlock
+ * 缩略块（点击一步进 ObjectViewerModal → PhotoPane 大图），避免同卡两张图与「两步展开」
+ * 的交互割裂。故此处删除内嵌缩略图 <img> 与 PhotoLightbox，仅保留文字长文与署名。
+ * 无长文（DSO_LORE 无该 uid）时渲染 null——无害：放大入口由缩略块保证。
+ * 签名冻结：props（uid/nameZh/imageKey/imageCredit）不变，仅内部渲染精简。
+ *
+ * 本组件由 StarInfoCard 以 next/dynamic 引入：长文（~KB 级文本）只在选中带
+ * imageKey 的 DSO 时才拉取，不进主页首包。DSO_LORE 查表收在组件内。
  */
 import { useState } from 'react';
-import { DSO_LORE, dsoLightboxUrl } from '@/lib/dso-lore';
-import { PhotoLightbox } from './PhotoLightbox';
+import { DSO_LORE } from '@/lib/dso-lore';
 
 export function DsoLoreSection({
   uid,
-  nameZh,
-  imageKey,
   imageCredit,
 }: {
   uid: string;
@@ -26,10 +26,7 @@ export function DsoLoreSection({
   imageCredit?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [lightboxOpen, setLightboxOpen] = useState(false);
-  const [imageFailed, setImageFailed] = useState(false);
   const loreZh = DSO_LORE[uid];
-  const imageUrl = dsoLightboxUrl(imageKey);
   if (!loreZh) return null;
 
   return (
@@ -43,15 +40,6 @@ export function DsoLoreSection({
 
       {expanded && (
         <div className="mt-3 space-y-3">
-          {!imageFailed && (
-            <img
-              src={imageUrl}
-              alt={nameZh}
-              onClick={() => setLightboxOpen(true)}
-              onError={() => setImageFailed(true)}
-              className="aspect-video w-full cursor-zoom-in rounded-xl object-cover"
-            />
-          )}
           <p className="whitespace-pre-line text-[13px] leading-relaxed text-nebula-100/85">
             {loreZh}
           </p>
@@ -60,14 +48,6 @@ export function DsoLoreSection({
           )}
         </div>
       )}
-
-      <PhotoLightbox
-        open={lightboxOpen}
-        imageUrl={imageUrl}
-        titleZh={nameZh}
-        credit={imageCredit}
-        onClose={() => setLightboxOpen(false)}
-      />
     </div>
   );
 }

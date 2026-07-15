@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { raDecToVector3 } from '@star/astro-core';
 import { DEEP_SKY_CATALOG, type CelestialObject } from '@star/astro-data';
 import { shownDsoPhotos, subscribeDsoPhotoShown } from '@/lib/dso-photos';
+import { getSkyMagLimit, SKY_MAG_FEATHER } from '@/lib/skyLimit';
 import { SPHERE_RADIUS } from '@/lib/universe';
 
 /**
@@ -30,22 +31,28 @@ import { SPHERE_RADIUS } from '@/lib/universe';
 const DSO_VERTEX = /* glsl */ `
   uniform float uPixelRatio;
   uniform float uTime;
+  uniform float uMagLimit;    // 裸眼极限星等（Phase 10；all 档=99 → 恒不裁）
+  uniform float uMagFeather;  // 渐隐羽化宽度（星等）
   attribute float aSize;
   attribute vec3 aColor;
   attribute float aRotation;
   attribute float aFeatured;
   attribute float aPhotoHide;
+  attribute float aMag;        // 该 DSO 的视星等
   varying vec3 vColor;
   varying float vRot;
   varying float vAlpha;
+  varying float vMagVis;
   void main() {
     vColor = aColor;
     vRot = aRotation;
     // featured 的极缓呼吸（±0.06），相位用固定转角错开；
     // aPhotoHide（0→1）：真实照片可展示后本点位淡出（宇宙 V3-B）
     vAlpha = (1.0 + aFeatured * 0.06 * sin(uTime * 0.7 + aRotation * 7.0)) * (1.0 - aPhotoHide);
+    // 裸眼收敛（Phase 10）：多数深空天体裸眼不可见，真实模式只保留亮到肉眼可见者
+    vMagVis = 1.0 - smoothstep(uMagLimit - uMagFeather, uMagLimit, aMag);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize * uPixelRatio;
+    gl_PointSize = aSize * uPixelRatio * step(0.002, vMagVis);
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -55,13 +62,14 @@ const DSO_FRAGMENT = /* glsl */ `
   varying vec3 vColor;
   varying float vRot;
   varying float vAlpha;
+  varying float vMagVis;
   void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float c = cos(vRot);
     float s = sin(vRot);
     uv = mat2(c, -s, s, c) * uv + 0.5;
     vec4 tex = texture2D(uMap, clamp(uv, 0.0, 1.0));
-    float alpha = tex.a * vAlpha * 0.85;
+    float alpha = tex.a * vAlpha * 0.85 * vMagVis;
     if (alpha < 0.012) discard;
     gl_FragColor = vec4(vColor * tex.rgb, alpha);
   }
@@ -244,6 +252,8 @@ interface DsoGroupData {
   sizes: Float32Array;
   rotations: Float32Array;
   featured: Float32Array;
+  /** 各 DSO 视星等（Phase 10 裸眼收敛）。 */
+  mags: Float32Array;
   /** 与顶点同序的 objectUid（照片淡出时按 uid 定位顶点下标）。 */
   uids: string[];
   count: number;
@@ -270,6 +280,7 @@ function buildDsoGroups(): DsoGroupData[] {
     const sizes = new Float32Array(count);
     const rotations = new Float32Array(count);
     const featured = new Float32Array(count);
+    const mags = new Float32Array(count);
     const uids: string[] = [];
     const [tr, tg, tb] = GROUP_TINT[key];
 
@@ -287,9 +298,10 @@ function buildDsoGroups(): DsoGroupData[] {
       sizes[i] = dsoSize(obj);
       rotations[i] = rand() * Math.PI * 2; // 每个天体随机固定转角，避免贴纸感
       featured[i] = obj.isFeatured ? 1 : 0;
+      mags[i] = obj.magnitude;
     });
 
-    groups.push({ key, positions, colors, sizes, rotations, featured, uids, count });
+    groups.push({ key, positions, colors, sizes, rotations, featured, mags, uids, count });
   }
   return groups;
 }
@@ -313,6 +325,7 @@ export function DeepSkyLayer() {
       geometry.setAttribute('aSize', new THREE.BufferAttribute(g.sizes, 1));
       geometry.setAttribute('aRotation', new THREE.BufferAttribute(g.rotations, 1));
       geometry.setAttribute('aFeatured', new THREE.BufferAttribute(g.featured, 1));
+      geometry.setAttribute('aMag', new THREE.BufferAttribute(g.mags, 1));
       // 照片淡出（0=正常显示，1=完全隐藏），由「照片可展示」事件驱动
       geometry.setAttribute('aPhotoHide', new THREE.BufferAttribute(new Float32Array(g.count), 1));
       const material = new THREE.ShaderMaterial({
@@ -322,6 +335,8 @@ export function DeepSkyLayer() {
           uMap: { value: textures[g.key] },
           uTime: { value: 0 },
           uPixelRatio: { value: 1 },
+          uMagLimit: { value: getSkyMagLimit() },
+          uMagFeather: { value: SKY_MAG_FEATHER },
         },
         transparent: true,
         depthWrite: false,
@@ -378,9 +393,11 @@ export function DeepSkyLayer() {
   }, [resources]);
 
   useFrame((_, delta) => {
+    const magLimit = getSkyMagLimit();
     for (const mat of materialsRef.current) {
       mat.uniforms.uTime!.value += delta;
       mat.uniforms.uPixelRatio!.value = pixelRatio;
+      mat.uniforms.uMagLimit!.value = magLimit;
     }
     // 照片淡出推进（仅有照片刚就绪的 ~0.8s 内非空）
     const fading = fadingRef.current;

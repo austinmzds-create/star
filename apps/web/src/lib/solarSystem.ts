@@ -119,3 +119,17 @@ export function appendDynamicMinorRows(
     SEARCH_CATALOG.push(row);
   }
 }
+
+/**
+ * 运行时追加动态卫星目录行（Phase 10：satRegistry 注入星链后调用）。
+ * 镜像 appendDynamicMinorRows：原地更新 SATELLITE_BY_UID / SEARCH_CATALOG，
+ * getObjectByUid 自动命中（hover tooltip / StarInfoCard 拿到 nameZh/descriptionZh）。
+ * 幂等：同 uid 跳过——星链层反复挂卸时不重复入表。
+ */
+export function appendDynamicSatelliteRows(rows: readonly CelestialObject[]): void {
+  for (const row of rows) {
+    if (SATELLITE_BY_UID.has(row.objectUid)) continue;
+    SATELLITE_BY_UID.set(row.objectUid, row);
+    SEARCH_CATALOG.push(row);
+  }
+}

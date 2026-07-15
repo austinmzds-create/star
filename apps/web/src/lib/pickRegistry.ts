@@ -16,7 +16,7 @@
 import { raDecToVector3 } from '@star/astro-core';
 import { CELESTIAL_CATALOG, DEEP_SKY_CATALOG } from '@star/astro-data';
 import * as THREE from 'three';
-import { ephem } from './ephemRegistry';
+import { ephem, type EphemBodyState } from './ephemRegistry';
 import { SPHERE_RADIUS } from './universe';
 
 export type PickKind =
@@ -87,6 +87,35 @@ export function ensureStaticEntries(): void {
   // 行星日月：vec 直接复用 ephemRegistry 的同一 Vector3 引用（原地 mutate，零重建）
   for (const body of ephem.bodies.values()) {
     push(body.uid, 'planet', body.vec);
+  }
+}
+
+// ── 行星放大后拾取半径同步（Phase 10 §4.5，「视觉炫酷」域） ──
+// 与 PlanetsLayer.diskWorldSize 同式，避免跨组件 import；放大后点击热区随盘面
+// 扩大（木星可点区 ~28px 半径，暗行星保底 26），关闭放大回落原值。
+const MIN_PLANET_PX = 24;
+const PLANET_GAIN = 2.0;
+const PLANET_CAP = 46;
+
+function planetWorldSize(body: EphemBodyState, magnify: boolean): number {
+  if (body.kind === 'sun') return 90;
+  if (body.kind === 'moon') return 64;
+  const raw = body.displaySize * 1.3;
+  if (!magnify) return raw;
+  return THREE.MathUtils.clamp(body.displaySize * PLANET_GAIN, MIN_PLANET_PX, PLANET_CAP);
+}
+
+/**
+ * 行星拾取半径重算（PlanetsLayer 在 useEffect([planetsEnlarged]) 首挂载 + 开关
+ * 切换时调用）。radiusPx = 渲染盘半径 + 8 余量，钳制 26–40。sun/moon 亦按同式
+ * （world 90/64 → 上限 40）。幂等，零重建（原地改 radiusPx）。
+ */
+export function updatePlanetPickRadii(magnify: boolean): void {
+  ensureStaticEntries();
+  for (const body of ephem.bodies.values()) {
+    const entry = entryByUid.get(body.uid);
+    if (!entry || entry.kind !== 'planet') continue;
+    entry.radiusPx = THREE.MathUtils.clamp(planetWorldSize(body, magnify) / 2 + 8, 26, 40);
   }
 }
 

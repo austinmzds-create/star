@@ -13,6 +13,7 @@ import { GyroModeButton } from './ui/GyroModeButton';
 import { HintOverlay } from './ui/HintOverlay';
 import { HoverTooltip } from './ui/HoverTooltip';
 import { MemorialModal } from './ui/MemorialModal';
+import { RealSkyHint } from './ui/RealSkyHint';
 import { PlanetViewerHost } from './planet3d/PlanetViewerHost';
 import { SearchPanel } from './ui/SearchPanel';
 import { StarInfoCard } from './ui/StarInfoCard';
@@ -46,6 +47,8 @@ export function UniverseApp() {
       {/* 指向天空（陀螺仪指星）：仅触屏 + 方向传感器设备显示 */}
       <GyroModeButton />
       <HintOverlay />
+      {/* 进 earth 建议切真实天空的一次性软提示（Phase 10，契约 §1「不强制」） */}
+      <RealSkyHint />
       <ComplianceNote />
       <CreditsPanel />
       <MemorialModal />

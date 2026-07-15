@@ -4,7 +4,7 @@ import { CONSTELLATION_ABBR, getCelestialByUid } from '@star/astro-data';
 import { isEphemerisUid } from '@star/astro-ephem/bodies';
 import { create } from 'zustand';
 import { DEFAULT_CITY, type City } from './cities';
-import { writePref } from './prefs';
+import { readPref, writePref } from './prefs';
 
 /** 星座全英文名 → IAU 3 字母缩写（目录里恒星的 constellation 存全英文名）。 */
 const CONSTELLATION_EN_TO_ABBR: Record<string, string> = Object.fromEntries(
@@ -32,6 +32,28 @@ export type ConstellationSource = 'gaze' | 'select' | 'search';
 export type ViewMode = 'free' | 'earth';
 
 /**
+ * 真实天空模式（Phase 10 跨域契约 §1，冻结；本字段归「真实天空+悬停」域独家
+ * 写入，其它域只读）：
+ * 'all'   = 全部星（无星等截断，默认——满天繁星是纪念产品的浪漫底色）；
+ * 'naked' = 真实裸眼星等（星层按 lightPollution 对应的极限星等渐隐截断，
+ *           扩展层整层关闭、DSO 收敛到肉眼可见的少数）。
+ */
+export type SkyRealism = 'all' | 'naked';
+
+/**
+ * 光污染档（Phase 10 跨域契约 §1，冻结）：仅在 skyRealism==='naked' 时生效，
+ * 决定裸眼极限星等（uMagLimit）——城市 4.0 / 郊区 6.0 / 荒野 6.5。
+ */
+export type LightPollution = 'city' | 'suburb' | 'wild';
+
+/** 各光污染档的裸眼极限星等（跨域契约冻结值；lib/skyLimit.ts 消费）。 */
+export const MAG_LIMIT_OF: Record<LightPollution, number> = {
+  city: 4.0,
+  suburb: 6.0,
+  wild: 6.5,
+};
+
+/**
  * 开场序曲阶段（Phase 9A 动效序曲）：'playing' 期间首屏 UI（BrandMark/
  * SearchPanel/ControlBar 等）保持隐藏待命，转 'done' 时按 stagger 依次入场。
  * 'idle' 是 SSR/未决初值——UI 侧只把 'playing' 当隐藏信号，其余一律可见，
@@ -55,6 +77,19 @@ interface UniverseState {
   /** 是否显示真实银河全景层（MilkyWayLayer；关闭仅剩程序化氛围）。 */
   showMilkyWay: boolean;
 
+  // ── Phase 10 跨域契约字段（冻结；归「真实天空+悬停」域写，其它域只读） ──
+  /** 真实天空模式：'all'=满天繁星（默认）/ 'naked'=真实裸眼星等。持久化 star.skyRealism.v1。 */
+  skyRealism: SkyRealism;
+  /** 光污染档（仅 naked 生效）：城市/郊区/荒野 → 4.0/6.0/6.5 等。持久化 star.lightPollution.v1。 */
+  lightPollution: LightPollution;
+  /** 行星放大开关（默认 true，「视觉炫酷」域的 PlanetsLayer 消费）。持久化 star.planetsEnlarged.v1。 */
+  planetsEnlarged: boolean;
+  /**
+   * 进入 earth 模式时若 skyRealism 仍为 'all' 的一次性「切真实天空」建议触发器
+   * （契约 §1「建议不强制」）：自增即弹提示，RealSkyHint 消费；已 seen 则不增。
+   */
+  realSkyHintNonce: number;
+
   // ── 显示设置（宇宙 V3-F/G：坐标线与观测辅助，低频布尔） ──
   /** 黄道大圆 + 黄道十二宫刻度与宫名（GridLayer，金色）。 */
   showEcliptic: boolean;
@@ -71,6 +106,12 @@ interface UniverseState {
   showPlanetTrails: boolean;
   /** 人造卫星层（ISS/天宫/哈勃，TLE+SGP4 演示精度）；默认关，satellite.js 懒加载。 */
   showSatellites: boolean;
+  /**
+   * 星链子档（Phase 10「星链」域）：Celestrak STARLINK 组，earth 模式下过境光点。
+   * 默认关；持久化 star.showStarlink.v1（由 ExperienceHydrator 水合）。开启自动带开
+   * 主卫星层（共用 satellite.js 懒 chunk）。仅 deviceTier≠low 挂 StarlinkLayer。
+   */
+  showStarlink: boolean;
   /** 小行星与彗星层（谷神/灶神/智神/哈雷，演示级 ±0.5°）；Phase 8 起默认开。 */
   showMinorBodies: boolean;
   /** 「显示 ⚙」设置面板开合。 */
@@ -168,6 +209,8 @@ interface UniverseState {
   toggleHorizon: () => void;
   togglePlanetTrails: () => void;
   toggleSatellites: () => void;
+  /** 切换星链子档；开启时自动带开主卫星层，关闭仅关星链。 */
+  toggleStarlink: () => void;
   toggleMinorBodies: () => void;
   /** 打开显示设置面板（同时收起时间条，避免两个浮层叠在 ControlBar 上方）。 */
   openSettings: () => void;
@@ -241,6 +284,14 @@ interface UniverseState {
   setViewMode: (m: ViewMode) => void;
   /** 开/关恒星自行时光机：null 关闭；数值钳制到 ±100,000 年。 */
   setDeepTimeYears: (y: number | null) => void;
+
+  // ── Phase 10 跨域契约 action（冻结） ──
+  /** 真实天空模式切换（写 prefs 持久化）；naked 时同时把当次 hint 标记 seen。 */
+  setSkyRealism: (r: SkyRealism) => void;
+  /** 光污染档切换（写 prefs 持久化）；仅在 naked 下改变可见星密度。 */
+  setLightPollution: (l: LightPollution) => void;
+  /** 行星放大开关（写 prefs 持久化）；「视觉炫酷」域按此决定 diskWorldSize 放大系数。 */
+  togglePlanetsEnlarged: () => void;
 }
 
 export const useUniverse = create<UniverseState>((set) => ({
@@ -251,11 +302,17 @@ export const useUniverse = create<UniverseState>((set) => ({
   autoRotate: true,
   showLabels: true,
   showMilkyWay: true,
+  // Phase 10：真实天空/光污染/行星放大——SSR 首帧取默认，由 ExperienceHydrator 水合 prefs
+  skyRealism: 'all',
+  lightPollution: 'suburb',
+  planetsEnlarged: true,
+  realSkyHintNonce: 0,
   showEcliptic: false,
   showEquatorGrid: false,
   showHorizon: false,
   showPlanetTrails: true, // 仅选中行星时才有几何，常驻零成本
   showSatellites: false, // 硬约束：默认关（satellite.js 只在开启时懒加载）
+  showStarlink: false, // 默认关；持久化值由 ExperienceHydrator 水合（star.showStarlink.v1）
   showMinorBodies: true, // 默认开：4 个开普勒天体重算 <1ms/30s，Points 1 draw，懒 chunk 不进首包
   settingsOpen: false,
   creditsOpen: false,
@@ -337,6 +394,13 @@ export const useUniverse = create<UniverseState>((set) => ({
   toggleHorizon: () => set((s) => ({ showHorizon: !s.showHorizon })),
   togglePlanetTrails: () => set((s) => ({ showPlanetTrails: !s.showPlanetTrails })),
   toggleSatellites: () => set((s) => ({ showSatellites: !s.showSatellites })),
+  toggleStarlink: () =>
+    set((s) => {
+      const next = !s.showStarlink;
+      writePref('showStarlink.v1', next);
+      // 开星链自动开主卫星层（共用 satellite.js 懒 chunk）；关星链不动主卫星层。
+      return next ? { showStarlink: true, showSatellites: true } : { showStarlink: false };
+    }),
   toggleMinorBodies: () => set((s) => ({ showMinorBodies: !s.showMinorBodies })),
   openSettings: () => set({ settingsOpen: true, timePanelOpen: false }),
   closeSettings: () => set({ settingsOpen: false }),
@@ -458,8 +522,18 @@ export const useUniverse = create<UniverseState>((set) => ({
     set((s) => {
       if (s.viewMode === m) return {};
       writePref('viewMode.v1', m);
-      // 进入地球视角：地平线/罗盘是方位角语义的空间锚点，自动打开观测辅助
-      return m === 'earth' ? { viewMode: m, showHorizon: true } : { viewMode: m };
+      // 进入地球视角：地平线/罗盘是方位角语义的空间锚点，自动打开观测辅助。
+      // 契约 §1：若真实天空仍为 'all'，一次性「建议切裸眼」（不强制，弹提示由
+      // RealSkyHint 消费）——仅在用户从未处理过该建议时触发（seen 标记持久化）。
+      if (m === 'earth') {
+        const suggest = s.skyRealism === 'all' && !readPref('realSkyHintSeen.v1', false);
+        return {
+          viewMode: m,
+          showHorizon: true,
+          ...(suggest ? { realSkyHintNonce: s.realSkyHintNonce + 1 } : {}),
+        };
+      }
+      return { viewMode: m }; // 退出不强制回 'all'——尊重用户当前选择
     }),
   setDeepTimeYears: (y) =>
     set((s) => {
@@ -478,6 +552,26 @@ export const useUniverse = create<UniverseState>((set) => ({
         };
       }
       return { deepTimeYears: v };
+    }),
+
+  setSkyRealism: (r) =>
+    set(() => {
+      writePref('skyRealism.v1', r);
+      // 用户主动就真实天空做过一次抉择（开或关）——建议已完成使命，标记 seen
+      // 永不再自动弹（与 setViewMode 的 realSkyHintNonce 门控互斥）。
+      writePref('realSkyHintSeen.v1', true);
+      return { skyRealism: r };
+    }),
+  setLightPollution: (l) =>
+    set(() => {
+      writePref('lightPollution.v1', l);
+      return { lightPollution: l };
+    }),
+  togglePlanetsEnlarged: () =>
+    set((s) => {
+      const next = !s.planetsEnlarged;
+      writePref('planetsEnlarged.v1', next);
+      return { planetsEnlarged: next };
     }),
 }));
 

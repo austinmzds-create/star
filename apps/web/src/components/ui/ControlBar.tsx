@@ -23,6 +23,11 @@ export function ControlBar() {
   const overturePhase = useUniverse((s) => s.overturePhase);
   const viewMode = useUniverse((s) => s.viewMode);
   const setViewMode = useUniverse((s) => s.setViewMode);
+  // 真实天空（Phase 10）：一键在「满天繁星 ↔ 真实裸眼」间切；具体光污染档在
+  // 「显示 ⚙」精调（这里只管开关）。
+  const skyRealism = useUniverse((s) => s.skyRealism);
+  const setSkyRealism = useUniverse((s) => s.setSkyRealism);
+  const realSky = skyRealism === 'naked';
   const coupleMode = useUniverse((s) => s.coupleMode);
   const timePanelOpen = useUniverse((s) => s.timePanelOpen);
   const settingsOpen = useUniverse((s) => s.settingsOpen);
@@ -71,6 +76,27 @@ export function ControlBar() {
           {viewMode === 'earth' && (
             <span className="h-1.5 w-1.5 rounded-full bg-amber-300" aria-hidden />
           )}
+        </motion.button>
+        {/* 真实天空（Phase 10）：naked 激活态用琥珀点（与 viewMode/timeTravel 同语义：
+          你看到的不是默认满天） */}
+        <motion.button
+          whileTap={{ scale: 0.96 }}
+          transition={springs.chip}
+          onClick={() => setSkyRealism(realSky ? 'all' : 'naked')}
+          title={
+            realSky
+              ? '真实裸眼星空：只显示当前光污染档下肉眼能看到的星。点击切回满天繁星'
+              : '满天繁星（含程序化填充）。点击切换到真实裸眼星空——只留肉眼可见的星'
+          }
+          className={`tap-96 flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[13px] transition ${
+            realSky
+              ? 'bg-amber-400/15 text-amber-100 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.45)]'
+              : 'text-nebula-200/60 hover:bg-white/5'
+          }`}
+        >
+          <span aria-hidden>{realSky ? '🌌' : '✨'}</span>
+          <span>{realSky ? '真实天空' : '满天繁星'}</span>
+          {realSky && <span className="h-1.5 w-1.5 rounded-full bg-amber-300" aria-hidden />}
         </motion.button>
         <div className="mx-1 h-5 w-px bg-white/10" />
         {/* 时间机器收起态按钮（V3-E） */}

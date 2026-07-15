@@ -47,6 +47,12 @@ export interface StarAttributes {
    * 星屑等装饰层不动，真实星层随「星座时光机」形变）。
    */
   pms?: Float32Array;
+  /**
+   * 视星等（Phase 10 真实天空模式）：核心层为真实 mag；环境场为「伪星等」
+   * （越暗越大，装饰性最暗填充最先隐去）。可选——缺省时 TwinkleStars 以全 0
+   * 填充（视作极亮永不裁，安全）。送上 GPU 供 uMagLimit 渐隐截断。
+   */
+  mags?: Float32Array;
 }
 
 export interface CatalogRenderData extends StarAttributes {
@@ -72,6 +78,7 @@ export function buildCatalogRenderData(): CatalogRenderData {
   const sizes = new Float32Array(count);
   const phases = new Float32Array(count);
   const pms = new Float32Array(count * 2);
+  const mags = new Float32Array(count); // Phase 10：真实星等直上 GPU（裸眼截断）
   const vectors: THREE.Vector3[] = [];
 
   objects.forEach((obj, i) => {
@@ -87,6 +94,7 @@ export function buildCatalogRenderData(): CatalogRenderData {
     colors[i * 3 + 2] = b;
 
     sizes[i] = magnitudeToSize(obj.magnitude);
+    mags[i] = obj.magnitude; // 裸眼渐隐用真实视星等
     phases[i] = (i * 2.399963) % (Math.PI * 2);
 
     // 自行（mas/yr → rad/yr 预转）：缺测保持 0（深时模式该星不动，Float32Array 初值即 0）。
@@ -96,7 +104,7 @@ export function buildCatalogRenderData(): CatalogRenderData {
     }
   });
 
-  return { positions, colors, sizes, phases, count, pms, vectors, objects };
+  return { positions, colors, sizes, phases, count, pms, mags, vectors, objects };
 }
 
 /** 均匀分布在单位球面上的随机方向。 */
@@ -133,6 +141,8 @@ export function generateAmbientField(
   const colors = new Float32Array(count * 3);
   const sizes = new Float32Array(count);
   const phases = new Float32Array(count);
+  // Phase 10 伪星等：装饰性最暗填充，真实模式应最先消失（越暗越大越先隐）。
+  const mags = new Float32Array(count);
 
   const r = SPHERE_RADIUS * 0.985;
 
@@ -157,6 +167,8 @@ export function generateAmbientField(
       const intensity = 0.5 + Math.random() * 0.5;
       tint = [tint[0] * intensity, tint[1] * intensity, tint[2] * intensity];
       size = 1.1 + Math.random() * Math.random() * 2.8;
+      // 背景星 size∈[1.1,3.9] → 伪星等 6.3–8.3：郊区档仅最亮一撮残留、城市档全灭
+      mags[i] = 6.3 + (3.9 - size) * 0.7;
     } else {
       // 银河带：沿一个大圆聚集，垂直方向做高斯散布
       const along = Math.random() * Math.PI * 2;
@@ -169,6 +181,9 @@ export function generateAmbientField(
       const intensity = 0.42 + Math.random() * 0.45;
       tint = [0.98 * intensity, 0.94 * intensity, 0.86 * intensity];
       size = 0.9 + Math.random() * 1.7;
+      // 银河带 size∈[0.9,2.6] → 伪星等 6.6–7.6：wild 6.5 亦近全灭（裸眼银河交给
+      // MilkyWayLayer 的真实影像层承担，本就是弥散辉光而非点阵，观感更对）
+      mags[i] = 6.6 + (2.6 - size) * 0.6;
     }
 
     positions[i * 3] = dir.x * r;
@@ -181,7 +196,7 @@ export function generateAmbientField(
     phases[i] = Math.random() * Math.PI * 2;
   }
 
-  return { positions, colors, sizes, phases, count };
+  return { positions, colors, sizes, phases, count, mags };
 }
 
 /** 供镜头飞行使用：把方向向量转成偏航/俯仰（与 CameraRig 中一致的约定）。 */

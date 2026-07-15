@@ -3,7 +3,12 @@
 import { useEffect } from 'react';
 import { startAmbient } from '@/lib/audioEngine';
 import { readPref } from '@/lib/prefs';
-import { useUniverse, type ViewMode } from '@/lib/store';
+import {
+  useUniverse,
+  type LightPollution,
+  type SkyRealism,
+  type ViewMode,
+} from '@/lib/store';
 
 /**
  * 体验层水合器（Phase 6B，layout 级 null 渲染客户端组件）。职责三件：
@@ -28,11 +33,27 @@ export function ExperienceHydrator() {
     // 水合到 'earth' 时同步打开观测辅助（与 setViewMode 的语义保持一致）。
     const viewMode: ViewMode =
       readPref<string>('viewMode.v1', 'free') === 'earth' ? 'earth' : 'free';
+    // 真实天空档（Phase 10）：白名单校验，脏值回退默认。持久化为 earth 但从未
+    // 存过 realism 时保持 'all'（首帧不强灌；交互再进 earth 才走建议流程）。
+    const skyRealism: SkyRealism =
+      readPref<string>('skyRealism.v1', 'all') === 'naked' ? 'naked' : 'all';
+    const rawLp = readPref<string>('lightPollution.v1', 'suburb');
+    const lightPollution: LightPollution =
+      rawLp === 'city' || rawLp === 'wild' ? rawLp : 'suburb';
+    const planetsEnlarged = readPref<boolean>('planetsEnlarged.v1', true);
+    // 星链子档（Phase 10「星链」域）：持久化布尔水合；开启时带开主卫星层
+    // （与 toggleStarlink 语义一致，避免水合出「星链开但主层关」的错态）。
+    const showStarlink = readPref<boolean>('showStarlink.v1', false) === true;
     useUniverse.setState({
       redLightOn,
       ambientOn,
       ambientVolume,
       viewMode,
+      skyRealism,
+      lightPollution,
+      planetsEnlarged,
+      showStarlink,
+      ...(showStarlink ? { showSatellites: true } : {}),
       ...(viewMode === 'earth' ? { showHorizon: true } : {}),
     });
 

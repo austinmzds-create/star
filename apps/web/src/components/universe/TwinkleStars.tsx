@@ -4,6 +4,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import { fx, getGlobalFade } from '@/lib/fxBus';
+import { getSkyMagLimit, SKY_MAG_FEATHER } from '@/lib/skyLimit';
 import { useUniverse } from '@/lib/store';
 import { MAS_YR_TO_RAD_YR, type StarAttributes } from '@/lib/universe';
 import { ensureStarExtrasReady } from '@/lib/useStarExtra';
@@ -15,12 +16,16 @@ const VERTEX = /* glsl */ `
   uniform float uPixelRatio;
   uniform float uSpike;
   uniform float uEpochYr;      // 深时偏移年数（J2000 起算；常态 0，见 useFrame）
+  uniform float uMagLimit;     // 裸眼极限星等（Phase 10；all 档=99 → 恒不裁）
+  uniform float uMagFeather;   // 渐隐羽化宽度（星等，SKY_MAG_FEATHER）
   attribute float aSize;
   attribute vec3 aColor;
   attribute float aPhase;
   attribute vec2 aPm;          // 自行 (pmra*, pmdec)，rad/yr 预转（pmra 含 cosδ）
   attribute float aCi;         // B−V 色指数（9C 星色连续化；哨兵 1000 = 无 ci，走 aColor）
+  attribute float aMag;        // 视星等（核心层=真实 mag；环境层=伪星等；装饰层=0）
   varying vec3 vColor;
+  varying float vMagVis;       // 裸眼可见度 1→0（Phase 10）
 
   // ── 星色连续化（Phase 9C，r-data §4-3）────────────────────────────────
   // 有 ci 的星（核心真实星表，extras 加载后回填）用 Ballesteros 公式反解色温，
@@ -79,6 +84,9 @@ const VERTEX = /* glsl */ `
     // 微弱星判定（宇宙 V4 §1.4）：aSize < 4.5px 视为暗视觉区，交给片元去饱和。
     // 用尺寸而非星等做代理——本 shader 被环境场/扩展场复用，只有尺寸是共同语言。
     vFaint = clamp((4.5 - aSize) / 4.5, 0.0, 1.0);
+    // 裸眼渐隐（Phase 10）：亮于极限全显，暗于极限在一个 feather 内滑到 0。
+    // all 档 uMagLimit=99 → smoothstep 恒返 0 → vMagVis=1，与现状逐位等价。
+    vMagVis = 1.0 - smoothstep(uMagLimit - uMagFeather, uMagLimit, aMag);
     // 亮星系数（Phase 9A 选择性泛光，r-fx §2.1.3）：HDR 超白只给大 size 星，
     // Bloom luminanceThreshold=1.0 下暗星永不越阈——零额外 pass 的选择性泛光。
     vBoost = smoothstep(5.5, 10.0, aSize);
@@ -89,7 +97,9 @@ const VERTEX = /* glsl */ `
     vTw = tw;
     // 深时位移：常态（uEpochYr=0）θ=0 → 结果即原位，代价一对 sin/cos，无分支发散
     vec4 mv = modelViewMatrix * vec4(properMotion(position), 1.0);
-    gl_PointSize = aSize * uSize * uPixelRatio * (0.7 + 0.6 * tw);
+    // 完全隐形时把点尺寸塌成 0（GPU 直接丢该点全部片元，省填充率——city 档
+    // 隐藏 >90% 星时这步是关键）。
+    gl_PointSize = aSize * uSize * uPixelRatio * (0.7 + 0.6 * tw) * step(0.002, vMagVis);
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -103,6 +113,7 @@ const FRAGMENT = /* glsl */ `
   varying float vFaint;
   varying float vBoost;
   varying float vSpike;
+  varying float vMagVis;
   void main() {
     // PSF「锐核 + 宽晕」（宇宙 V4 §1.2）：亮星呈针尖 + 光晕两层，
     // 暗星（点小于核半径时）只剩微晕——天幕对比由此拉开。
@@ -144,6 +155,9 @@ const FRAGMENT = /* glsl */ `
     // 在线性域越过 luminanceThreshold=1 触发泛光；composer 关闭时 uBoost=0，
     // 直出管线不变。
     col *= 1.0 + uBoost * vBoost * (0.5 + 1.7 * core);
+    // 裸眼渐隐（Phase 10）：乘 alpha 不乘 col——加色贡献=col·alpha 同步线性衰减，
+    // 渐隐中的星不会诡异地半发光半消失（与 uGlobalFade 同一线性性注释）。
+    alpha *= vMagVis;
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -193,6 +207,12 @@ export function TwinkleStars({
     geo.setAttribute(
       'aCi',
       new THREE.BufferAttribute(new Float32Array(attributes.count).fill(CI_NONE), 1),
+    );
+    // 视星等（Phase 10 裸眼截断）：未提供 mags 的层（装饰星屑）全 0 → 视作极亮，
+    // 永不隐（安全）。核心层/环境场携真实或伪星等。
+    geo.setAttribute(
+      'aMag',
+      new THREE.BufferAttribute(attributes.mags ?? new Float32Array(attributes.count), 1),
     );
     return geo;
   }, [attributes]);
@@ -258,6 +278,10 @@ export function TwinkleStars({
       // 深时偏移初值取挂载时刻 store 现值：扩展星层是懒加载的，若在时光机
       // 开启期间才 fetch 完成挂载，首帧就要与其它星层同一历元，不能闪回 J2000
       uEpochYr: { value: useUniverse.getState().deepTimeYears ?? 0 },
+      // 裸眼截断（Phase 10）：初值取挂载时刻现值（懒加载星层不闪回全显）；
+      // feather 为常量，无需每帧写。
+      uMagLimit: { value: getSkyMagLimit() },
+      uMagFeather: { value: SKY_MAG_FEATHER },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
@@ -280,6 +304,9 @@ export function TwinkleStars({
       // null=时光机关闭 → 0（J2000 原位）。滑条拖动即帧级跟手；星座连线的
       // CPU 重算走 100ms 节流（ConstellationLayer），瞬态错位 ≤ 一次节流窗。
       u.uEpochYr!.value = useUniverse.getState().deepTimeYears ?? 0;
+      // 裸眼极限（Phase 10）：模块总线直读（tick 由 UniverseScene 每帧驱动一次），
+      // all 档恒 99 → 零回归。
+      u.uMagLimit!.value = getSkyMagLimit();
     }
   });
 

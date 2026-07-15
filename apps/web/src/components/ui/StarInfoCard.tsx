@@ -367,16 +367,20 @@ export function StarInfoCard() {
                 </motion.p>
               )}
 
-              {/* 可视化缩略块（Phase 8）：所有天体的统一预览入口，点击进全屏查看器。
-                有 imageKey（真实照片富组件）或 isEphemeris（PlanetPreviewCard 3D）
-                的天体保留原有富组件，不再叠加缩略块，避免同卡出现两个预览。 */}
-              {!obj.imageKey && !obj.isEphemeris && (
+              {/* 可视化缩略块（Phase 8 / Phase 10 修复）：所有非星历天体的统一「查看大图」入口，
+                点击一步进全屏查看器（ObjectViewerModal）。含带 imageKey 的天体——
+                ViewerPreviewBlock 对 imageKey 直接显示真实照片缩略（ViewerPreviewBlock.tsx:51-58），
+                点击 → PhotoPane 大图；无照片 DSO → DsoArtPane 程序化艺术图。这样「点星云无反应」
+                的分派割裂被消除：任何天体都有同一个缩略块入口，不再依赖 DsoLoreSection 两步展开。
+                星历天体（行星/日月）走下方 PlanetPreviewCard 3D，不叠加缩略块。 */}
+              {!obj.isEphemeris && (
                 <motion.div variants={itemVariants} className="mt-4">
                   <ObjectVisualThumb uid={obj.objectUid} />
                 </motion.div>
               )}
 
-              {/* 著名 Messier：科普长文「了解更多」+ 照片 lightbox（仅 16 个带 imageKey+长文的天体） */}
+              {/* 著名 Messier：科普长文「了解更多」（放大职责已上移至统一缩略块，本区只留文字长文+署名）。
+                无长文时 DsoLoreSection 渲染 null——无害，放大入口由上方缩略块保证。 */}
               {obj.imageKey && (
                 <motion.div variants={itemVariants}>
                   <DsoLoreSection

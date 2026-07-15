@@ -46,15 +46,23 @@ export interface MinorBodiesResponse {
 
 /** 单颗卫星的 TLE。 */
 export interface TleSatDto {
-  /** 与 web 卫星 uid 对齐：'SAT-ISS' | 'SAT-TIANGONG' | 'SAT-HST'。 */
+  /**
+   * 与 web 卫星 uid 对齐：著名卫星 'SAT-ISS' | 'SAT-TIANGONG' | 'SAT-HST'；
+   * 星链动态条目 'SAT-STARLINK-{norad}'（前端按 'SAT-STARLINK-' 前缀分档）。
+   */
   id: string;
-  /** 上游名称行，如 'ISS (ZARYA)'。 */
+  /** 上游名称行，如 'ISS (ZARYA)' / 'STARLINK-31234'。 */
   name: string;
   nameZh?: string;
   /** TLE 第一行（69 字符，mod-10 校验通过）。 */
   l1: string;
   /** TLE 第二行（69 字符，mod-10 校验通过）。 */
   l2: string;
+  /**
+   * 分组（可选，向后兼容）：'famous'=三颗内置著名卫星，'starlink'=星链组成员。
+   * 前端亦可仅凭 id 前缀分档；本字段仅为便利。缺省视为 'famous'。
+   */
+  group?: 'famous' | 'starlink';
 }
 
 /** GET /api/v1/tle 响应。 */

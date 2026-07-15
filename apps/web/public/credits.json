@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-11T19:07:01.255Z",
+  "generatedAt": "2026-07-15T17:55:36.853Z",
   "note": "本页登记站内使用的全部第三方影像与数据来源。星辰纪念为私人纪念服务，与 IAU 及任何官方命名机构无关。部分小角径深空天体的显示尺寸经放大以保证可见性。",
   "assets": [
     {
@@ -181,6 +181,206 @@
       "license": "Public Domain",
       "sourceUrl": "https://commons.wikimedia.org/wiki/File:Crab_Nebula.jpg",
       "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Crab%20Nebula.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m82.jpg",
+      "group": "深空影像",
+      "title": "雪茄星系 M82",
+      "objectUid": "M82",
+      "author": "NASA, ESA, Hubble Heritage Team (STScI/AURA)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M82_HST_ACS_2006-14-a-large_web.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M82%20HST%20ACS%202006-14-a-large_web.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m63.jpg",
+      "group": "深空影像",
+      "title": "葵花星系 M63",
+      "objectUid": "M63",
+      "author": "NASA/ESA, Hubble Legacy Archive (STScI)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M63_(NGC_5055).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M63%20(NGC%205055).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m64.jpg",
+      "group": "深空影像",
+      "title": "黑眼星系 M64",
+      "objectUid": "M64",
+      "author": "KPNO/NOIRLab/NSF/AURA/B. Chadwell/F. Haase",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M64_(The_Black_Eye_Galaxy)_(noao-m64chadwell).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M64%20(The%20Black%20Eye%20Galaxy)%20(noao-m64chadwell).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m83.jpg",
+      "group": "深空影像",
+      "title": "南风车星系 M83",
+      "objectUid": "M83",
+      "author": "NASA, ESA, Hubble Heritage Team (STScI/AURA)",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier83_-_Heic1403a.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier83%20-%20Heic1403a.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m94.jpg",
+      "group": "深空影像",
+      "title": "猫眼星系 M94",
+      "objectUid": "M94",
+      "author": "ESA/Hubble & NASA",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Starburst_galaxy_Messier_94.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Starburst%20galaxy%20Messier%2094.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m106.jpg",
+      "group": "深空影像",
+      "title": "梅西耶106 M106",
+      "objectUid": "M106",
+      "author": "NASA, ESA, Hubble Heritage Team (STScI/AURA) & R. Gendler",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_106_visible_and_infrared_composite.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%20106%20visible%20and%20infrared%20composite.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m74.jpg",
+      "group": "深空影像",
+      "title": "幻影星系 M74",
+      "objectUid": "M74",
+      "author": "NASA, ESA & Hubble Heritage (STScI/AURA)-ESA/Hubble",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_74_by_HST.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2074%20by%20HST.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m87.jpg",
+      "group": "深空影像",
+      "title": "室女A星系 M87",
+      "objectUid": "M87",
+      "author": "NASA, STScI, WikiSky",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_87_Hubble_WikiSky.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2087%20Hubble%20WikiSky.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m65.jpg",
+      "group": "深空影像",
+      "title": "梅西耶65 M65",
+      "objectUid": "M65",
+      "author": "ESA/Hubble & NASA",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_65_through_the_years.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2065%20through%20the%20years.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m66.jpg",
+      "group": "深空影像",
+      "title": "梅西耶66 M66",
+      "objectUid": "M66",
+      "author": "ESO",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Phot-33c-03-fullres.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Phot-33c-03-fullres.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m77.jpg",
+      "group": "深空影像",
+      "title": "梅西耶77 M77",
+      "objectUid": "M77",
+      "author": "NASA, ESA & A. van der Hoeven",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_77_spiral_galaxy_by_HST.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2077%20spiral%20galaxy%20by%20HST.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m108.jpg",
+      "group": "深空影像",
+      "title": "梅西耶108 M108",
+      "objectUid": "M108",
+      "author": "Sloan Digital Sky Survey",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier108_-_SDSS_DR_14_(panorama).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier108%20-%20SDSS%20DR%2014%20(panorama).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m109.jpg",
+      "group": "深空影像",
+      "title": "梅西耶109 M109",
+      "objectUid": "M109",
+      "author": "KPNO/NOIRLab/NSF/AURA/G. Hatfield & F. Haase",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M109_(noao-m109hatfield).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M109%20(noao-m109hatfield).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m110.jpg",
+      "group": "深空影像",
+      "title": "梅西耶110 M110",
+      "objectUid": "M110",
+      "author": "European Space Agency",
+      "license": "CC BY 2.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Not_So_Dead_After_All_(48763200193).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Not%20So%20Dead%20After%20All%20(48763200193).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m76.jpg",
+      "group": "深空影像",
+      "title": "小哑铃星云 M76",
+      "objectUid": "M76",
+      "author": "Tom Wildoner",
+      "license": "CC BY-SA 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_76_%E2%80%93_The_Little_Dumbbell_Nebula_in_Perseus.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2076%20%E2%80%93%20The%20Little%20Dumbbell%20Nebula%20in%20Perseus.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m97.jpg",
+      "group": "深空影像",
+      "title": "夜枭星云 M97",
+      "objectUid": "M97",
+      "author": "NOIRLab/NSF/AURA",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M97%2C_NGC_3587_(noao-m97).jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M97%2C%20NGC%203587%20(noao-m97).jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m78.jpg",
+      "group": "深空影像",
+      "title": "梅西耶78 M78",
+      "objectUid": "M78",
+      "author": "ESO/Igor Chekalin",
+      "license": "CC BY 4.0",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_78.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2078.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m43.jpg",
+      "group": "深空影像",
+      "title": "德梅兰星云 M43",
+      "objectUid": "M43",
+      "author": "NASA, ESA, M. Robberto (STScI/ESA) & HST Orion Treasury Team",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:M43_HST.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/M43%20HST.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m2.jpg",
+      "group": "深空影像",
+      "title": "梅西耶2 M2",
+      "objectUid": "M2",
+      "author": "NASA, STScI, WikiSky",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_2_Hubble_WikiSky.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%202%20Hubble%20WikiSky.jpg?width=800"
+    },
+    {
+      "file": "dso-photos/m15.jpg",
+      "group": "深空影像",
+      "title": "梅西耶15 M15",
+      "objectUid": "M15",
+      "author": "ESA/Hubble & NASA",
+      "license": "Public Domain",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Messier_15_HST.jpg",
+      "fileUrl": "https://commons.wikimedia.org/wiki/Special:FilePath/Messier%2015%20HST.jpg?width=800"
     },
     {
       "file": "textures/planets/sun.jpg",

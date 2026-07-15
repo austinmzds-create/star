@@ -6,9 +6,14 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { playChime } from '@/lib/audioEngine';
 import { getExternalPose, releaseCamera } from '@/lib/cameraBus';
-import { getConstellationRenderData, pickConstellationAt } from '@/lib/constellation-render';
+import {
+  getConstellationRenderData,
+  pickConstellationAt,
+  pickConstellationHoverAt,
+} from '@/lib/constellation-render';
 import { isCoarsePointer } from '@/lib/device';
-import { getHover, setHover } from '@/lib/hoverBus';
+import { getHover, type HoverInfo, setHover, setHoverInfo } from '@/lib/hoverBus';
+import { probeSkyAt } from '@/lib/skyProbe';
 import { ensureStaticEntries, pickEntries, resolveObjectPosition } from '@/lib/pickRegistry';
 import { getSkyQuaternion, worldToSkyLocal } from '@/lib/skyFrame';
 import { useUniverse } from '@/lib/store';
@@ -456,10 +461,44 @@ export function CameraRig() {
           // 命中当前选中天体时不显示名牌（信息卡已在展示）
           const sel = useUniverse.getState().selectedUid;
           const shown = uid && uid !== sel ? uid : null;
-          setHover(shown, e.clientX, e.clientY);
-          el.style.cursor = uid ? 'pointer' : '';
-        } else if (getHover().uid) {
-          setHover(getHover().uid, e.clientX, e.clientY);
+          if (shown) {
+            setHover(shown, e.clientX, e.clientY);
+            el.style.cursor = 'pointer';
+          } else {
+            // 天体未命中 → 依次测星座连线 → 坐标线/黄道/银河/地平线（悬停万物）。
+            // 优先级：天体 > 星座连线 > 坐标线 > 银河区域（probeSkyAt 内已把银河排最低）。
+            const st = useUniverse.getState();
+            const rect = el.getBoundingClientRect();
+            let info: HoverInfo | null = null;
+            if (st.showConstellations) {
+              const abbr = pickConstellationHoverAt(
+                e.clientX - rect.left,
+                e.clientY - rect.top,
+                syncPickCam(), // 连线端点是天球本地系，走复合相机
+                rect,
+              );
+              if (abbr) {
+                const c = getConstellationRenderData().byAbbr.get(abbr);
+                if (c) {
+                  info = {
+                    icon: '✦',
+                    title: `${c.nameZh} · 连线`,
+                    sub: '古人把这几颗星连成的图形',
+                  };
+                }
+              }
+            }
+            if (!info) {
+              info = probeSkyAt(e.clientX - rect.left, e.clientY - rect.top, cam, rect);
+            }
+            setHoverInfo(info, e.clientX, e.clientY); // info=null 即清空
+            el.style.cursor = info ? 'help' : ''; // 线用 help 光标，与天体 pointer 区分
+          }
+        } else {
+          // 节流间隙只挪坐标保持跟手：名牌（uid）或气泡（info）都要跟随
+          const h = getHover();
+          if (h.uid) setHover(h.uid, e.clientX, e.clientY);
+          else if (h.info) setHoverInfo(h.info, e.clientX, e.clientY);
         }
         return;
       }
@@ -649,8 +688,9 @@ export function CameraRig() {
           yaw.current += dYaw;
           pitch.current += a0Pitch - dirToPitch(anchorV);
         }
-        // FOV 变化帧内旧屏幕投影失效 → 清悬停（滚轮/捏合两条路径统一在此）
-        if (getHover().uid) {
+        // FOV 变化帧内旧屏幕投影失效 → 清悬停（滚轮/捏合两条路径统一在此；
+        // 名牌与线气泡都要清——setHover(null) 会同时清 uid 与 info）
+        if (getHover().uid || getHover().info) {
           setHover(null);
           gl.domElement.style.cursor = '';
         }

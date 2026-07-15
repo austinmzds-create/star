@@ -6,14 +6,20 @@ import { CELESTIAL_CATALOG, DEEP_SKY_CATALOG, FULL_CATALOG, getCelestialByUid } 
  * 与 apps/web/scripts/fetch-assets.mjs 的 DSO 下载清单一一对应。
  */
 
-/** 与 fetch-assets.mjs DSO_PHOTOS 清单对齐的 16 个著名 Messier。 */
+/** 与 fetch-assets.mjs DSO_PHOTOS 清单对齐的 36 个著名 Messier。 */
 const IMAGE_UIDS = [
+  // 原 16
   'M31', 'M33', 'M42', 'M45', 'M8', 'M16', 'M17', 'M20',
   'M27', 'M51', 'M57', 'M13', 'M81', 'M101', 'M104', 'M1',
+  // Phase 10 扩容 +20（星系）
+  'M82', 'M63', 'M64', 'M83', 'M94', 'M106', 'M74', 'M87',
+  'M65', 'M66', 'M77', 'M108', 'M109', 'M110',
+  // Phase 10 扩容 +20（星云 / 星团）
+  'M76', 'M97', 'M78', 'M43', 'M2', 'M15',
 ] as const;
 
 describe('DSO 真实影像字段（imageKey / imageCredit）', () => {
-  it('16 个著名 Messier 均在深空目录且带 imageKey 与非空 imageCredit', () => {
+  it('36 个著名 Messier 均在深空目录且带 imageKey 与非空 imageCredit', () => {
     for (const uid of IMAGE_UIDS) {
       const obj = getCelestialByUid(uid);
       expect(obj, uid).toBeDefined();
@@ -32,10 +38,10 @@ describe('DSO 真实影像字段（imageKey / imageCredit）', () => {
       expect(seen.has(key), uid).toBe(false);
       seen.add(key);
     }
-    expect(seen.size).toBe(16);
+    expect(seen.size).toBe(36);
   });
 
-  it('imageKey 仅出现在这 16 个天体上（全目录无泄漏）', () => {
+  it('imageKey 仅出现在这 36 个天体上（全目录无泄漏）', () => {
     const allowed = new Set<string>(IMAGE_UIDS);
     for (const obj of FULL_CATALOG) {
       if (obj.imageKey !== undefined || obj.imageCredit !== undefined) {
