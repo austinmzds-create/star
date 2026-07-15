@@ -1,7 +1,8 @@
 <template>
   <div>
     <div class="toolbar">
-      <el-input v-model="q" placeholder="搜昵称/抖音号/UID/手机号" style="width: 260px" clearable @change="() => { page = 1; load() }" />
+      <el-segmented v-if="!isAdmin" v-model="scopeMode" :options="SCOPE_OPTIONS" @change="() => { page = 1; load() }" />
+      <el-input v-model="q" placeholder="搜昵称/抖音号/UID/手机号" style="width: 240px" clearable @change="() => { page = 1; load() }" />
       <el-select v-model="level" placeholder="等级" style="width: 100px" clearable @change="() => { page = 1; load() }">
         <el-option label="L1" value="L1" /><el-option label="L2" value="L2" /><el-option label="L3" value="L3" />
       </el-select>
@@ -40,7 +41,26 @@
       <el-table-column label="更新" width="110">
         <template #default="{ row }">{{ fmtDate(row.updated_at) }}</template>
       </el-table-column>
+      <el-table-column v-if="!isAdmin" label="操作" width="100">
+        <template #default="{ row }">
+          <el-button v-if="!row.owned" size="small" type="primary" plain
+            @click.stop="openConnect(row)">申请建联</el-button>
+          <el-tag v-else size="small" type="success" effect="plain">我的</el-tag>
+        </template>
+      </el-table-column>
     </el-table>
+
+    <!-- 申请建联 -->
+    <el-dialog v-model="connectVisible" title="申请建联" width="440px">
+      <p class="muted" style="font-size:13px;margin:0 0 12px">
+        向管理员申请把「{{ connectTarget?.nickname }}」的归属转到你名下。通过后你将获得操作权限,原商务转为只读。
+      </p>
+      <el-input v-model="connectReason" type="textarea" :rows="3" placeholder="建联理由(可选,便于管理员判断)" />
+      <template #footer>
+        <el-button @click="connectVisible = false">取消</el-button>
+        <el-button type="primary" :loading="connecting" @click="submitConnect">提交申请</el-button>
+      </template>
+    </el-dialog>
     <el-empty v-if="!loading && !rows.length" description="暂无达人" :image-size="70" />
     <el-pagination v-if="total > pageSize" background layout="total, prev, pager, next" :total="total"
       :page-size="pageSize" :current-page="page" style="margin-top: 16px; justify-content: flex-end"
@@ -181,6 +201,14 @@ const pageSize = 50
 const q = ref('')
 const level = ref('')
 const loading = ref(false)
+const user = JSON.parse(localStorage.getItem('user') || '{}')
+const isAdmin = user.role === 'admin'
+const SCOPE_OPTIONS = [{ label: '我的达人', value: 'mine' }, { label: '全部达人', value: 'all' }]
+const scopeMode = ref('mine')
+const connectVisible = ref(false)
+const connectTarget = ref(null)
+const connectReason = ref('')
+const connecting = ref(false)
 // 从看板"按商务"下钻时带入的归属商务过滤
 const ownerBdId = ref(route.query.owner_bd_id ? Number(route.query.owner_bd_id) : null)
 const showPaste = ref(false)
@@ -261,6 +289,7 @@ async function load() {
       params: {
         q: q.value || undefined, level: level.value || undefined,
         owner_bd_id: ownerBdId.value || undefined,
+        scope_mode: isAdmin ? undefined : scopeMode.value,
         page: page.value, page_size: pageSize,
       },
     })
@@ -307,6 +336,25 @@ async function save() {
 function fmtDate(value) {
   if (!value) return '—'
   return value.slice(0, 10)
+}
+
+function openConnect(row) {
+  connectTarget.value = row
+  connectReason.value = ''
+  connectVisible.value = true
+}
+async function submitConnect() {
+  connecting.value = true
+  try {
+    await api.post('/api/connection-requests',
+      { influencer_id: connectTarget.value.id, reason: connectReason.value || undefined })
+    ElMessage.success('建联申请已提交,等待管理员审批')
+    connectVisible.value = false
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '申请失败')
+  } finally {
+    connecting.value = false
+  }
 }
 
 function onImportFile(uploadFile) {

@@ -4,8 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
-from .api import (admin_config, auth, block_records, dashboard, followups, h5,
-                  influencers, products, qianchuan, samples, uploads, videos)
+from .api import (admin_config, auth, block_records, connection_requests,
+                  dashboard, followups, h5, influencers, products, qianchuan,
+                  samples, uploads, videos)
 from .config import settings
 from .db import Base, SessionLocal, engine, ensure_columns
 from .models import RejectReason, User
@@ -29,7 +30,7 @@ for r in (auth.router, influencers.router, samples.router, samples.webhook_route
           products.router, qianchuan.router, dashboard.router, h5.router, admin_config.router,
           followups.router, uploads.router,
           block_records.router, block_records.h5_router,
-          videos.router, videos.promotion_router):
+          videos.router, videos.promotion_router, connection_requests.router):
     app.include_router(r)
 
 # 拒绝理由库初始数据(采自样例平台,docs/01 §2.1)

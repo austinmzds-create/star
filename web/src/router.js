@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 // 内部端(管理员/商务)
 import AdminLayout from './views/AdminLayout.vue'
 import BlockRecords from './views/BlockRecords.vue'
+import ConnectionRequests from './views/ConnectionRequests.vue'
 import Dashboard from './views/Dashboard.vue'
 import Followups from './views/Followups.vue'
 import InfluencerDetail from './views/InfluencerDetail.vue'
@@ -37,6 +38,7 @@ const routes = [
       { path: 'videos', component: Videos },
       { path: 'products', component: Products },
       { path: 'block-records', component: BlockRecords },
+      { path: 'connections', component: ConnectionRequests, meta: { adminOnly: true } },
       { path: 'dashboard', component: Dashboard, meta: { adminOnly: true } },
       { path: 'settings', component: Settings, meta: { adminOnly: true } },
     ],

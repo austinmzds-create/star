@@ -422,6 +422,25 @@ class BlockRecord(Base, TimestampMixin):
     happened_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
+# ---------- 建联申请(方案B 需求4:全库可见 + 归属转移审批) ----------
+
+class ConnectionRequest(Base):
+    """商务对非归属达人发起「建联」申请;管理员审批,通过即把归属转给申请人。"""
+    __tablename__ = "connection_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    requester_bd_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    current_owner_bd_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))  # 申请时归属快照
+    reason: Mapped[str | None] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    # pending / approved / rejected / withdrawn
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    review_note: Mapped[str | None] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 # ---------- 达人 H5 会话 ----------
 
 class FollowUpTask(Base):

@@ -2,13 +2,17 @@
   <div v-if="d">
     <el-page-header :content="d.nickname" @back="$router.back()">
       <template #extra>
-        <div v-if="isStaff" style="display:flex; gap:8px; align-items:center">
+        <div v-if="isStaff && canEdit" style="display:flex; gap:8px; align-items:center">
           <el-tag v-if="d.archived" type="info" size="small">已停用</el-tag>
           <el-button size="small" @click="openEdit">编辑档案</el-button>
           <el-button size="small" :type="d.archived ? 'success' : 'warning'" @click="toggleArchive">
             {{ d.archived ? '启用' : '停用' }}
           </el-button>
           <el-button size="small" type="danger" plain @click="removeInfluencer">删除</el-button>
+        </div>
+        <div v-else-if="isStaff && d.masked" style="display:flex; gap:8px; align-items:center">
+          <el-tag type="warning" size="small">非归属 · 只读</el-tag>
+          <el-button size="small" type="primary" plain @click="openConnect">申请建联</el-button>
         </div>
       </template>
     </el-page-header>
@@ -67,6 +71,10 @@
             <div class="kv full"><span class="k">收件地址</span><span>{{ d.default_address || '—' }}</span></div>
           </div>
 
+          <el-alert v-if="d.masked" type="warning" :closable="false" style="margin:12px 0"
+            title="非归属达人:手机/收件信息已脱敏,仅可查看。如需操作请「申请建联」。" />
+
+          <template v-if="canEdit">
           <el-divider>定级与待遇 <span class="muted" style="font-size:12px">(调整留痕,历史不回溯)</span></el-divider>
           <el-form label-width="72px">
             <el-form-item label="等级">
@@ -94,6 +102,7 @@
           <el-input v-if="tagInput !== null" v-model="tagInput" size="small" style="width: 120px"
             @keyup.enter="addTag" @blur="addTag" />
           <el-button v-else size="small" @click="tagInput = ''">+ 标签</el-button>
+          </template>
         </el-card>
 
         <el-card v-if="d.raw_intro" header="原始资料" style="margin-top: 16px">
@@ -308,6 +317,18 @@
         <el-button type="primary" @click="doQuick">{{ quickType === 'sample' ? '创建' : '登记' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 申请建联 -->
+    <el-dialog v-model="connectVisible" title="申请建联" width="440px">
+      <p class="muted" style="font-size:13px;margin:0 0 12px">
+        向管理员申请把「{{ d.nickname }}」的归属转到你名下。通过后你将获得操作权限,原商务转为只读。
+      </p>
+      <el-input v-model="connectReason" type="textarea" :rows="3" placeholder="建联理由(可选,便于管理员判断)" />
+      <template #footer>
+        <el-button @click="connectVisible = false">取消</el-button>
+        <el-button type="primary" :loading="connecting" @click="submitConnect">提交申请</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -328,6 +349,10 @@ const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isStaff = user.role === 'admin' || user.role === 'bd'
 const isAdmin = user.role === 'admin'
 const d = ref(null)
+const canEdit = computed(() => d.value?.can_edit !== false)
+const connectVisible = ref(false)
+const connectReason = ref('')
+const connecting = ref(false)
 const act = ref({ samples: [], videos: [], promotions: [] })
 const edit = reactive({})
 const tags = ref([])
@@ -373,6 +398,23 @@ async function toggleArchive() {
   await api.patch(`/api/influencers/${route.params.id}`, { archived: to })
   ElMessage.success(to ? '已停用' : '已启用')
   await load()
+}
+function openConnect() {
+  connectReason.value = ''
+  connectVisible.value = true
+}
+async function submitConnect() {
+  connecting.value = true
+  try {
+    await api.post('/api/connection-requests',
+      { influencer_id: d.value.id, reason: connectReason.value || undefined })
+    ElMessage.success('建联申请已提交,等待管理员审批')
+    connectVisible.value = false
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '申请失败')
+  } finally {
+    connecting.value = false
+  }
 }
 async function removeInfluencer() {
   await ElMessageBox.confirm('确认删除该达人?(仅无寄样/视频记录时可删)', '删除', { type: 'warning' })

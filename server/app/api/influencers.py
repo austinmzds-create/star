@@ -54,6 +54,12 @@ def scope(db_query, user: User):
     return db_query.where(Influencer.owner_bd_id == user.id)
 
 
+def load_viewable(db: Session, user: User, influencer_id: int) -> Influencer | None:
+    """方案B 需求4:全库可见 —— 任何在职员工都可查看任意达人(读)。
+    写操作仍走 owns_or_admin 校验,不受此影响。"""
+    return db.get(Influencer, influencer_id)
+
+
 class ParseIn(BaseModel):
     text: str
 
@@ -509,11 +515,14 @@ async def import_influencers(file: UploadFile = File(...),
 def list_influencers(q: str | None = None, level: str | None = None,
                      commission_tier: float | None = None,
                      owner_bd_id: int | None = None, tag: str | None = None,
-                     include_archived: bool = False,
+                     include_archived: bool = False, scope_mode: str = "mine",
                      page: int = 1, page_size: int = 50,
                      user: User = Depends(current_user), db: Session = Depends(get_db)):
-    from sqlalchemy import func
-    base = scope(select(Influencer), user)
+    # scope_mode=all:商务可看全库(方案B 需求4);mine(默认):仅自己名下。管理员始终全量。
+    if scope_mode == "all" or user.role == "admin":
+        base = select(Influencer)
+    else:
+        base = select(Influencer).where(Influencer.owner_bd_id == user.id)
     if not include_archived:
         base = base.where(Influencer.archived.is_not(True))
     if q:
@@ -542,6 +551,7 @@ def list_influencers(q: str | None = None, level: str | None = None,
               "commission_tier": float(r.commission_tier), "promo_mode": r.promo_mode,
               "tags": r.tags, "round_count": len(r.cooperations),
               "owner_bd_id": r.owner_bd_id, "owner_bd_name": names.get(r.owner_bd_id),
+              "owned": owns_or_admin(user, r.owner_bd_id),
               "source": r.source, "data_source": r.data_source,
               "updated_at": r.updated_at.isoformat()}
              for r in rows]
@@ -751,29 +761,34 @@ def delete_influencer(influencer_id: int, user: User = Depends(current_user),
 
 @router.get("/{influencer_id}")
 def detail(influencer_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    inf = load_viewable(db, user, influencer_id)
     if not inf:
-        raise HTTPException(404, "达人不存在或无权限")
+        raise HTTPException(404, "达人不存在")
+    owned = owns_or_admin(user, inf.owner_bd_id)
     logs = db.scalars(select(LevelChangeLog).where(LevelChangeLog.influencer_id == inf.id)
                       .order_by(LevelChangeLog.changed_at.desc()).limit(50)).all()
+    # 非归属商务:敏感联系/收件信息脱敏(只读概览),写操作照旧被 owns_or_admin 拦
     data = {
         "id": inf.id, "nickname": inf.nickname, "douyin_id": inf.douyin_id,
         "douyin_uid": inf.douyin_uid, "homepage_url": inf.homepage_url,
-        "real_name": inf.real_name, "phone": inf.phone,
+        "real_name": inf.real_name if owned else None,
+        "phone": inf.phone if owned else None,
         "fans_count": inf.fans_count, "gmv_30d": inf.gmv_30d,
         "category_tags": inf.category_tags, "shoot_type": inf.shoot_type,
         "level": inf.level, "commission_tier": float(inf.commission_tier),
         "promo_mode": inf.promo_mode, "tags": inf.tags, "source": inf.source,
         "data_source": inf.data_source, "source_note": inf.source_note,
         "raw_intro": inf.raw_intro, "owner_bd_id": inf.owner_bd_id,
-        "cooperation_code": inf.cooperation_code, "default_address": inf.default_address,
+        "cooperation_code": inf.cooperation_code,
+        "default_address": inf.default_address if owned else None,
         "homepage_raw": inf.homepage_raw, "archived": inf.archived,
+        "can_edit": owned, "masked": not owned,
         "cooperations": [{"id": c.id, "round_no": c.round_no, "status": c.status,
                           "level_snapshot": c.level_snapshot,
                           "commission_tier_snapshot": float(c.commission_tier_snapshot),
                           "created_at": c.created_at.isoformat()} for c in inf.cooperations],
         "change_logs": [{"field": l.field, "old": l.old_value, "new": l.new_value,
-                         "reason": l.reason, "at": l.changed_at.isoformat()} for l in logs],
+                         "reason": l.reason, "at": l.changed_at.isoformat()} for l in logs] if owned else [],
     }
     if user.role == "admin":
         data["admin_note"] = inf.admin_note
@@ -783,9 +798,9 @@ def detail(influencer_id: int, user: User = Depends(current_user), db: Session =
 @router.get("/{influencer_id}/activity")
 async def activity(influencer_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     """达人一站式动态:该达人的寄样 / 视频 / 投流(达人视角聚合)"""
-    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    inf = load_viewable(db, user, influencer_id)
     if not inf:
-        raise HTTPException(404, "达人不存在或无权限")
+        raise HTTPException(404, "达人不存在")
     coop_ids = db.scalars(select(Cooperation.id)
                           .where(Cooperation.influencer_id == inf.id)).all() or [0]
 
@@ -842,9 +857,9 @@ def collaborations(influencer_id: int, user: User = Depends(current_user),
                    db: Session = Depends(get_db)):
     """达人 × 各产品的合作大卡片:把现有表聚合成每个产品一张卡的统计(不新建重模型)。"""
     from datetime import datetime, timedelta
-    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    inf = load_viewable(db, user, influencer_id)
     if not inf:
-        raise HTTPException(404, "达人不存在或无权限")
+        raise HTTPException(404, "达人不存在")
     coop_ids = db.scalars(select(Cooperation.id)
                           .where(Cooperation.influencer_id == inf.id)).all() or [0]
     # 汇总所有「有业务/被授权」的产品(授权 + 寄样 + 视频 + 出单)
@@ -942,9 +957,9 @@ def collaboration_timeline(influencer_id: int, product_id: int,
                            page: int = 1, page_size: int = 30,
                            user: User = Depends(current_user), db: Session = Depends(get_db)):
     """单个产品的合作时间轴(该达人 + 该产品的 OperationLog 倒序)。"""
-    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    inf = load_viewable(db, user, influencer_id)
     if not inf:
-        raise HTTPException(404, "达人不存在或无权限")
+        raise HTTPException(404, "达人不存在")
     base = select(OperationLog).where(OperationLog.influencer_id == inf.id,
                                       OperationLog.product_id == product_id)
     total = db.scalar(select(func.count()).select_from(base.subquery()))
@@ -962,9 +977,9 @@ def influencer_logs(influencer_id: int, product_id: int | None = None,
                     page: int = 1, page_size: int = 30,
                     user: User = Depends(current_user), db: Session = Depends(get_db)):
     """「全部动态」:该达人所有 OperationLog,可按产品/类型/操作人筛选 + 分页。"""
-    inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
+    inf = load_viewable(db, user, influencer_id)
     if not inf:
-        raise HTTPException(404, "达人不存在或无权限")
+        raise HTTPException(404, "达人不存在")
     base = select(OperationLog).where(OperationLog.influencer_id == inf.id)
     if product_id is not None:
         base = base.where(OperationLog.product_id == product_id)

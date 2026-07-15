@@ -25,6 +25,12 @@
           </span>
         </el-menu-item>
         <el-menu-item index="/block-records">卡审知识库</el-menu-item>
+        <el-menu-item v-if="isAdmin" index="/connections">
+          <span class="menu-entry">
+            <span>建联审核</span>
+            <el-badge v-if="connectionCount" :value="connectionCount" class="menu-badge" />
+          </span>
+        </el-menu-item>
         <el-menu-item v-if="isAdmin" index="/dashboard">总览看板</el-menu-item>
         <el-menu-item v-if="isAdmin" index="/settings">配置中心</el-menu-item>
       </el-menu>
@@ -48,6 +54,7 @@ const router = useRouter()
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isAdmin = computed(() => user.role === 'admin')
 const followupCount = ref(0)
+const connectionCount = ref(0)
 const todos = ref({})
 let badgeTimer = null
 
@@ -69,6 +76,12 @@ async function refreshBadges() {
     todos.value = r.todos || {}
     followupCount.value = Number(todos.value.followup || 0)
   } catch (e) { /* ignore */ }
+  if (isAdmin.value) {
+    try {
+      const r = await api.get('/api/connection-requests/pending-count')
+      connectionCount.value = Number(r.count || 0)
+    } catch (e) { /* ignore */ }
+  }
 }
 
 onMounted(async () => {
