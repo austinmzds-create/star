@@ -377,7 +377,7 @@
       </el-form>
       <template #footer>
         <el-button @click="uploadVisible = false">关闭</el-button>
-        <el-button type="primary" :disabled="matUploading" @click="addMaterial">添加</el-button>
+        <el-button type="primary" :loading="materialSaving" :disabled="matUploading" @click="addMaterial">添加</el-button>
       </template>
     </el-dialog>
   </div>
@@ -433,6 +433,7 @@ const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
 const matUploadStage = ref('')
+const materialSaving = ref(false)
 const uploadFileInput = ref(null)
 const editFileInput = ref(null)
 const grants = ref([])
@@ -750,10 +751,14 @@ async function handleUploadFileChange(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file) return
-  await uploadSelectedFile(file, uploadForm)
+  const uploaded = await uploadSelectedFile(file, uploadForm)
+  if (uploaded && uploadVisible.value) {
+    await addMaterial({ autoFromUpload: true })
+  }
 }
 
-async function addMaterial() {
+async function addMaterial(options = {}) {
+  if (materialSaving.value) return false
   if (!hasMaterialContent(uploadForm)) return ElMessage.warning('请先上传文件、填写链接或填写文案')
   const body = {
     type: uploadForm.type,
@@ -763,12 +768,21 @@ async function addMaterial() {
     report_id: cleanText(uploadForm.report_id) || undefined,
   }
   if (uploadForm.type === 'video_hot') body.source_link = cleanText(uploadForm.source_link) || undefined
-  const created = await api.post(`/api/products/${detail.value.id}/materials`, body, { skipBadgeRefresh: true })
-  ElMessage.success('已添加')
-  prependMaterial(created)
-  uploadVisible.value = false
-  mtype.value = uploadForm.type   // 添加后切到对应类型 tab
-  load()
+  materialSaving.value = true
+  try {
+    const created = await api.post(`/api/products/${detail.value.id}/materials`, body, { skipBadgeRefresh: true })
+    ElMessage.success(options.autoFromUpload ? '文件已上传并展示' : '已添加')
+    prependMaterial(created)
+    uploadVisible.value = false
+    mtype.value = uploadForm.type   // 添加后切到对应类型 tab
+    load()
+    return true
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '素材添加失败')
+    return false
+  } finally {
+    materialSaving.value = false
+  }
 }
 async function delMaterial(m) {
   await ElMessageBox.confirm('确认删除该素材?', '提示', { type: 'warning' })
