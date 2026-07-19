@@ -107,7 +107,7 @@
                 {{ matUploading ? '上传中...' : (matEdit.oss_key ? '替换文件' : '上传文件') }}
               </el-button>
               <input v-if="!matUploading" :id="editFileInputId" ref="editFileInput" class="file-overlay-input"
-                type="file" :accept="acceptOf(matEdit.type)" @change="handleEditFileChange" />
+                type="file" :accept="acceptOf(matEdit.type)" title="选择文件上传" @change="handleEditFileChange" />
             </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
@@ -363,7 +363,7 @@
                 {{ matUploading ? '上传中...' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传') }}
               </el-button>
               <input v-if="!matUploading" :id="uploadFileInputId" ref="uploadFileInput" class="file-overlay-input"
-                type="file" :accept="acceptOf(uploadForm.type)" @change="handleUploadFileChange" />
+                type="file" :accept="acceptOf(uploadForm.type)" title="选择文件上传" @change="handleUploadFileChange" />
             </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <template v-if="uploadForm.oss_key && !matUploading">

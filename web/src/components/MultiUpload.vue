@@ -13,7 +13,7 @@
     </div>
     <div v-else-if="keys.length < max" class="add">
       <el-icon><Plus /></el-icon>
-      <input class="file-overlay-input" type="file" accept="image/*" @change="onPick" />
+      <input class="file-overlay-input" type="file" accept="image/*" title="选择图片上传" @change="onPick" />
     </div>
   </div>
 </template>
