@@ -5,16 +5,20 @@
       <img :src="urlOf(k)" />
       <el-icon class="del" @click="remove(i)"><Close /></el-icon>
     </div>
-    <!-- 透明原生 input 盖在「+」上,点击直接落在 input 本体,微信/企业微信 webview 里也能弹出 -->
-    <div v-if="keys.length < max" class="add">
+    <!-- 上传中:占位显示进度;空闲:透明原生 input 盖在「+」上,点击直接弹出选择框 -->
+    <div v-if="uploading" class="add uploading">
+      <el-icon class="spin"><Loading /></el-icon>
+      <span class="pct">{{ uploadProgress }}%</span>
+    </div>
+    <div v-else-if="keys.length < max" class="add">
       <el-icon><Plus /></el-icon>
-      <input class="file-overlay-input" type="file" accept="image/*" :disabled="uploading" @change="onPick" />
+      <input class="file-overlay-input" type="file" accept="image/*" @change="onPick" />
     </div>
   </div>
 </template>
 
 <script setup>
-import { Close, Plus } from '@element-plus/icons-vue'
+import { Close, Loading, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import api from '../api'
@@ -41,15 +45,17 @@ watch(() => props.initialPreviews, mergePreviews)
 const urlOf = (k) => previews[k] || `/api/files/${k}`
 
 const uploading = ref(false)
+const uploadProgress = ref(0)
 
 async function onPick(event) {
   const file = event.target.files?.[0]
   event.target.value = ''            // 清空以便重复选同一文件也能触发 change
   if (!file || uploading.value) return
   uploading.value = true
+  uploadProgress.value = 0
   try {
-    // 与素材一致:优先直传 OSS,卡住/不可用回退后端中转
-    const r = await uploadMaterialFile(api, file, null, {
+    // 与素材一致:优先直传 OSS(大图分片并行),卡住/不可用回退后端中转
+    const r = await uploadMaterialFile(api, file, (percent) => { uploadProgress.value = percent }, {
       direct: true, allowBackendFallback: true, prefix: props.prefix,
     })
     if (r.url) previews[r.key] = r.url
@@ -83,6 +89,10 @@ function remove(i) {
   display: flex; align-items: center; justify-content: center; color: #b3bac9; cursor: pointer;
 }
 .add:hover { border-color: #6b5cf6; color: #6b5cf6; }
+.add.uploading { flex-direction: column; gap: 2px; border-color: #6b5cf6; color: #6b5cf6; cursor: default; }
+.add.uploading .pct { font-size: 12px; }
+.add .spin { animation: mu-spin 0.9s linear infinite; }
+@keyframes mu-spin { to { transform: rotate(360deg); } }
 .file-overlay-input {
   position: absolute; inset: 0; width: 100%; height: 100%;
   opacity: 0; cursor: pointer; font-size: 0;

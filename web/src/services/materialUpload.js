@@ -74,6 +74,91 @@ function putFileToOss(ticket, file, onProgress) {
   })
 }
 
+// ---- 分片并行直传 OSS(大文件/视频提速的关键,对标成熟做法)----
+const MULTIPART_THRESHOLD = 5 * 1024 * 1024   // >5MB 用分片
+const PART_SIZE = 5 * 1024 * 1024
+const PART_CONCURRENCY = 4                     // 并行分片数,吃满带宽
+const PART_TIMEOUT_MS = 120000
+
+async function initiateMultipart(objectUrl, contentType) {
+  const r = await fetch(`${objectUrl}?uploads`, {
+    method: 'POST', headers: { 'Content-Type': contentType },
+  })
+  if (!r.ok) throw new Error(`分片初始化失败: ${r.status}`)
+  const text = await r.text()
+  const m = text.match(/<UploadId>(.*?)<\/UploadId>/)
+  if (!m) throw new Error('分片初始化未返回 UploadId')
+  return m[1]
+}
+
+function uploadPart(objectUrl, uploadId, partNumber, blob, onLoaded) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', `${objectUrl}?partNumber=${partNumber}&uploadId=${uploadId}`)
+    xhr.timeout = PART_TIMEOUT_MS
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onLoaded(e.loaded) }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader('ETag')
+        if (!etag) reject(new Error(`分片 ${partNumber} 未返回 ETag`))
+        else resolve(etag)
+      } else reject(new Error(`分片 ${partNumber} 失败: ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error(`分片 ${partNumber} 网络错误`))
+    xhr.ontimeout = () => reject(new Error(`分片 ${partNumber} 超时`))
+    xhr.send(blob)
+  })
+}
+
+async function completeMultipart(objectUrl, uploadId, parts) {
+  const body = '<CompleteMultipartUpload>'
+    + parts.slice().sort((a, b) => a.partNumber - b.partNumber)
+        .map((p) => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join('')
+    + '</CompleteMultipartUpload>'
+  const r = await fetch(`${objectUrl}?uploadId=${uploadId}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/xml' }, body,
+  })
+  if (!r.ok) throw new Error(`分片合并失败: ${r.status}`)
+}
+
+async function multipartUploadToOss(objectUrl, file, contentType, onProgress) {
+  const uploadId = await initiateMultipart(objectUrl, contentType)
+  const total = file.size
+  const partCount = Math.ceil(total / PART_SIZE)
+  const loaded = new Array(partCount).fill(0)
+  const report = () => {
+    const sum = loaded.reduce((a, b) => a + b, 0)
+    onProgress?.(Math.min(99, Math.round((sum / total) * 100)), 'uploading')
+  }
+  const parts = []
+  let nextIndex = 0
+  async function worker() {
+    while (nextIndex < partCount) {
+      const i = nextIndex++
+      const start = i * PART_SIZE
+      const blob = file.slice(start, Math.min(start + PART_SIZE, total))
+      let etag
+      try {
+        etag = await uploadPart(objectUrl, uploadId, i + 1, blob, (l) => { loaded[i] = l; report() })
+      } catch (e) {
+        // 单片失败重试一次
+        etag = await uploadPart(objectUrl, uploadId, i + 1, blob, (l) => { loaded[i] = l; report() })
+      }
+      loaded[i] = blob.size
+      report()
+      parts.push({ partNumber: i + 1, etag })
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, partCount) }, worker))
+    await completeMultipart(objectUrl, uploadId, parts)
+    onProgress?.(100, 'confirming')
+  } catch (e) {
+    try { await fetch(`${objectUrl}?uploadId=${uploadId}`, { method: 'DELETE' }) } catch { /* CORS 可能不允许 DELETE,忽略 */ }
+    throw e
+  }
+}
+
 async function uploadViaBackend(api, file, onProgress, prefix = 'materials') {
   const formData = new FormData()
   formData.append('file', file)
@@ -101,7 +186,12 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
         content_type: file.type || undefined,
       }, { skipBadgeRefresh: true })
       if (ticket.enabled && ticket.upload_url && ticket.key) {
-        await putFileToOss(ticket, file, onProgress)
+        const contentType = ticket.content_type || file.type || 'application/octet-stream'
+        if (file.size > MULTIPART_THRESHOLD) {
+          await multipartUploadToOss(ticket.upload_url, file, contentType, onProgress)  // 大文件/视频:并行分片,快
+        } else {
+          await putFileToOss(ticket, file, onProgress)                                   // 小文件:单次 PUT
+        }
         // 回显用后端内联代理地址(preview_url = /api/files/...),OSS 默认域名会强制下载无法内联显示
         return { key: ticket.key, url: ticket.preview_url || ticket.url, direct: true }
       }
