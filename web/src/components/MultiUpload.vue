@@ -5,22 +5,18 @@
       <img :src="urlOf(k)" />
       <el-icon class="del" @click="remove(i)"><Close /></el-icon>
     </div>
-    <el-upload
-      v-if="keys.length < max"
-      :show-file-list="false"
-      :before-upload="() => true"
-      :http-request="doUpload"
-      accept="image/*"
-    >
-      <div class="add"><el-icon><Plus /></el-icon></div>
-    </el-upload>
+    <!-- 透明原生 input 盖在「+」上,点击直接落在 input 本体,微信/企业微信 webview 里也能弹出 -->
+    <div v-if="keys.length < max" class="add">
+      <el-icon><Plus /></el-icon>
+      <input class="file-overlay-input" type="file" accept="image/*" :disabled="uploading" @change="onPick" />
+    </div>
   </div>
 </template>
 
 <script setup>
 import { Close, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, reactive, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import api from '../api'
 
 const props = defineProps({
@@ -43,15 +39,27 @@ function mergePreviews(incoming = {}) {
 watch(() => props.initialPreviews, mergePreviews)
 const urlOf = (k) => previews[k] || `/api/files/${k}`
 
-async function doUpload({ file }) {
-  const fd = new FormData()
-  fd.append('file', file)
-  const r = await api.post(`/api/upload?prefix=${props.prefix}`, fd, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
-  if (r.url) previews[r.key] = r.url
-  emit('update:modelValue', [...keys.value, r.key])
-  ElMessage.success('已上传')
+const uploading = ref(false)
+
+async function onPick(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''            // 清空以便重复选同一文件也能触发 change
+  if (!file || uploading.value) return
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const r = await api.post(`/api/upload?prefix=${props.prefix}`, fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    if (r.url) previews[r.key] = r.url
+    emit('update:modelValue', [...keys.value, r.key])
+    ElMessage.success('已上传')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '上传失败,请重试')
+  } finally {
+    uploading.value = false
+  }
 }
 
 function remove(i) {
@@ -70,8 +78,13 @@ function remove(i) {
   color: #fff; border-radius: 50%; padding: 2px; cursor: pointer; font-size: 12px;
 }
 .add {
+  position: relative;
   width: 72px; height: 72px; border: 1px dashed #cdd2de; border-radius: 8px;
   display: flex; align-items: center; justify-content: center; color: #b3bac9; cursor: pointer;
 }
 .add:hover { border-color: #6b5cf6; color: #6b5cf6; }
+.file-overlay-input {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  opacity: 0; cursor: pointer; font-size: 0;
+}
 </style>

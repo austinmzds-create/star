@@ -100,12 +100,13 @@
       <el-form label-width="80px">
         <el-form-item v-if="matEdit.type !== 'copy'" label="文件">
           <div class="file-edit-row">
-            <input :id="editFileInputId" ref="editFileInput" class="native-file-input" type="file"
-              :accept="acceptOf(matEdit.type)" :disabled="matUploading" @change="handleEditFileChange" />
-            <label class="el-button el-button--small file-pick-button"
-              :class="{ 'is-disabled': matUploading }" :aria-disabled="matUploading" :for="editFileInputId">
-              <span>{{ matUploading ? '上传中...' : (matEdit.oss_key ? '替换文件' : '上传文件') }}</span>
-            </label>
+            <span class="file-pick-wrap">
+              <el-button size="small" :loading="matUploading" :disabled="matUploading">
+                {{ matUploading ? '上传中...' : (matEdit.oss_key ? '替换文件' : '上传文件') }}
+              </el-button>
+              <input v-if="!matUploading" :id="editFileInputId" ref="editFileInput" class="file-overlay-input"
+                type="file" :accept="acceptOf(matEdit.type)" @change="handleEditFileChange" />
+            </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
             <el-button v-if="matEdit.oss_key" size="small" text type="danger" @click="clearEditFile">移除文件</el-button>
@@ -353,12 +354,13 @@
         </el-form-item>
         <el-form-item v-if="uploadForm.type !== 'copy'" label="文件">
           <div class="upload-file-box">
-            <input :id="uploadFileInputId" ref="uploadFileInput" class="native-file-input" type="file"
-              :accept="acceptOf(uploadForm.type)" :disabled="matUploading" @change="handleUploadFileChange" />
-            <label class="el-button el-button--small file-pick-button"
-              :class="{ 'is-disabled': matUploading }" :aria-disabled="matUploading" :for="uploadFileInputId">
-              <span>{{ matUploading ? '上传中...' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传') }}</span>
-            </label>
+            <span class="file-pick-wrap">
+              <el-button size="small" type="primary" :loading="matUploading" :disabled="matUploading">
+                {{ matUploading ? '上传中...' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传') }}
+              </el-button>
+              <input v-if="!matUploading" :id="uploadFileInputId" ref="uploadFileInput" class="file-overlay-input"
+                type="file" :accept="acceptOf(uploadForm.type)" @change="handleUploadFileChange" />
+            </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <template v-if="uploadForm.oss_key">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
@@ -985,20 +987,18 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .upload-progress { font-size: 12px; }
-.native-file-input {
+/* 透明 <input type=file> 直接盖在按钮上:点击落在原生 input 本体,
+   不走 label[for]/JS.click() 间接触发——微信/企业微信等 webview 里最稳。 */
+.file-pick-wrap { position: relative; display: inline-flex; }
+.file-overlay-input {
   position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  clip-path: inset(50%);
-  border: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   opacity: 0;
+  cursor: pointer;
+  font-size: 0;
 }
-.file-pick-button { cursor: pointer; user-select: none; }
-.file-pick-button.is-disabled { cursor: not-allowed; pointer-events: none; opacity: 0.6; }
 .upload-file-box, .file-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .file-name, .material-file-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-name { max-width: 230px; }
