@@ -8,6 +8,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ..deps import current_user
 from ..models import User
@@ -47,7 +48,9 @@ async def upload(file: UploadFile, prefix: str = "materials",
                  user: User = Depends(current_user)):
     data = await file.read()
     try:
-        key = storage.save(data, file.filename or "file", prefix=prefix)
+        # OSS put_object 是阻塞网络调用;放线程池执行,避免上传期间卡住事件循环
+        # (否则一次上传会拖慢所有并发请求,表现为"上传时整体变慢")。
+        key = await run_in_threadpool(storage.save, data, file.filename or "file", prefix)
     except Exception:
         logger.exception("[upload] 存储写入失败")
         raise HTTPException(502, "文件存储写入失败,请检查 OSS 配置")
