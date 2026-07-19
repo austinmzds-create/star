@@ -131,6 +131,7 @@ export async function uploadAndCreateMaterial(api, options) {
   let uploaded
   try {
     uploaded = await uploadMaterialFile(api, file, onProgress, { direct: true })
+    if (!uploaded?.key) throw new Error('上传结果缺少文件 key')
   } catch (error) {
     error.materialStage = 'upload'
     throw error
