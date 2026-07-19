@@ -43,18 +43,48 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
     }
 
 
+# 素材可能是视频,单文件上限放到 200MB;超限直接 413,避免读爆内存/长时间挂起后 502。
+MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+_CHUNK = 1024 * 1024
+
+
 @router.post("/upload")
 async def upload(file: UploadFile, prefix: str = "materials",
                  user: User = Depends(current_user)):
-    data = await file.read()
+    # 流式落盘:按块读写,内存占用恒定(不再 file.read() 把整段视频读进内存),
+    # 超过上限即中止并清理半成品;OSS 配了再从本地文件传上去(线程池,不阻塞事件循环)。
+    key = storage.make_key(file.filename or "file", prefix)
+    dst = storage.local_path(key)
+    size = 0
     try:
-        # OSS put_object 是阻塞网络调用;放线程池执行,避免上传期间卡住事件循环
-        # (否则一次上传会拖慢所有并发请求,表现为"上传时整体变慢")。
-        key = await run_in_threadpool(storage.save, data, file.filename or "file", prefix)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "wb") as out:
+            while True:
+                chunk = await file.read(_CHUNK)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    out.close()
+                    _safe_remove(dst)
+                    raise HTTPException(413, f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限,请压缩后再传")
+        if storage.use_oss():
+            await run_in_threadpool(storage.upload_local_to_oss, key)
+    except HTTPException:
+        raise
     except Exception:
+        _safe_remove(dst)
         logger.exception("[upload] 存储写入失败")
-        raise HTTPException(502, "文件存储写入失败,请检查 OSS 配置")
+        raise HTTPException(502, "文件存储写入失败,请检查存储/OSS 配置")
     return {"key": key, "url": storage.signed_url(key), "use_oss": storage.use_oss()}
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass
 
 
 def _is_safe_key(key: str) -> bool:

@@ -113,6 +113,15 @@ def save(data: bytes, filename: str, prefix: str = "materials") -> str:
     return key
 
 
+def upload_local_to_oss(key: str) -> None:
+    """把已落地的本地文件上传到 OSS(供流式上传:先写盘再传 OSS,避免整文件驻留内存)。"""
+    b = _bucket()
+    if not b:
+        return
+    headers = {"Content-Type": content_type(key), "Content-Disposition": "inline"}
+    b.put_object_from_file(key, local_path(key), headers=headers)
+
+
 def is_image(key_or_filename: str) -> bool:
     return (content_type(key_or_filename) or "").startswith("image/")
 
