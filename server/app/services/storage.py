@@ -71,6 +71,9 @@ def make_key(filename: str, prefix: str = "materials") -> str:
 
 
 def public_object_url(key: str) -> str:
+    if settings.oss_public_base_url:
+        base = settings.oss_public_base_url.rstrip("/")
+        return f"{base}/{quote(key, safe='/')}"
     host = settings.oss_endpoint.replace("https://", "").replace("http://", "").rstrip("/")
     return f"https://{settings.oss_bucket}.{host}/{quote(key, safe='/')}"
 
@@ -160,6 +163,24 @@ def public_or_signed_url(key: str, expires: int = 86400) -> str:
     """素材预览地址:OSS 开启时让浏览器直连 OSS,本地环境走后端签名代理。"""
     if use_oss():
         return public_object_url(key)
+    return signed_url(key, expires)
+
+
+def inline_preview_enabled() -> bool:
+    """是否可以把 OSS URL 直接放进 video/iframe。
+
+    阿里云默认 OSS 域名目前会返回 ``Content-Disposition: attachment`` 和
+    ``x-oss-force-download:true``。把这种地址自动塞进 video/iframe 会导致浏览器
+    在打开详情时直接下载文件。只有接入已验证可 inline 的自定义域名/CDN 后才开启。
+    """
+    if not use_oss():
+        return True
+    return bool(settings.oss_inline_preview and settings.oss_public_base_url)
+
+
+def preview_url(key: str, expires: int = 86400) -> str:
+    if inline_preview_enabled():
+        return public_or_signed_url(key, expires)
     return signed_url(key, expires)
 
 

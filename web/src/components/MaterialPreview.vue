@@ -1,11 +1,18 @@
 <template>
   <div class="material-preview">
     <video
-      v-if="isVideo && material.url"
-      :src="material.url"
+      v-if="isVideo && shouldRenderPreview && previewUrl"
+      :src="previewUrl"
       controls
       preload="metadata"
     />
+    <div v-else-if="isVideo && material.url" class="file-preview-card">
+      <span>视频文件已上传</span>
+      <div class="file-actions">
+        <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
+        <a :href="material.url" target="_blank" rel="noopener">打开/下载</a>
+      </div>
+    </div>
     <el-image
       v-else-if="material.type === 'image' && material.url"
       :key="imageUrl"
@@ -19,9 +26,16 @@
       <el-button size="small" text type="primary" @click="retryImage">重新加载</el-button>
       <a :href="material.url" target="_blank" rel="noopener">打开原图</a>
     </div>
-    <div v-else-if="material.type === 'pdf' && material.url" class="pdf-preview">
-      <iframe :src="material.url" title="质检报告预览" />
+    <div v-else-if="material.type === 'pdf' && shouldRenderPreview && previewUrl" class="pdf-preview">
+      <iframe :src="previewUrl" title="质检报告预览" />
       <a :href="material.url" target="_blank" rel="noopener">新窗口打开报告</a>
+    </div>
+    <div v-else-if="material.type === 'pdf' && material.url" class="file-preview-card">
+      <span>报告文件已上传</span>
+      <div class="file-actions">
+        <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
+        <a :href="material.url" target="_blank" rel="noopener">打开/下载</a>
+      </div>
     </div>
     <div v-else-if="material.type === 'copy' && material.parsed_text" class="copy-preview">
       <div class="copy-text">{{ material.parsed_text }}</div>
@@ -64,18 +78,26 @@ const props = defineProps({
 const isVideo = computed(() => (
   ['video_ai', 'video_hot', 'video_output'].includes(props.material.type)
 ))
+const manualPreview = ref(false)
 const retryToken = ref(0)
 const imageFailed = ref(false)
+const previewUrl = computed(() => props.material.preview_url || props.material.url)
+const shouldRenderPreview = computed(() => props.material.inline_preview !== false || manualPreview.value)
 const imageUrl = computed(() => {
   if (!props.material.url || retryToken.value === 0) return props.material.url
   const joiner = props.material.url.includes('?') ? '&' : '?'
   return `${props.material.url}${joiner}_preview_retry=${retryToken.value}`
 })
 
-watch(() => props.material.url, () => {
+watch(() => [props.material.url, props.material.preview_url], () => {
+  manualPreview.value = false
   retryToken.value = 0
   imageFailed.value = false
 })
+
+function showPreview() {
+  manualPreview.value = true
+}
 
 function retryImage() {
   imageFailed.value = false
@@ -112,6 +134,13 @@ async function copy(text) {
 .pdf-preview a, .source-card {
   display: inline-block; margin-top: 8px; color: #6254e8; text-decoration: none;
 }
+.file-preview-card {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 12px; border: 1px solid #eef0f5; border-radius: 8px; background: #f8f9fc;
+  color: #4f566b;
+}
+.file-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.file-actions a { color: #6254e8; text-decoration: none; }
 .copy-preview { padding: 12px; background: #f8f9fc; border-radius: 8px; }
 .copy-text { margin-bottom: 8px; white-space: pre-wrap; color: #4f566b; }
 .material-caption {

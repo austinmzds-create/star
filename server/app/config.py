@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     oss_bucket: str = ""
     oss_access_key_id: str = ""
     oss_access_key_secret: str = ""
+    # 可选:绑定到 OSS/CDN 的自定义域名。默认 OSS 域名当前会返回强制下载头,
+    # 不能自动放进 video/iframe 里预览。
+    oss_public_base_url: str = ""
+    oss_inline_preview: bool = False
 
     # 阿里云短信(达人 H5 手机验证码)
     sms_access_key_id: str = ""

@@ -72,8 +72,8 @@ describe('uploadAndCreateMaterial', () => {
     expect(sentFiles).toEqual([file])
     expect(sentHeaders[0]).toMatchObject({
       'Content-Type': 'video/mp4',
-      'Content-Disposition': 'inline',
     })
+    expect(sentHeaders[0]).not.toHaveProperty('Content-Disposition')
     expect(api.post).not.toHaveBeenCalledWith('/api/upload', expect.anything(), expect.anything())
     expect(api.post.mock.calls[1]).toEqual([
       '/api/products/3/materials',

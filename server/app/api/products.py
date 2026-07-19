@@ -310,6 +310,8 @@ def delete_material(material_id: int, user: User = Depends(current_user), db: Se
 def _material_dict(m: Material) -> dict:
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
             "url": storage.public_or_signed_url(m.oss_key) if m.oss_key else None,
+            "preview_url": storage.preview_url(m.oss_key) if m.oss_key else None,
+            "inline_preview": storage.inline_preview_enabled(),
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
             "starred": m.starred, "created_at": m.created_at.isoformat()}
@@ -324,6 +326,8 @@ def _asset_dict(a: MaterialAsset) -> dict:
     return {"id": a.id, "type": a.type, "oss_key": a.oss_key,
             "filename": a.filename, "source_link": a.source_link, "sort_order": a.sort_order,
             "url": storage.public_or_signed_url(a.oss_key) if a.oss_key else a.source_link,
+            "preview_url": storage.preview_url(a.oss_key) if a.oss_key else a.source_link,
+            "inline_preview": storage.inline_preview_enabled(),
             "thumb": storage.thumbnail_url(a.oss_key, 200) if (is_img and a.oss_key) else None}
 
 

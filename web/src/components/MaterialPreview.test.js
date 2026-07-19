@@ -18,6 +18,21 @@ describe('MaterialPreview', () => {
     expect(wrapper.get('video').attributes('controls')).toBeDefined()
   })
 
+  it('does not auto-load force-download OSS videos before preview is requested', async () => {
+    const wrapper = mountPreview({
+      type: 'video_ai',
+      url: 'https://bucket.oss/materials/video.mp4',
+      preview_url: '/api/files/materials/video.mp4?e=1&s=test',
+      inline_preview: false,
+    })
+
+    expect(wrapper.find('video').exists()).toBe(false)
+    expect(wrapper.text()).toContain('视频文件已上传')
+
+    await wrapper.get('.file-actions button').trigger('click')
+    expect(wrapper.get('video').attributes('src')).toBe('/api/files/materials/video.mp4?e=1&s=test')
+  })
+
   it('renders an image with a preview source list', () => {
     const wrapper = mountPreview({ type: 'image', url: '/signed/image.jpg' })
     const image = wrapper.getComponent({ name: 'ElImage' })
@@ -53,6 +68,21 @@ describe('MaterialPreview', () => {
 
     expect(wrapper.get('iframe').attributes('src')).toBe('/signed/report.pdf')
     expect(wrapper.get('a').attributes('href')).toBe('/signed/report.pdf')
+  })
+
+  it('does not auto-load force-download OSS PDFs before preview is requested', async () => {
+    const wrapper = mountPreview({
+      type: 'pdf',
+      url: 'https://bucket.oss/materials/report.pdf',
+      preview_url: '/api/files/materials/report.pdf?e=1&s=test',
+      inline_preview: false,
+    })
+
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.text()).toContain('报告文件已上传')
+
+    await wrapper.get('.file-actions button').trigger('click')
+    expect(wrapper.get('iframe').attributes('src')).toBe('/api/files/materials/report.pdf?e=1&s=test')
   })
 
   it('shows copy text directly', () => {

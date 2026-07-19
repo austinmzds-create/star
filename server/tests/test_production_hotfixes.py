@@ -57,10 +57,24 @@ def test_oss_material_preview_uses_public_object_url(monkeypatch):
     monkeypatch.setattr(storage, "use_oss", lambda: True)
     monkeypatch.setattr(settings, "oss_endpoint", "oss-cn-shanghai.aliyuncs.com")
     monkeypatch.setattr(settings, "oss_bucket", "viceo-public")
+    monkeypatch.setattr(settings, "oss_public_base_url", "")
+    monkeypatch.setattr(settings, "oss_inline_preview", False)
 
     url = storage.public_or_signed_url("materials/demo video.mp4")
 
     assert url == "https://viceo-public.oss-cn-shanghai.aliyuncs.com/materials/demo%20video.mp4"
+    assert storage.inline_preview_enabled() is False
+    assert storage.preview_url("materials/demo video.mp4").startswith("/api/files/materials/demo%20video.mp4?")
+
+
+def test_custom_oss_domain_can_enable_inline_preview(monkeypatch):
+    monkeypatch.setattr(storage, "use_oss", lambda: True)
+    monkeypatch.setattr(settings, "oss_public_base_url", "https://assets.example.com")
+    monkeypatch.setattr(settings, "oss_inline_preview", True)
+
+    assert storage.inline_preview_enabled() is True
+    assert storage.public_or_signed_url("materials/demo.mp4") == "https://assets.example.com/materials/demo.mp4"
+    assert storage.preview_url("materials/demo.mp4") == "https://assets.example.com/materials/demo.mp4"
 
 
 def test_kd100_missing_config_returns_actionable_result(monkeypatch):

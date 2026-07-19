@@ -37,7 +37,6 @@ function putFileToOss(ticket, file, onProgress) {
     xhr.open('PUT', ticket.upload_url)
     xhr.timeout = 5 * 60 * 1000
     xhr.setRequestHeader('Content-Type', ticket.content_type || file.type || 'application/octet-stream')
-    xhr.setRequestHeader('Content-Disposition', 'inline')
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         const percent = Math.round((event.loaded / event.total) * 100)

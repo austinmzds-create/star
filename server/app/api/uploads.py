@@ -41,6 +41,8 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
         "upload_url": public_url,
         "content_type": body.content_type or storage.content_type(body.filename),
         "url": public_url,
+        "preview_url": storage.preview_url(key),
+        "inline_preview": storage.inline_preview_enabled(),
     }
 
 
