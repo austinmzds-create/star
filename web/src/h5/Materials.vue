@@ -15,7 +15,10 @@
         <div class="phmeta">
           <span v-if="d.price_text" class="price">{{ d.price_text }}</span>
           <el-tag v-if="d.default_commission != null" size="small" type="success" effect="plain">
-            佣金 {{ d.default_commission }}%
+            自然流 {{ d.default_commission }}%
+          </el-tag>
+          <el-tag v-if="d.merchant_promotion_commission != null" size="small" type="warning" effect="plain">
+            投流 {{ d.merchant_promotion_commission }}%
           </el-tag>
         </div>
       </div>
@@ -144,6 +147,8 @@ const refreshing = ref(false)
 
 const matsOf = (types) => (d.value?.materials || []).filter((m) => types.includes(m.type))
 const detailItems = computed(() => [
+  { label: '自然流佣金', value: d.value?.default_commission != null ? `${d.value.default_commission}%` : null },
+  { label: '商家投流佣金', value: d.value?.merchant_promotion_commission != null ? `${d.value.merchant_promotion_commission}%` : null },
   { label: '卖点', value: d.value?.selling_points },
   { label: '拍摄要求', value: d.value?.shooting_notes },
   { label: '带货备注', value: d.value?.promo_remark },
@@ -237,7 +242,7 @@ onMounted(async () => {
 .phimg.placeholder { background: #eef0f5; }
 .phinfo { min-width: 0; }
 .phname { font-weight: 700; font-size: 16px; color: #202431; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.phmeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+.phmeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .phmeta .price { color: #f56c6c; font-weight: 700; }
 .detail-shell { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; align-items: start; }
 .side-tabs {

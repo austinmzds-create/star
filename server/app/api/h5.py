@@ -211,6 +211,8 @@ def my_products(inf: Influencer = Depends(current_influencer), db: Session = Dep
                                             Product.status == "on")).all()
     return [{"id": p.id, "name": p.name, "price_text": p.price_text,
              "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+             "merchant_promotion_commission": (float(p.merchant_promotion_commission)
+                                                if p.merchant_promotion_commission is not None else None),
              "selling_points": p.selling_points,
              "product_image": storage.thumbnail_url(p.product_image, 160)}
             for p in rows]
@@ -271,6 +273,8 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
             "product_image": storage.thumbnail_url(p.product_image, 160),
             "price_text": p.price_text,
             "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+            "merchant_promotion_commission": (float(p.merchant_promotion_commission)
+                                               if p.merchant_promotion_commission is not None else None),
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "promo_remark": p.promo_remark,
             "sample": sample,

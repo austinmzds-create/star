@@ -1,6 +1,7 @@
+import asyncio
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -11,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import security  # noqa: E402
-from app.api.auth import LoginIn, login  # noqa: E402
+from app.api.auth import LoginIn, PhoneIn, login, sms_send  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.deps import _load_token  # noqa: E402
 from app.models import Influencer, User  # noqa: E402
@@ -200,6 +201,59 @@ def test_staff_account_wins_when_phone_matches_both_account_types(db):
     assert result["kind"] == "staff"
     assert result["user"]["id"] == user.id
     assert _load_token(result["token"], "staff") == user.id
+
+
+def test_selected_influencer_role_can_login_when_phone_matches_staff_too(db):
+    user = User(phone="13900001234", display_name="商务", role="bd")
+    influencer = Influencer(phone="13900001234", nickname="同号达人")
+    db.add_all([user, influencer])
+    db.commit()
+
+    result = login(LoginIn(
+        username="13900001234",
+        password="001234",
+        login_role="influencer",
+    ), db)
+
+    assert result["kind"] == "influencer"
+    assert result["user"]["id"] == influencer.id
+    assert _load_token(result["token"], "influencer") == influencer.id
+
+
+def test_selected_staff_role_does_not_fall_back_to_influencer(db):
+    influencer = Influencer(phone="15095037973", nickname="达人")
+    db.add(influencer)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc_info:
+        login(LoginIn(
+            username="15095037973",
+            password="037973",
+            login_role="staff",
+        ), db)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "账号或密码错误"
+
+
+def test_staff_sms_send_rejects_unknown_internal_phone(db):
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(sms_send(PhoneIn(phone="15095037973", login_role="staff"), db))
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "该手机号不是商务/管理员账号"
+
+
+def test_staff_sms_send_allows_active_internal_phone(db):
+    user = User(phone="13900001234", display_name="商务", role="bd")
+    db.add(user)
+    db.commit()
+
+    with patch("app.api.auth.send_code", new_callable=AsyncMock) as send_spy:
+        result = asyncio.run(sms_send(PhoneIn(phone="13900001234", login_role="staff"), db))
+
+    assert result == {"ok": True}
+    send_spy.assert_awaited_once_with(db, "13900001234")
 
 
 def test_phone_login_uses_phone_owner_when_another_username_matches(db):

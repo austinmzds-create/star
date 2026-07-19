@@ -28,12 +28,18 @@ def default_password_from_phone(phone: str) -> str:
 def assign_default_password_if_missing(account) -> bool:
     if not account.phone or account.password_hash:
         return False
+    set_default_password_for_phone(account)
+    return True
+
+
+def set_default_password_for_phone(account) -> None:
+    if not account.phone:
+        return
     default_password = default_password_from_phone(account.phone)
     account.password_hash = bcrypt.hashpw(
         default_password.encode()[:72],
         bcrypt.gensalt(rounds=DEFAULT_PASSWORD_BCRYPT_ROUNDS),
     ).decode()
-    return True
 
 
 def verify_password(plain: str, hashed: str) -> bool:

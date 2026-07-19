@@ -2,12 +2,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_admin
 from ..models import LevelBenefitConfig, RejectReason, SystemConfig, User
-from ..security import hash_password
+from ..security import assign_default_password_if_missing, set_default_password_for_phone
 from ..services import levels
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -86,38 +87,89 @@ class BdIn(BaseModel):
     display_name: str
 
 
+def _normalize_bd(body: BdIn) -> tuple[str, str]:
+    phone = (body.phone or "").strip()
+    display_name = (body.display_name or "").strip()
+    if len(phone) != 11 or not phone.startswith("1"):
+        raise HTTPException(400, "手机号格式不正确")
+    if not display_name:
+        raise HTTPException(400, "姓名不能为空")
+    return phone, display_name
+
+
 @router.post("/bd-users")
 def create_bd(body: BdIn, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
     """手机号直接添加商务(该手机号登录即得商务身份)"""
-    if len(body.phone) != 11 or not body.phone.startswith("1"):
-        raise HTTPException(400, "手机号格式不正确")
-    existing = db.scalars(select(User).where(User.phone == body.phone)).first()
+    phone, display_name = _normalize_bd(body)
+    existing = db.scalars(select(User).where(User.phone == phone)).first()
     if existing:
         raise HTTPException(400, "该手机号已是内部账号")
     # 若该手机号已注册为达人,提示(达人与商务是不同身份)
-    u = User(phone=body.phone, display_name=body.display_name, role="bd")
+    u = User(phone=phone, display_name=display_name, role="bd")
+    assign_default_password_if_missing(u)
     db.add(u)
     db.commit()
     return {"id": u.id}
 
 
 class BdToggleIn(BaseModel):
-    is_active: bool
+    is_active: bool | None = None
+    phone: str | None = None
+    display_name: str | None = None
 
 
 @router.patch("/bd-users/{user_id}")
-def toggle_bd(user_id: int, body: BdToggleIn,
+def update_bd(user_id: int, body: BdToggleIn,
               admin: User = Depends(current_admin), db: Session = Depends(get_db)):
     u = db.get(User, user_id)
     if not u or u.role != "bd":
         raise HTTPException(404, "商务不存在")
-    u.is_active = body.is_active
+    changed = False
+    if body.display_name is not None:
+        name = body.display_name.strip()
+        if not name:
+            raise HTTPException(400, "姓名不能为空")
+        u.display_name = name
+        changed = True
+    if body.phone is not None:
+        phone = body.phone.strip()
+        if len(phone) != 11 or not phone.startswith("1"):
+            raise HTTPException(400, "手机号格式不正确")
+        existing = db.scalars(select(User).where(User.phone == phone, User.id != user_id)).first()
+        if existing:
+            raise HTTPException(400, "该手机号已是内部账号")
+        phone_changed = phone != u.phone
+        u.phone = phone
+        if phone_changed:
+            set_default_password_for_phone(u)
+        else:
+            assign_default_password_if_missing(u)
+        changed = True
+    if body.is_active is not None:
+        u.is_active = body.is_active
+        changed = True
+    if not changed:
+        raise HTTPException(400, "没有可更新的字段")
     db.commit()
+    return {"ok": True}
+
+
+@router.delete("/bd-users/{user_id}")
+def delete_bd(user_id: int, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if not u or u.role != "bd":
+        raise HTTPException(404, "商务不存在")
+    db.delete(u)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "该商务已有达人归属或历史操作记录,不能删除;请改用禁用")
     return {"ok": True}
 
 
 @router.get("/bd-users")
 def list_bd(admin: User = Depends(current_admin), db: Session = Depends(get_db)):
-    rows = db.scalars(select(User).where(User.role == "bd")).all()
+    rows = db.scalars(select(User).where(User.role == "bd").order_by(User.id)).all()
     return [{"id": u.id, "phone": u.phone, "display_name": u.display_name,
              "is_active": u.is_active} for u in rows]

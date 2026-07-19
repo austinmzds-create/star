@@ -32,6 +32,7 @@ class ProductIn(BaseModel):
     shop_product_id: str | None = None
     link: str | None = None
     default_commission: float | None = None
+    merchant_promotion_commission: float | None = None
     selling_points: str | None = None
     shooting_notes: str | None = None
     product_image: str | None = None
@@ -42,16 +43,22 @@ class ProductIn(BaseModel):
     allow_promotion: bool | None = None
 
 
+def _normalize_commission(data: dict, key: str, label: str) -> None:
+    if data.get(key) is None:
+        return
+    if data[key] < 0 or data[key] > 100:
+        raise HTTPException(400, f"{label}需在 0-100 之间")
+    data[key] = Decimal(str(data[key]))
+
+
 @router.post("")
 def create(body: ProductIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     data = {k: v for k, v in body.model_dump().items() if v is not None}
     data["name"] = data["name"].strip()
     if not data["name"]:
         raise HTTPException(400, "产品名称不能为空")
-    if data.get("default_commission") is not None:
-        if data["default_commission"] < 0 or data["default_commission"] > 100:
-            raise HTTPException(400, "默认佣金需在 0-100 之间")
-        data["default_commission"] = Decimal(str(data["default_commission"]))
+    _normalize_commission(data, "default_commission", "自然流佣金")
+    _normalize_commission(data, "merchant_promotion_commission", "商家投流佣金")
     # 首张图集自动作封面(未单独指定封面时)
     if data.get("product_images") and not data.get("product_image"):
         data["product_image"] = data["product_images"][0]
@@ -72,16 +79,14 @@ def update_product(product_id: int, body: ProductIn,
         data["name"] = data["name"].strip()
         if not data["name"]:
             raise HTTPException(400, "产品名称不能为空")
-    if data.get("default_commission") is not None and (
-        data["default_commission"] < 0 or data["default_commission"] > 100
-    ):
-        raise HTTPException(400, "默认佣金需在 0-100 之间")
+    _normalize_commission(data, "default_commission", "自然流佣金")
+    _normalize_commission(data, "merchant_promotion_commission", "商家投流佣金")
     if data.get("product_images") and not data.get("product_image"):
         data["product_image"] = data["product_images"][0]
     for k, v in data.items():
         if v is None:
             continue
-        setattr(p, k, Decimal(str(v)) if k == "default_commission" else v)
+        setattr(p, k, v)
     db.commit()
     return {"ok": True}
 
@@ -208,7 +213,9 @@ def list_products(q: str | None = None, status: str | None = None,
         }
     items = [{"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,
               "product_image": storage.thumbnail_url(p.product_image, 96),
-              "default_commission": float(p.default_commission) if p.default_commission else None,
+              "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+              "merchant_promotion_commission": (float(p.merchant_promotion_commission)
+                                                if p.merchant_promotion_commission is not None else None),
               "status": p.status, "material_count": int(material_counts.get(p.id, 0)),
               "granted_count": int(grant_counts.get(p.id, 0)),
               "qianchuan_status": _qianchuan_status_from_row(binding_by_product.get(p.id)),
@@ -678,7 +685,9 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "product_image_original": storage.signed_url(p.product_image) if p.product_image else None,
             "product_images": [storage.thumbnail_url(k, 160) for k in (p.product_images or [])],
             "product_images_keys": list(p.product_images or []),
-            "default_commission": float(p.default_commission) if p.default_commission else None,
+            "default_commission": float(p.default_commission) if p.default_commission is not None else None,
+            "merchant_promotion_commission": (float(p.merchant_promotion_commission)
+                                              if p.merchant_promotion_commission is not None else None),
             "selling_points": p.selling_points, "shooting_notes": p.shooting_notes,
             "sample_remark": p.sample_remark, "promo_remark": p.promo_remark,
             "auto_audit_type": p.auto_audit_type, "allow_promotion": p.allow_promotion,

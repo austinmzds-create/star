@@ -28,12 +28,23 @@ def _admin_phones() -> set[str]:
 
 class PhoneIn(BaseModel):
     phone: str
+    login_role: Literal["staff", "influencer"] | None = None
 
 
 @router.post("/sms/send")
 async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
     if len(body.phone) != 11 or not body.phone.startswith("1"):
         raise HTTPException(400, "手机号格式不正确")
+    if body.login_role == "staff" and body.phone not in _admin_phones():
+        user = db.scalars(select(User).where(User.phone == body.phone)).first()
+        if not user:
+            raise HTTPException(404, "该手机号不是商务/管理员账号")
+        if not user.is_active:
+            raise HTTPException(403, "账号已停用")
+    if body.login_role == "influencer":
+        inf = db.scalars(select(Influencer).where(Influencer.phone == body.phone)).first()
+        if inf and inf.archived:
+            raise HTTPException(403, "达人已停用")
     try:
         await send_code(db, body.phone)
     except SmsError as e:
@@ -44,12 +55,16 @@ async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
 class SmsLoginIn(BaseModel):
     phone: str
     code: str
+    login_role: Literal["staff", "influencer"] | None = None
 
 
 @router.post("/sms/login")
 def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
     if not verify_code(db, body.phone, body.code):
         raise HTTPException(400, "验证码错误或已过期")
+
+    if body.login_role == "influencer":
+        return _login_influencer_by_phone(db, body.phone, create_if_missing=True)
 
     # 1) 管理员白名单:确保存在管理员账号
     if body.phone in _admin_phones():
@@ -70,13 +85,11 @@ def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
             raise HTTPException(403, "账号已停用")
         return _staff_result(user)
 
+    if body.login_role == "staff":
+        raise HTTPException(404, "该手机号不是商务/管理员账号")
+
     # 3) 达人:找或建
-    inf = db.scalars(select(Influencer).where(Influencer.phone == body.phone)).first()
-    if not inf:
-        inf = Influencer(nickname=f"达人{body.phone[-4:]}", phone=body.phone, source="h5")
-        db.add(inf)
-        db.commit()
-    return _influencer_result(inf)
+    return _login_influencer_by_phone(db, body.phone, create_if_missing=True)
 
 
 def _staff_result(user: User) -> dict:
@@ -88,6 +101,19 @@ def _influencer_result(influencer: Influencer) -> dict:
     return {"token": make_token("influencer", influencer.id), "kind": "influencer",
             "user": {"id": influencer.id, "name": influencer.nickname,
                      "role": "influencer"}}
+
+
+def _login_influencer_by_phone(db: Session, phone: str, create_if_missing: bool = False) -> dict:
+    inf = db.scalars(select(Influencer).where(Influencer.phone == phone)).first()
+    if not inf and create_if_missing:
+        inf = Influencer(nickname=f"达人{phone[-4:]}", phone=phone, source="h5")
+        db.add(inf)
+        db.commit()
+    if not inf:
+        raise HTTPException(401, "账号或密码错误")
+    if inf.archived:
+        raise HTTPException(403, "账号已停用")
+    return _influencer_result(inf)
 
 
 class DevSwitchIn(BaseModel):
@@ -132,16 +158,18 @@ def dev_switch(
 class LoginIn(BaseModel):
     username: str
     password: str
+    login_role: Literal["staff", "influencer"] | None = None
 
 
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
     is_phone = len(body.username) == 11 and body.username.startswith("1")
     user = None
-    if is_phone:
-        user = db.scalars(select(User).where(User.phone == body.username)).first()
-    if not user:
-        user = db.scalars(select(User).where(User.username == body.username)).first()
+    if body.login_role != "influencer":
+        if is_phone:
+            user = db.scalars(select(User).where(User.phone == body.username)).first()
+        if not user:
+            user = db.scalars(select(User).where(User.username == body.username)).first()
     if user:
         matched, upgraded_hash = verify_login_password(
             body.password, user.password_hash
@@ -154,6 +182,9 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
             user.password_hash = upgraded_hash
             db.commit()
         return _staff_result(user)
+    if body.login_role == "staff":
+        verify_login_password(body.password, None)
+        raise HTTPException(401, "账号或密码错误")
 
     influencer = db.scalars(
         select(Influencer)

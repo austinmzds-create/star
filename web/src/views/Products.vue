@@ -25,8 +25,13 @@
         </template>
       </el-table-column>
       <el-table-column prop="price_text" label="价格" width="90" />
-      <el-table-column label="默认佣金" width="90">
-        <template #default="{ row }">{{ row.default_commission != null ? row.default_commission + '%' : '—' }}</template>
+      <el-table-column label="佣金" width="120">
+        <template #default="{ row }">
+          <div class="commission-cell">
+            <span>自然流 {{ pct(row.default_commission) }}</span>
+            <span>商家投流 {{ pct(row.merchant_promotion_commission) }}</span>
+          </div>
+        </template>
       </el-table-column>
       <el-table-column label="素材" width="70">
         <template #default="{ row }">{{ row.material_count }}</template>
@@ -68,7 +73,8 @@
         <el-form-item label="店铺"><el-input v-model="form.shop_name" /></el-form-item>
         <el-form-item label="价格"><el-input v-model="form.price_text" placeholder="如 30起" /></el-form-item>
         <el-form-item label="抖店链接"><el-input v-model="form.link" /></el-form-item>
-        <el-form-item label="默认佣金%"><el-input-number v-model="form.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
+        <el-form-item label="自然流佣金%"><el-input-number v-model="form.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
+        <el-form-item label="商家投流佣金%"><el-input-number v-model="form.merchant_promotion_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -127,7 +133,9 @@
           <div v-else class="head-img placeholder"></div>
           <div class="head-info">
             <div class="head-name">{{ detail.name }}</div>
-            <div class="muted" style="font-size:13px">{{ detail.shop_name }} · {{ detail.price_text }} · 默认佣金 {{ detail.default_commission ?? '—' }}%</div>
+            <div class="muted" style="font-size:13px">
+              {{ detail.shop_name }} · {{ detail.price_text }} · 自然流佣金 {{ pct(detail.default_commission) }} · 商家投流佣金 {{ pct(detail.merchant_promotion_commission) }}
+            </div>
             <CopyText v-if="detail.link" :value="detail.link" style="margin-top:6px" />
           </div>
           <div style="display:flex; flex-direction:column; gap:6px">
@@ -152,7 +160,8 @@
               <el-form-item label="价格"><el-input v-model="detail.price_text" placeholder="如 30起" /></el-form-item>
               <el-form-item label="抖店商品ID"><el-input v-model="detail.shop_product_id" /></el-form-item>
               <el-form-item label="抖店链接"><el-input v-model="detail.link" /></el-form-item>
-              <el-form-item label="默认佣金%"><el-input-number v-model="detail.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
+              <el-form-item label="自然流佣金%"><el-input-number v-model="detail.default_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
+              <el-form-item label="商家投流佣金%"><el-input-number v-model="detail.merchant_promotion_commission" :min="0" :max="50" :step="0.5" /></el-form-item>
               <el-form-item label="卖点"><el-input v-model="detail.selling_points" type="textarea" :rows="2" /></el-form-item>
               <el-form-item label="拍摄要求"><el-input v-model="detail.shooting_notes" type="textarea" :rows="2" /></el-form-item>
               <el-form-item label="寄样备注"><el-input v-model="detail.sample_remark" type="textarea" :rows="2" /></el-form-item>
@@ -444,6 +453,7 @@ const qcCoopForm = reactive({ influencer_id: null, qianchuan_cooperation_id: '',
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
+const pct = (value) => (value != null ? `${value}%` : '—')
 const canSyncQianchuanCoop = computed(() => Boolean(
   qcCoopForm.influencer_id && qianchuan.can_sync_cooperation && qianchuan.qianchuan_product_id,
 ))
@@ -478,7 +488,12 @@ async function load() {
 function reload() { page.value = 1; load() }
 function onPage(p) { page.value = p; load() }
 
-function openCreate() { Object.keys(form).forEach((k) => delete form[k]); form.default_commission = 5; createVisible.value = true }
+function openCreate() {
+  Object.keys(form).forEach((k) => delete form[k])
+  form.default_commission = 5
+  form.merchant_promotion_commission = 5
+  createVisible.value = true
+}
 async function saveCreate() {
   if (!form.name) return ElMessage.warning('请填写名称')
   await api.post('/api/products', { ...form })
@@ -808,6 +823,7 @@ async function saveInfo() {
     link: detail.value.link,
     product_images: detail.value.product_images_keys || [],
     default_commission: detail.value.default_commission,
+    merchant_promotion_commission: detail.value.merchant_promotion_commission,
     selling_points: detail.value.selling_points, shooting_notes: detail.value.shooting_notes,
     sample_remark: detail.value.sample_remark, promo_remark: detail.value.promo_remark,
     auto_audit_type: detail.value.auto_audit_type, allow_promotion: detail.value.allow_promotion,
@@ -937,6 +953,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .prod-img { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; }
 .prod-img.placeholder { background: #eef0f5; }
 .prod-name { font-weight: 500; }
+.commission-cell { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #606266; line-height: 1.35; }
 .prod-head { display: flex; gap: 14px; align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #f0f1f5; }
 .head-img { width: 64px; height: 64px; border-radius: 10px; }
 .head-img.placeholder { background: #eef0f5; }

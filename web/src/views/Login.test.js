@@ -37,6 +37,11 @@ async function openPasswordLogin() {
   return wrapper
 }
 
+async function chooseInfluencerRole(wrapper) {
+  wrapper.findComponent({ name: 'ElSegmented' }).vm.$emit('update:modelValue', 'influencer')
+  await flushPromises()
+}
+
 describe('Login', () => {
   beforeEach(() => {
     mocks.post.mockReset()
@@ -59,12 +64,27 @@ describe('Login', () => {
   it('does not request password login when credentials are missing', async () => {
     const wrapper = await openPasswordLogin()
 
-    expect(wrapper.text()).toContain('管理员、商务、达人均可使用账号密码登录')
+    expect(wrapper.text()).toContain('管理员和商务从这里进入内部管理后台')
 
     await wrapper.get('[data-testid="password-submit"]').trigger('click')
 
     expect(mocks.warning).toHaveBeenCalledWith('请填写账号和密码')
     expect(mocks.post).not.toHaveBeenCalled()
+  })
+
+  it('requests SMS codes with the selected role', async () => {
+    mocks.post.mockResolvedValue({ ok: true })
+    const wrapper = mountLogin()
+    await chooseInfluencerRole(wrapper)
+    await wrapper.get('input[placeholder="手机号"]').setValue('15095037973')
+
+    await wrapper.get('.code-row .el-button').trigger('click')
+    await flushPromises()
+
+    expect(mocks.post).toHaveBeenCalledWith('/api/auth/sms/send', {
+      phone: '15095037973',
+      login_role: 'influencer',
+    })
   })
 
   it('submits staff credentials and enters the workbench', async () => {
@@ -83,6 +103,7 @@ describe('Login', () => {
     expect(mocks.post).toHaveBeenCalledWith('/api/auth/login', {
       username: 'admin',
       password: 'admin123',
+      login_role: 'staff',
     })
     expect(localStorage.getItem('token')).toBe('staff-token')
     expect(localStorage.getItem('user')).toBe(JSON.stringify({
@@ -101,6 +122,7 @@ describe('Login', () => {
       user,
     })
     const wrapper = await openPasswordLogin()
+    await chooseInfluencerRole(wrapper)
     await wrapper.get('input[placeholder="账号或手机号"]').setValue('15095037973')
     await wrapper.get('input[placeholder="密码"]').setValue('037973')
 
@@ -110,6 +132,7 @@ describe('Login', () => {
     expect(mocks.post).toHaveBeenCalledWith('/api/auth/login', {
       username: '15095037973',
       password: '037973',
+      login_role: 'influencer',
     })
     expect(localStorage.getItem('token')).toBe('influencer-token')
     expect(localStorage.getItem('h5_token')).toBe('influencer-token')
@@ -149,6 +172,7 @@ describe('Login', () => {
     expect(mocks.post).toHaveBeenCalledWith('/api/auth/login', {
       username: 'business',
       password: 'secret',
+      login_role: 'staff',
     })
   })
 })

@@ -6,6 +6,28 @@
       <el-select v-model="level" placeholder="等级" style="width: 100px" clearable @change="() => { page = 1; load() }">
         <el-option label="L1" value="L1" /><el-option label="L2" value="L2" /><el-option label="L3" value="L3" />
       </el-select>
+      <el-popover trigger="click" width="240">
+        <template #reference>
+          <el-button>列顺序</el-button>
+        </template>
+        <div class="column-sort">
+          <div
+            v-for="(col, idx) in orderedColumns"
+            :key="col.key"
+            class="column-sort-row"
+            draggable="true"
+            @dragstart="dragColumnIdx = idx"
+            @dragover.prevent
+            @drop.prevent="dropColumn(idx)"
+          >
+            <span class="drag-handle">☰</span>
+            <span>{{ col.label }}</span>
+          </div>
+          <div class="column-sort-actions">
+            <el-button size="small" text @click="resetColumnOrder">恢复默认</el-button>
+          </div>
+        </div>
+      </el-popover>
       <el-button @click="importVisible = true">Excel 导入</el-button>
       <el-button type="primary" @click="showPaste = true">+ 粘贴录入达人</el-button>
       <el-tag v-if="ownerBdId" closable type="warning" @close="clearOwnerFilter">
@@ -14,32 +36,29 @@
     </div>
 
     <el-table :data="rows" v-loading="loading" @row-click="(r) => $router.push(`/influencers/${r.id}`)" style="cursor: pointer">
-      <el-table-column prop="nickname" label="昵称" />
-      <el-table-column prop="douyin_id" label="抖音号" />
-      <el-table-column label="粉丝" width="90">
-        <template #default="{ row }">{{ row.fans_count != null ? num(row.fans_count) : '—' }}</template>
-      </el-table-column>
-      <el-table-column label="GMV" width="90">
-        <template #default="{ row }">{{ row.gmv_30d != null ? num(row.gmv_30d) : '—' }}</template>
-      </el-table-column>
-      <el-table-column label="数据来源" width="120">
-        <template #default="{ row }">{{ row.data_source || (row.source === 'import' ? '导入' : row.source) || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="等级" width="70">
-        <template #default="{ row }"><el-tag>{{ row.level }}</el-tag></template>
-      </el-table-column>
-      <el-table-column label="佣金" width="70">
-        <template #default="{ row }">{{ row.commission_tier }}%</template>
-      </el-table-column>
-      <el-table-column label="标签" width="150">
+      <el-table-column
+        v-for="col in orderedColumns"
+        :key="col.key"
+        :label="col.label"
+        :width="col.width"
+        :min-width="col.minWidth"
+      >
         <template #default="{ row }">
-          <el-tag v-for="t in (row.tags || [])" :key="t" size="small" type="info" style="margin-right: 4px">{{ t }}</el-tag>
+          <span v-if="col.key === 'nickname'">{{ row.nickname || '—' }}</span>
+          <span v-else-if="col.key === 'douyin_id'">{{ row.douyin_id || '—' }}</span>
+          <span v-else-if="col.key === 'fans_count'">{{ row.fans_count != null ? num(row.fans_count) : '—' }}</span>
+          <span v-else-if="col.key === 'gmv_30d'">{{ row.gmv_30d != null ? num(row.gmv_30d) : '—' }}</span>
+          <span v-else-if="col.key === 'data_source'">{{ row.data_source || (row.source === 'import' ? '导入' : row.source) || '—' }}</span>
+          <el-tag v-else-if="col.key === 'level'">{{ row.level }}</el-tag>
+          <span v-else-if="col.key === 'commission_tier'">{{ row.commission_tier }}%</span>
+          <template v-else-if="col.key === 'tags'">
+            <el-tag v-for="t in (row.tags || [])" :key="t" size="small" type="info" style="margin-right: 4px">{{ t }}</el-tag>
+            <span v-if="!(row.tags || []).length">—</span>
+          </template>
+          <span v-else-if="col.key === 'owner_bd_name'">{{ row.owner_bd_name || '—' }}</span>
+          <span v-else-if="col.key === 'round_count'">{{ row.round_count ?? 0 }}</span>
+          <span v-else-if="col.key === 'updated_at'">{{ fmtDate(row.updated_at) }}</span>
         </template>
-      </el-table-column>
-      <el-table-column prop="owner_bd_name" label="归属商务" width="100" />
-      <el-table-column prop="round_count" label="轮次" width="70" />
-      <el-table-column label="更新" width="110">
-        <template #default="{ row }">{{ fmtDate(row.updated_at) }}</template>
       </el-table-column>
       <el-table-column v-if="!isAdmin" label="操作" width="100">
         <template #default="{ row }">
@@ -188,6 +207,21 @@ const FIELDS = [
   { key: 'fans_count', label: '粉丝数' },
 ]
 
+const DEFAULT_COLUMNS = [
+  { key: 'nickname', label: '昵称', minWidth: 120 },
+  { key: 'douyin_id', label: '抖音号', minWidth: 120 },
+  { key: 'fans_count', label: '粉丝', width: 90 },
+  { key: 'gmv_30d', label: 'GMV', width: 90 },
+  { key: 'data_source', label: '数据来源', width: 120 },
+  { key: 'level', label: '等级', width: 70 },
+  { key: 'commission_tier', label: '佣金', width: 70 },
+  { key: 'tags', label: '标签', width: 150 },
+  { key: 'owner_bd_name', label: '归属商务', width: 100 },
+  { key: 'round_count', label: '轮次', width: 70 },
+  { key: 'updated_at', label: '更新', width: 110 },
+]
+const DEFAULT_COLUMN_KEYS = DEFAULT_COLUMNS.map((c) => c.key)
+
 const MODES = [
   { label: '粘贴识别', value: 'paste' },
   { label: '手动填写', value: 'manual' },
@@ -222,6 +256,16 @@ const importFile = ref(null)
 const importFileList = ref([])
 const importing = ref(false)
 const importResult = ref(null)
+const columnOrder = ref([...DEFAULT_COLUMN_KEYS])
+const dragColumnIdx = ref(null)
+const orderedColumns = computed(() => {
+  const known = new Set(DEFAULT_COLUMN_KEYS)
+  const keys = [
+    ...columnOrder.value.filter((key) => known.has(key)),
+    ...DEFAULT_COLUMN_KEYS.filter((key) => !columnOrder.value.includes(key)),
+  ]
+  return keys.map((key) => DEFAULT_COLUMNS.find((col) => col.key === key))
+})
 
 const duplicate = computed(() => parsed.value?.duplicate || null)
 const duplicateOwnedByOther = computed(() => Boolean(duplicate.value?.owned_by_other_bd))
@@ -305,6 +349,43 @@ function clearOwnerFilter() {
   router.replace({ path: '/influencers' })
   page.value = 1
   load()
+}
+
+async function loadColumnOrder() {
+  try {
+    const r = await api.get('/api/preferences/influencer_columns')
+    const saved = r.value?.columns
+    if (Array.isArray(saved) && saved.length) {
+      columnOrder.value = [
+        ...saved.filter((key) => DEFAULT_COLUMN_KEYS.includes(key)),
+        ...DEFAULT_COLUMN_KEYS.filter((key) => !saved.includes(key)),
+      ]
+    }
+  } catch (e) { /* 偏好失败不影响达人库主流程 */ }
+}
+
+async function saveColumnOrder() {
+  try {
+    await api.put('/api/preferences/influencer_columns', { value: { columns: columnOrder.value } })
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '列顺序保存失败')
+  }
+}
+
+function dropColumn(targetIdx) {
+  const from = dragColumnIdx.value
+  dragColumnIdx.value = null
+  if (from == null || from === targetIdx) return
+  const next = [...orderedColumns.value.map((col) => col.key)]
+  const [moved] = next.splice(from, 1)
+  next.splice(targetIdx, 0, moved)
+  columnOrder.value = next
+  saveColumnOrder()
+}
+
+function resetColumnOrder() {
+  columnOrder.value = [...DEFAULT_COLUMN_KEYS]
+  saveColumnOrder()
 }
 
 async function doParse() {
@@ -397,11 +478,19 @@ async function doImport() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  loadColumnOrder()
+  load()
+})
 </script>
 
 <style scoped>
 .toolbar { display: flex; gap: 12px; margin-bottom: 16px; }
+.column-sort { display: flex; flex-direction: column; gap: 6px; }
+.column-sort-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #ebeef5; border-radius: 6px; cursor: grab; background: #fff; }
+.column-sort-row:active { cursor: grabbing; }
+.drag-handle { color: #a8abb2; font-size: 13px; }
+.column-sort-actions { display: flex; justify-content: flex-end; padding-top: 4px; }
 .low-conf :deep(.el-input__wrapper) { background: #fdf6ec; } /* LLM 低置信度标黄待确认 */
 .import-actions { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .upload-text { color: #606266; font-size: 13px; }

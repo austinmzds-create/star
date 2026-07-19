@@ -177,6 +177,7 @@ class Product(Base, TimestampMixin):
     shop_product_id: Mapped[str | None] = mapped_column(String(64))  # 抖店商品ID
     link: Mapped[str | None] = mapped_column(String(512))
     default_commission: Mapped[Numeric | None] = mapped_column(Numeric(5, 2))
+    merchant_promotion_commission: Mapped[Numeric | None] = mapped_column(Numeric(5, 2))
     status: Mapped[str] = mapped_column(String(16), default="on")    # on上架 / off下架
     selling_points: Mapped[str | None] = mapped_column(Text)         # 卖点文案
     shooting_notes: Mapped[str | None] = mapped_column(Text)         # 拍摄要求

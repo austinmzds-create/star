@@ -5,8 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from .api import (admin_config, auth, block_records, connection_requests,
-                  dashboard, followups, h5, influencers, products, qianchuan,
-                  samples, uploads, videos)
+                  dashboard, followups, h5, influencers, preferences,
+                  products, qianchuan, samples, uploads, videos)
 from .config import settings
 from .db import Base, SessionLocal, engine, ensure_columns
 from .models import RejectReason, User
@@ -28,6 +28,7 @@ app.add_middleware(
 
 for r in (auth.router, influencers.router, samples.router, samples.webhook_router,
           products.router, qianchuan.router, dashboard.router, h5.router, admin_config.router,
+          preferences.router,
           followups.router, uploads.router,
           block_records.router, block_records.h5_router,
           videos.router, videos.promotion_router, connection_requests.router):

@@ -6,6 +6,7 @@
         <h2>达人管理平台</h2>
         <p class="sub">手机号验证码或账号密码登录</p>
       </div>
+      <el-segmented v-model="loginRole" :options="ROLE_OPTIONS" block class="role-select" />
       <el-tabs v-model="activeMode" stretch class="login-tabs">
         <el-tab-pane label="手机号登录" name="phone">
           <el-input
@@ -36,7 +37,7 @@
           >
             登录
           </el-button>
-          <p class="hint">管理员、商务、达人均可使用，身份自动识别</p>
+          <p class="hint">{{ roleHint }}</p>
         </el-tab-pane>
         <el-tab-pane name="password">
           <template #label>
@@ -68,7 +69,7 @@
           >
             登录
           </el-button>
-          <p class="hint">管理员、商务、达人均可使用账号密码登录</p>
+          <p class="hint">{{ roleHint }}</p>
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -77,7 +78,7 @@
 
 <script setup>
 import { ElMessage } from 'element-plus'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { applyRoleSession } from '../test-role-session'
@@ -90,12 +91,22 @@ const activeMode = ref('phone')
 const username = ref('')
 const password = ref('')
 const passwordLoading = ref(false)
+const loginRole = ref('staff')
 const router = useRouter()
+const ROLE_OPTIONS = [
+  { label: '商务/管理员', value: 'staff' },
+  { label: '达人', value: 'influencer' },
+]
+const roleHint = computed(() => (
+  loginRole.value === 'staff'
+    ? '管理员和商务从这里进入内部管理后台'
+    : '达人从这里进入自己的产品资料中心'
+))
 
 async function send() {
   if (phone.value.length !== 11) return ElMessage.warning('请输入11位手机号')
   try {
-    await api.post('/api/auth/sms/send', { phone: phone.value })
+    await api.post('/api/auth/sms/send', { phone: phone.value, login_role: loginRole.value })
     ElMessage.success('验证码已发送')
     cd.value = 60
     const t = setInterval(() => { if (--cd.value <= 0) clearInterval(t) }, 1000)
@@ -108,7 +119,11 @@ async function login() {
   if (!phone.value || !code.value) return ElMessage.warning('请填写手机号和验证码')
   loading.value = true
   try {
-    const data = await api.post('/api/auth/sms/login', { phone: phone.value, code: code.value })
+    const data = await api.post('/api/auth/sms/login', {
+      phone: phone.value,
+      code: code.value,
+      login_role: loginRole.value,
+    })
     router.push(applyRoleSession(data))
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '登录失败')
@@ -126,6 +141,7 @@ async function passwordLogin() {
     const data = await api.post('/api/auth/login', {
       username: username.value,
       password: password.value,
+      login_role: loginRole.value,
     })
     await router.push(applyRoleSession(data))
   } catch (e) {
@@ -153,6 +169,7 @@ async function passwordLogin() {
 }
 .brand h2 { margin: 0; font-size: 20px; color: #1f2637; }
 .sub { margin: 6px 0 0; color: #8a93a6; font-size: 13px; }
+.role-select { margin: -8px 0 14px; }
 .login-tabs { margin-top: -4px; }
 .fld { margin-bottom: 12px; }
 .password-field { margin-bottom: 20px; }

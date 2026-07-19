@@ -8,7 +8,8 @@
         <div class="pname">{{ p.name }}</div>
         <div class="pmeta">
           <span v-if="p.price_text" class="price">{{ p.price_text }}</span>
-          <span v-if="p.default_commission != null" class="comm">佣金 {{ p.default_commission }}%</span>
+          <span v-if="p.default_commission != null" class="comm">自然流 {{ p.default_commission }}%</span>
+          <span v-if="p.merchant_promotion_commission != null" class="comm">投流 {{ p.merchant_promotion_commission }}%</span>
         </div>
         <div v-if="p.selling_points" class="pdesc">{{ p.selling_points }}</div>
       </div>
@@ -40,7 +41,7 @@ onMounted(() => { if (!h5store.loaded) loadH5() })
 .pimg.placeholder { background: #eef0f5; }
 .pmain { min-width: 0; flex: 1; }
 .pname { font-size: 16px; font-weight: 700; color: #1f2430; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pmeta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; }
+.pmeta { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 13px; flex-wrap: wrap; }
 .pmeta .price { color: #f56c6c; font-weight: 700; }
 .pmeta .comm { color: #2f9f5b; font-weight: 600; }
 .pdesc { margin-top: 6px; color: #6c7485; font-size: 12px; line-height: 1.45;
