@@ -265,7 +265,7 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
 
     def _asset(a):
         return {"id": a.id, "type": a.type,
-                "url": storage.signed_url(a.oss_key) if a.oss_key else a.source_link,
+                "url": storage.public_or_signed_url(a.oss_key) if a.oss_key else a.source_link,
                 "thumb": storage.thumbnail_url(a.oss_key, 200) if (a.type == "image" and a.oss_key) else None,
                 "filename": a.filename, "source_link": a.source_link}
 
@@ -285,7 +285,7 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
                                 "assets": [_asset(a) for a in post.assets]}
                                for post in posts],
             "materials": [{"id": m.id, "type": m.type, "title": m.title,
-                           "url": storage.signed_url(m.oss_key) if m.oss_key else None,
+                           "url": storage.public_or_signed_url(m.oss_key) if m.oss_key else None,
                            "source_link": m.source_link, "parsed_text": m.parsed_text,
                            "report_id": m.report_id, "downloadable": m.downloadable}
                           for m in materials]}
@@ -317,4 +317,4 @@ def log_download(material_id: int, inf: Influencer = Depends(current_influencer)
     _assert_granted(db, inf.id, m.product_id)  # 关键:必须授权
     db.add(MaterialDownloadLog(material_id=material_id, influencer_id=inf.id))
     db.commit()
-    return {"url": storage.signed_url(m.oss_key)}
+    return {"url": storage.public_or_signed_url(m.oss_key)}

@@ -34,12 +34,13 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
     if not storage.use_oss():
         return {"enabled": False}
     key = storage.make_key(body.filename, body.prefix)
+    public_url = storage.public_object_url(key)
     return {
         "enabled": True,
         "key": key,
-        "upload_url": storage.public_object_url(key),
+        "upload_url": public_url,
         "content_type": body.content_type or storage.content_type(body.filename),
-        "url": storage.signed_url(key),
+        "url": public_url,
     }
 
 

@@ -1,4 +1,4 @@
-const DIRECT_CONFIRM_TIMEOUT_MS = 10000
+const DIRECT_CONFIRM_INTERVAL_MS = 10000
 
 async function verifyDirectObject(ticket) {
   try {
@@ -20,26 +20,24 @@ function putFileToOss(ticket, file, onProgress) {
     const finish = (fn, value) => {
       if (settled) return
       settled = true
-      if (confirmTimer) clearTimeout(confirmTimer)
+      if (confirmTimer) clearInterval(confirmTimer)
       fn(value)
     }
     const startConfirmTimer = () => {
       if (confirmTimer) return
       onProgress?.(100, 'confirming')
-      confirmTimer = setTimeout(async () => {
+      confirmTimer = setInterval(async () => {
         if (settled) return
         if (await verifyDirectObject(ticket)) {
           finish(resolve)
           xhr.abort()
-        } else {
-          xhr.abort()
-          finish(reject, new Error('OSS upload confirmation timeout'))
         }
-      }, DIRECT_CONFIRM_TIMEOUT_MS)
+      }, DIRECT_CONFIRM_INTERVAL_MS)
     }
     xhr.open('PUT', ticket.upload_url)
     xhr.timeout = 5 * 60 * 1000
     xhr.setRequestHeader('Content-Type', ticket.content_type || file.type || 'application/octet-stream')
+    xhr.setRequestHeader('Content-Disposition', 'inline')
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
         const percent = Math.round((event.loaded / event.total) * 100)
@@ -87,9 +85,16 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
         await putFileToOss(ticket, file, onProgress)
         return { key: ticket.key, url: ticket.url, direct: true }
       }
-    } catch {
-      // 直传可能被本地浏览器 CORS 拦住;自动回退后端中转,不打断业务录入。
-      onProgress?.(0, 'fallback')
+      if (options.allowBackendFallback) {
+        return await uploadViaBackend(api, file, onProgress)
+      }
+      throw new Error('OSS 直传未启用,请检查存储配置')
+    } catch (error) {
+      if (options.allowBackendFallback) {
+        onProgress?.(0, 'fallback')
+        return await uploadViaBackend(api, file, onProgress)
+      }
+      throw error
     }
   }
   return await uploadViaBackend(api, file, onProgress)

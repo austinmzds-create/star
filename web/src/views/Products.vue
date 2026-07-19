@@ -459,7 +459,6 @@ const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
 const pct = (value) => (value != null ? `${value}%` : '—')
 const uploadStatusText = computed(() => {
   if (matUploadStage.value === 'confirming') return '已传完，正在确认...'
-  if (matUploadStage.value === 'fallback') return '直传确认慢，正在切换后端上传...'
   if (matUploadStage.value === 'backend') return `后端上传中 ${matProgress.value}%`
   if (matUploadStage.value === 'backend_confirming') return '已传完，正在保存...'
   return `上传中 ${matProgress.value}%`
@@ -739,7 +738,7 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
     return uploaded
   } catch (error) {
     if (!target.oss_key) target.file_name = ''
-    ElMessage.error(error.response?.data?.detail || '文件上传失败')
+    ElMessage.error(error.response?.data?.detail || error.message || 'OSS 直传失败,请检查网络或存储配置')
     return null
   } finally {
     matUploading.value = false

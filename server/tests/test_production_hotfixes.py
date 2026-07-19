@@ -53,6 +53,16 @@ def test_non_image_thumbnail_falls_back_to_signed_file_url(monkeypatch):
     assert url.startswith("/api/files/materials/demo.pdf?")
 
 
+def test_oss_material_preview_uses_public_object_url(monkeypatch):
+    monkeypatch.setattr(storage, "use_oss", lambda: True)
+    monkeypatch.setattr(settings, "oss_endpoint", "oss-cn-shanghai.aliyuncs.com")
+    monkeypatch.setattr(settings, "oss_bucket", "viceo-public")
+
+    url = storage.public_or_signed_url("materials/demo video.mp4")
+
+    assert url == "https://viceo-public.oss-cn-shanghai.aliyuncs.com/materials/demo%20video.mp4"
+
+
 def test_kd100_missing_config_returns_actionable_result(monkeypatch):
     monkeypatch.setattr(settings, "kd100_key", "")
     monkeypatch.setattr(settings, "kd100_customer", "")

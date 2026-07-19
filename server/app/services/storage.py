@@ -4,8 +4,8 @@
 - 配了 OSS_ACCESS_KEY_ID/SECRET → 用 AK/SK(推荐,可签名私有下载)
 - 只配 endpoint+bucket(公共读写 bucket)→ 匿名上传,读取走公共 URL
 
-未配 OSS 时存到 server/_uploads/。signed_url() 统一返回 /api/files/{key},
-由后端代理本地或 OSS 文件,确保浏览器内联预览。
+未配 OSS 时存到 server/_uploads/。素材预览在 OSS 开启时直接返回公共读 URL,
+避免大视频经后端代理占用服务器带宽；本地兜底仍走签名代理。
 """
 import hashlib
 import hmac
@@ -154,6 +154,13 @@ def signed_url(key: str, expires: int = 86400) -> str:
     # 图片/video 标签会碎图或不可内联预览；代理层可稳定返回 inline。
     exp = _stable_exp(expires)
     return f"/api/files/{quote(key, safe='/')}?e={exp}&s={_sign_local(key, exp)}"
+
+
+def public_or_signed_url(key: str, expires: int = 86400) -> str:
+    """素材预览地址:OSS 开启时让浏览器直连 OSS,本地环境走后端签名代理。"""
+    if use_oss():
+        return public_object_url(key)
+    return signed_url(key, expires)
 
 
 def thumbnail_url(key: str | None, size: int = 160, expires: int = 86400) -> str | None:
