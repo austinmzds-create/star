@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { flushPromises, mount } from '@vue/test-utils'
-import { h, nextTick } from 'vue'
+import { nextTick } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 
 import MultiUpload from './MultiUpload.vue'
@@ -12,16 +12,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../api', () => ({ default: { post: mocks.post } }))
 vi.mock('element-plus', () => ({ ElMessage: { success: mocks.success } }))
-
-const ElUploadStub = {
-  props: ['httpRequest'],
-  setup(props) {
-    return () => h('button', {
-      'data-testid': 'upload',
-      onClick: () => props.httpRequest({ file: new File(['new'], 'new.jpg') }),
-    }, '上传')
-  },
-}
 
 describe('MultiUpload', () => {
   it('keeps a newly uploaded signed preview when the parent mapping has an empty URL', async () => {
@@ -45,11 +35,16 @@ describe('MultiUpload', () => {
         },
       },
       global: {
-        stubs: { ElUpload: ElUploadStub, ElIcon: true },
+        stubs: { ElIcon: true },
       },
     })
 
-    await wrapper.get('[data-testid="upload"]').trigger('click')
+    const input = wrapper.get('input[type="file"]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['new'], 'new.jpg')],
+      configurable: true,
+    })
+    await input.trigger('change')
     await flushPromises()
     await nextTick()
 
