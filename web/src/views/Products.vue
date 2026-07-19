@@ -105,6 +105,7 @@
             <el-button size="small" :loading="matUploading" @click="triggerEditFile">
               {{ matEdit.oss_key ? '替换文件' : '上传文件' }}
             </el-button>
+            <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
             <el-button v-if="matEdit.oss_key" size="small" text type="danger" @click="clearEditFile">移除文件</el-button>
           </div>
@@ -356,7 +357,7 @@
             <el-button size="small" :loading="matUploading" @click="triggerUploadFile">
               {{ uploadForm.oss_key ? '重新上传文件' : '选择文件上传' }}
             </el-button>
-            <span v-if="matUploading" class="muted upload-progress">上传中 {{ matProgress }}%</span>
+            <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <template v-if="uploadForm.oss_key">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
               <el-button size="small" text type="danger" @click="clearUploadFile">移除</el-button>
@@ -431,6 +432,7 @@ const dtab = ref('info')
 const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
+const matUploadStage = ref('')
 const uploadFileInput = ref(null)
 const editFileInput = ref(null)
 const grants = ref([])
@@ -454,6 +456,13 @@ const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
 const pct = (value) => (value != null ? `${value}%` : '—')
+const uploadStatusText = computed(() => {
+  if (matUploadStage.value === 'confirming') return '已传完，正在确认...'
+  if (matUploadStage.value === 'fallback') return '直传确认慢，正在切换后端上传...'
+  if (matUploadStage.value === 'backend') return `后端上传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'backend_confirming') return '已传完，正在保存...'
+  return `上传中 ${matProgress.value}%`
+})
 const canSyncQianchuanCoop = computed(() => Boolean(
   qcCoopForm.influencer_id && qianchuan.can_sync_cooperation && qianchuan.qianchuan_product_id,
 ))
@@ -712,21 +721,28 @@ function triggerEditFile() {
 async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   matUploading.value = true
   matProgress.value = 0
+  matUploadStage.value = 'uploading'
+  const displayName = file.name || '已选择文件'
+  target.file_name = displayName
+  if (syncTitle) target.title = displayName
   try {
-    const uploaded = await uploadMaterialFile(api, file, (percent) => {
+    const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
       matProgress.value = percent
+      matUploadStage.value = stage || 'uploading'
     }, { direct: true })
     target.oss_key = uploaded.key
-    target.file_name = file.name || '已上传文件'
-    if (syncTitle) target.title = file.name || '已上传文件'
+    target.file_name = displayName
+    if (syncTitle) target.title = displayName
     if ('url' in target) target.url = uploaded.url
     ElMessage.success('文件已上传')
     return uploaded
   } catch (error) {
+    if (!target.oss_key) target.file_name = ''
     ElMessage.error(error.response?.data?.detail || '文件上传失败')
     return null
   } finally {
     matUploading.value = false
+    matUploadStage.value = ''
   }
 }
 

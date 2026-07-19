@@ -1,20 +1,61 @@
+const DIRECT_CONFIRM_TIMEOUT_MS = 10000
+
+async function verifyDirectObject(ticket) {
+  try {
+    const resp = await fetch(ticket.upload_url, {
+      method: 'HEAD',
+      cache: 'no-store',
+    })
+    return resp.ok
+  } catch {
+    return false
+  }
+}
+
 function putFileToOss(ticket, file, onProgress) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
+    let settled = false
+    let confirmTimer = null
+    const finish = (fn, value) => {
+      if (settled) return
+      settled = true
+      if (confirmTimer) clearTimeout(confirmTimer)
+      fn(value)
+    }
+    const startConfirmTimer = () => {
+      if (confirmTimer) return
+      onProgress?.(100, 'confirming')
+      confirmTimer = setTimeout(async () => {
+        if (settled) return
+        if (await verifyDirectObject(ticket)) {
+          finish(resolve)
+          xhr.abort()
+        } else {
+          xhr.abort()
+          finish(reject, new Error('OSS upload confirmation timeout'))
+        }
+      }, DIRECT_CONFIRM_TIMEOUT_MS)
+    }
     xhr.open('PUT', ticket.upload_url)
     xhr.timeout = 5 * 60 * 1000
     xhr.setRequestHeader('Content-Type', ticket.content_type || file.type || 'application/octet-stream')
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
+        const percent = Math.round((event.loaded / event.total) * 100)
+        onProgress(percent, percent >= 100 ? 'confirming' : 'uploading')
+        if (percent >= 100) startConfirmTimer()
       }
     }
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve()
-      else reject(new Error(`OSS upload failed: ${xhr.status}`))
+      if (xhr.status >= 200 && xhr.status < 300) finish(resolve)
+      else finish(reject, new Error(`OSS upload failed: ${xhr.status}`))
     }
-    xhr.onerror = () => reject(new Error('OSS upload failed'))
-    xhr.ontimeout = () => reject(new Error('OSS upload timeout'))
+    xhr.onerror = () => finish(reject, new Error('OSS upload failed'))
+    xhr.ontimeout = () => finish(reject, new Error('OSS upload timeout'))
+    xhr.onabort = () => {
+      if (!settled) finish(reject, new Error('OSS upload aborted'))
+    }
     xhr.send(file)
   })
 }
@@ -27,7 +68,8 @@ async function uploadViaBackend(api, file, onProgress) {
     skipBadgeRefresh: true,
     onUploadProgress: (event) => {
       if (event.total && onProgress) {
-        onProgress(Math.round((event.loaded / event.total) * 100))
+        const percent = Math.round((event.loaded / event.total) * 100)
+        onProgress(percent, percent >= 100 ? 'backend_confirming' : 'backend')
       }
     },
   })
@@ -47,6 +89,7 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
       }
     } catch {
       // 直传可能被本地浏览器 CORS 拦住;自动回退后端中转,不打断业务录入。
+      onProgress?.(0, 'fallback')
     }
   }
   return await uploadViaBackend(api, file, onProgress)
