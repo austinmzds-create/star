@@ -10,7 +10,9 @@
       <el-table-column label="产品" min-width="260">
         <template #default="{ row }">
           <div class="prod-cell">
-            <el-image v-if="row.product_image" :src="row.product_image" fit="cover" class="prod-img" />
+            <el-image v-if="row.product_image" :src="row.product_image" fit="cover" class="prod-img">
+              <template #error><div class="prod-img placeholder broken" title="图片失效,请重新上传">失效</div></template>
+            </el-image>
             <div v-else class="prod-img placeholder"></div>
             <span class="prod-name">{{ row.name }}</span>
           </div>
@@ -132,7 +134,9 @@
       <template v-else-if="detail">
         <!-- 商品卡 -->
         <div class="prod-head">
-          <el-image v-if="detail.product_image" :src="detail.product_image" fit="cover" class="head-img" />
+          <el-image v-if="detail.product_image" :src="detail.product_image" fit="cover" class="head-img">
+            <template #error><div class="head-img placeholder broken" title="图片失效,请重新上传">失效</div></template>
+          </el-image>
           <div v-else class="head-img placeholder"></div>
           <div class="head-info">
             <div class="head-name">{{ detail.name }}</div>
@@ -362,10 +366,17 @@
                 type="file" :accept="acceptOf(uploadForm.type)" @change="handleUploadFileChange" />
             </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
-            <template v-if="uploadForm.oss_key">
+            <template v-if="uploadForm.oss_key && !matUploading">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
               <el-button size="small" text type="danger" @click="clearUploadFile">移除</el-button>
             </template>
+          </div>
+          <!-- 回显:上传成功后预览,确认无误再点「添加」入库 -->
+          <div v-if="uploadForm.oss_key && !matUploading" class="upload-preview">
+            <el-image v-if="uploadIsImage" :src="uploadForm.url" fit="contain" class="up-img"
+              :preview-src-list="[uploadForm.url]" preview-teleported />
+            <video v-else-if="uploadIsVideo && uploadForm.url" :src="uploadForm.url" class="up-video" controls preload="metadata" />
+            <a v-else :href="uploadForm.url" target="_blank" class="up-file">已上传:{{ uploadForm.file_name }}</a>
           </div>
         </el-form-item>
         <el-form-item v-if="uploadForm.type === 'video_hot'" label="链接">
@@ -622,21 +633,19 @@ const uploadForm = reactive({
   type: 'video_ai',
   oss_key: '',
   file_name: '',
+  url: '',            // 上传成功后的内联预览地址(回显用)
   source_link: '',
   parsed_text: '',
   report_id: '',
 })
 const materialCount = computed(() => (detail.value?.materials || []).length)
+const UPLOAD_FORM_BLANK = { type: 'video_ai', oss_key: '', file_name: '', url: '', source_link: '', parsed_text: '', report_id: '' }
+// 图片/视频类型 → 回显时用对应预览控件
+const uploadIsImage = computed(() => uploadForm.type === 'image')
+const uploadIsVideo = computed(() => ['video_ai', 'video_hot', 'video_output'].includes(uploadForm.type))
 
 function openUpload() {
-  Object.assign(uploadForm, {
-    type: mtype.value || 'video_ai',
-    oss_key: '',
-    file_name: '',
-    source_link: '',
-    parsed_text: '',
-    report_id: '',
-  })
+  Object.assign(uploadForm, { ...UPLOAD_FORM_BLANK, type: mtype.value || 'video_ai' })
   uploadVisible.value = true
 }
 
@@ -651,6 +660,7 @@ function hasMaterialContent(form) {
 function clearUploadFile() {
   uploadForm.oss_key = ''
   uploadForm.file_name = ''
+  uploadForm.url = ''
   if (uploadFileInput.value) uploadFileInput.value.value = ''
 }
 
@@ -747,10 +757,8 @@ async function handleUploadFileChange(event) {
   const file = event.target.files?.[0]
   event.target.value = ''
   if (!file) return
-  const uploaded = await uploadSelectedFile(file, uploadForm)
-  if (uploaded && uploadVisible.value) {
-    await addMaterial({ autoFromUpload: true })
-  }
+  // 只上传 + 回显,不自动保存;用户核对(可再填说明文案)后点「添加」入库
+  await uploadSelectedFile(file, uploadForm, { syncTitle: true })
 }
 
 async function addMaterial(options = {}) {
@@ -978,6 +986,8 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .prod-cell { display: flex; align-items: center; gap: 10px; }
 .prod-img { width: 40px; height: 40px; border-radius: 8px; flex-shrink: 0; }
 .prod-img.placeholder { background: #eef0f5; }
+.prod-img.broken, .head-img.broken { display: flex; align-items: center; justify-content: center;
+  background: #f7f8fa; color: #b3392f; font-size: 11px; }
 .prod-name { font-weight: 500; }
 .commission-cell { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #606266; line-height: 1.35; }
 .prod-head { display: flex; gap: 14px; align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #f0f1f5; }
@@ -1001,6 +1011,10 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
   font-size: 0;
 }
 .upload-file-box, .file-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.upload-preview { margin-top: 10px; }
+.upload-preview .up-img { max-width: 220px; max-height: 160px; border-radius: 8px; border: 1px solid #eef0f5; }
+.upload-preview .up-video { max-width: 320px; max-height: 200px; border-radius: 8px; background: #000; }
+.upload-preview .up-file { font-size: 13px; color: #6b5cf6; }
 .file-name, .material-file-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-name { max-width: 230px; }
 .material-file-name { max-width: 360px; }

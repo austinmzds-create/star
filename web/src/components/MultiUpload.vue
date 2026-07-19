@@ -2,7 +2,8 @@
 <template>
   <div class="multi-upload">
     <div v-for="(k, i) in keys" :key="k" class="thumb">
-      <img :src="urlOf(k)" />
+      <img v-if="!failed[k]" :src="urlOf(k)" @error="failed[k] = true" />
+      <div v-else class="thumb-broken" title="图片已失效,请重新上传">图片失效<br>请重传</div>
       <el-icon class="del" @click="remove(i)"><Close /></el-icon>
     </div>
     <!-- 上传中:占位显示进度;空闲:透明原生 input 盖在「+」上,点击直接弹出选择框 -->
@@ -46,6 +47,7 @@ const urlOf = (k) => previews[k] || `/api/files/${k}`
 
 const uploading = ref(false)
 const uploadProgress = ref(0)
+const failed = reactive({})   // 加载失败(如旧的 0 字节图)的 key,显示占位而不是碎图
 
 async function onPick(event) {
   const file = event.target.files?.[0]
@@ -79,6 +81,8 @@ function remove(i) {
 .multi-upload { display: flex; flex-wrap: wrap; gap: 8px; }
 .thumb { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; border: 1px solid #eceef3; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.thumb-broken { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; background: #f7f8fa; color: #b3392f; font-size: 11px; line-height: 1.4; text-align: center; }
 .del {
   position: absolute; top: 2px; right: 2px; background: rgba(0, 0, 0, 0.5);
   color: #fff; border-radius: 50%; padding: 2px; cursor: pointer; font-size: 12px;
