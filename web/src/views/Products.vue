@@ -100,11 +100,12 @@
       <el-form label-width="80px">
         <el-form-item v-if="matEdit.type !== 'copy'" label="文件">
           <div class="file-edit-row">
-            <input ref="editFileInput" class="native-file-input" type="file"
-              :accept="acceptOf(matEdit.type)" @change="handleEditFileChange" />
-            <el-button size="small" :loading="matUploading" @click="triggerEditFile">
-              {{ matEdit.oss_key ? '替换文件' : '上传文件' }}
-            </el-button>
+            <input :id="editFileInputId" ref="editFileInput" class="native-file-input" type="file"
+              :accept="acceptOf(matEdit.type)" :disabled="matUploading" @change="handleEditFileChange" />
+            <label class="el-button el-button--small file-pick-button"
+              :class="{ 'is-disabled': matUploading }" :aria-disabled="matUploading" :for="editFileInputId">
+              <span>{{ matUploading ? '上传中...' : (matEdit.oss_key ? '替换文件' : '上传文件') }}</span>
+            </label>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <span v-if="matEdit.title || matEdit.oss_key" class="muted file-name">{{ matEdit.title || '已上传文件' }}</span>
             <el-button v-if="matEdit.oss_key" size="small" text type="danger" @click="clearEditFile">移除文件</el-button>
@@ -352,11 +353,12 @@
         </el-form-item>
         <el-form-item v-if="uploadForm.type !== 'copy'" label="文件">
           <div class="upload-file-box">
-            <input ref="uploadFileInput" class="native-file-input" type="file"
-              :accept="acceptOf(uploadForm.type)" @change="handleUploadFileChange" />
-            <el-button size="small" :loading="matUploading" @click="triggerUploadFile">
-              {{ uploadForm.oss_key ? '重新上传文件' : '选择文件上传' }}
-            </el-button>
+            <input :id="uploadFileInputId" ref="uploadFileInput" class="native-file-input" type="file"
+              :accept="acceptOf(uploadForm.type)" :disabled="matUploading" @change="handleUploadFileChange" />
+            <label class="el-button el-button--small file-pick-button"
+              :class="{ 'is-disabled': matUploading }" :aria-disabled="matUploading" :for="uploadFileInputId">
+              <span>{{ matUploading ? '上传中...' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传') }}</span>
+            </label>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
             <template v-if="uploadForm.oss_key">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
@@ -436,6 +438,8 @@ const matUploadStage = ref('')
 const materialSaving = ref(false)
 const uploadFileInput = ref(null)
 const editFileInput = ref(null)
+const uploadFileInputId = 'product-material-upload-file-input'
+const editFileInputId = 'product-material-edit-file-input'
 const grants = ref([])
 const grantId = ref(null)
 const act = ref({ samples: [], videos: [] })
@@ -706,16 +710,6 @@ function updateMaterialLocal(materialId, patch) {
   detail.value.materials = detail.value.materials.map((item) => (
     item.id === materialId ? { ...item, ...patch } : item
   ))
-}
-
-function triggerUploadFile() {
-  if (matUploading.value) return
-  uploadFileInput.value?.click()
-}
-
-function triggerEditFile() {
-  if (matUploading.value) return
-  editFileInput.value?.click()
 }
 
 async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
@@ -991,7 +985,20 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
 .upload-progress { font-size: 12px; }
-.native-file-input { display: none; }
+.native-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  border: 0;
+  opacity: 0;
+}
+.file-pick-button { cursor: pointer; user-select: none; }
+.file-pick-button.is-disabled { cursor: not-allowed; pointer-events: none; opacity: 0.6; }
 .upload-file-box, .file-edit-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .file-name, .material-file-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-name { max-width: 230px; }
