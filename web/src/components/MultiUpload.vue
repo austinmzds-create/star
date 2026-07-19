@@ -18,6 +18,7 @@ import { Close, Plus } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, reactive, ref, watch } from 'vue'
 import api from '../api'
+import { uploadMaterialFile } from '../services/materialUpload'
 
 const props = defineProps({
   modelValue: { type: Array, default: () => [] },
@@ -47,16 +48,15 @@ async function onPick(event) {
   if (!file || uploading.value) return
   uploading.value = true
   try {
-    const fd = new FormData()
-    fd.append('file', file)
-    const r = await api.post(`/api/upload?prefix=${props.prefix}`, fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    // 与素材一致:优先直传 OSS,卡住/不可用回退后端中转
+    const r = await uploadMaterialFile(api, file, null, {
+      direct: true, allowBackendFallback: true, prefix: props.prefix,
     })
     if (r.url) previews[r.key] = r.url
     emit('update:modelValue', [...keys.value, r.key])
     ElMessage.success('已上传')
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '上传失败,请重试')
+    ElMessage.error(e.response?.data?.detail || e.message || '上传失败,请重试')
   } finally {
     uploading.value = false
   }

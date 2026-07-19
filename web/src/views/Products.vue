@@ -722,12 +722,11 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   target.file_name = displayName
   if (syncTitle) target.title = displayName
   try {
-    // 走后端中转上传(稳定):后端已修复为完整写入 OSS。
-    // 不再用浏览器直传 OSS——直传遇到网络/跨域异常会卡在“上传中”很久不回退。
+    // 优先浏览器直传 OSS(大视频顺畅,不经后端/nginx);直传卡住/不可用则自动回退后端中转。
     const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
       matProgress.value = percent
       matUploadStage.value = stage || 'uploading'
-    })
+    }, { direct: true, allowBackendFallback: true })
     target.oss_key = uploaded.key
     target.file_name = displayName
     if (syncTitle) target.title = displayName
