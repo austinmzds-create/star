@@ -722,10 +722,12 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   target.file_name = displayName
   if (syncTitle) target.title = displayName
   try {
+    // 走后端中转上传(稳定):后端已修复为完整写入 OSS。
+    // 不再用浏览器直传 OSS——直传遇到网络/跨域异常会卡在“上传中”很久不回退。
     const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
       matProgress.value = percent
       matUploadStage.value = stage || 'uploading'
-    }, { direct: true })
+    })
     target.oss_key = uploaded.key
     target.file_name = displayName
     if (syncTitle) target.title = displayName
@@ -734,7 +736,7 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
     return uploaded
   } catch (error) {
     if (!target.oss_key) target.file_name = ''
-    ElMessage.error(error.response?.data?.detail || error.message || 'OSS 直传失败,请检查网络或存储配置')
+    ElMessage.error(error.response?.data?.detail || error.message || '上传失败,请检查网络或存储配置')
     return null
   } finally {
     matUploading.value = false

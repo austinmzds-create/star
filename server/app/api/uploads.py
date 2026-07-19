@@ -46,48 +46,26 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
     }
 
 
-# 素材可能是视频,单文件上限放到 200MB;超限直接 413,避免读爆内存/长时间挂起后 502。
+# 素材可能是视频,单文件上限放到 200MB;超限直接 413。
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-_CHUNK = 1024 * 1024
 
 
 @router.post("/upload")
 async def upload(file: UploadFile, prefix: str = "materials",
                  user: User = Depends(current_user)):
-    # 流式落盘:按块读写,内存占用恒定(不再 file.read() 把整段视频读进内存),
-    # 超过上限即中止并清理半成品;OSS 配了再从本地文件传上去(线程池,不阻塞事件循环)。
-    key = storage.make_key(file.filename or "file", prefix)
-    dst = storage.local_path(key)
-    size = 0
+    # 读入内容并落库:OSS 用 put_object(bytes) 一次写全(此前分块流式写会写出 0 字节文件,
+    # 导致 OSS 对象为空、缩略图 502);OSS 的阻塞上传放线程池,不卡事件循环。
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "上传文件为空,请重新选择")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限,请压缩后再传")
     try:
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst, "wb") as out:
-            while True:
-                chunk = await file.read(_CHUNK)
-                if not chunk:
-                    break
-                size += len(chunk)
-                if size > MAX_UPLOAD_BYTES:
-                    out.close()
-                    _safe_remove(dst)
-                    raise HTTPException(413, f"文件超过 {MAX_UPLOAD_BYTES // 1024 // 1024}MB 上限,请压缩后再传")
-        if storage.use_oss():
-            await run_in_threadpool(storage.upload_local_to_oss, key)
-    except HTTPException:
-        raise
+        key = await run_in_threadpool(storage.save, data, file.filename or "file", prefix)
     except Exception:
-        _safe_remove(dst)
         logger.exception("[upload] 存储写入失败")
         raise HTTPException(502, "文件存储写入失败,请检查存储/OSS 配置")
     return {"key": key, "url": storage.signed_url(key), "use_oss": storage.use_oss()}
-
-
-def _safe_remove(path: str) -> None:
-    try:
-        if os.path.isfile(path):
-            os.remove(path)
-    except OSError:
-        pass
 
 
 def _is_safe_key(key: str) -> bool:
@@ -205,7 +183,7 @@ def serve_file(key: str, request: Request, e: str | None = None, s: str | None =
 
 
 @router.get("/thumbs/{size}/{key:path}")
-def serve_thumb(size: int, key: str, e: str | None = None, s: str | None = None):
+def serve_thumb(size: int, key: str, request: Request, e: str | None = None, s: str | None = None):
     if not storage.verify_local(key, e, s):
         raise HTTPException(403, "链接无效或已过期")
     if not _is_safe_key(key):
@@ -213,12 +191,17 @@ def serve_thumb(size: int, key: str, e: str | None = None, s: str | None = None)
     try:
         path = storage.ensure_thumbnail(key, size)
     except ValueError:
-        raise HTTPException(400, "不支持的缩略图")
+        # 非图片(如 pdf/视频):直接回原文件,不当作错误
+        return serve_file(key, request, e, s)
     except FileNotFoundError:
         raise HTTPException(404, "文件不存在")
     except Exception:
-        logger.exception("[upload] 缩略图生成失败")
-        raise HTTPException(502, "缩略图生成失败")
+        # 缩略图生成失败(图片损坏/格式不支持等):降级回原图,避免前端显示成裂图/FAILED
+        logger.warning("[upload] 缩略图生成失败,降级回原图: %s", key)
+        try:
+            return serve_file(key, request, e, s)
+        except HTTPException:
+            raise HTTPException(404, "文件不存在")
     response = FileResponse(path, media_type="image/webp")
     response.headers["Content-Disposition"] = f'inline; filename="{_inline_name(key)}.webp"'
     response.headers["Cache-Control"] = "private, max-age=3600"
