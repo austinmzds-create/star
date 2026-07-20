@@ -72,8 +72,10 @@ async function onPick(event) {
 
 function remove(i) {
   const next = [...keys.value]
-  next.splice(i, 1)
+  const [removed] = next.splice(i, 1)
   emit('update:modelValue', next)
+  // 顺手清理该 key 的本地状态,避免残留失效标记/预览
+  if (removed) { delete failed[removed]; delete previews[removed] }
 }
 </script>
 

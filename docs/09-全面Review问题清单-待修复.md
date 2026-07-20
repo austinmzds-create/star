@@ -1,9 +1,30 @@
 # 全面 Review 问题清单(待修复)
 
-> 生成日期:2026-07-20 · 状态:**仅整理,未开发** · 生产环境:talent.jisheng.yun(单台 ECS 北京 5Mbps + nginx + 阿里云 OSS 上海)
+> 生成日期:2026-07-20 · 生产环境:talent.jisheng.yun(单台 ECS 北京 5Mbps + nginx + 阿里云 OSS 上海)
 >
 > 标注说明:`【实测】`= 已在生产或本地实机验证;`【读码】`= 精读源码确认;`【待确认】`= 需生产环境/产品决策。
 > 优先级:**P0** = 丢数据/越权/安全漏洞/状态错乱;**P1** = 边界出错/明显性能;**P2** = 可维护性/体验小问题。
+
+---
+
+## ✅ 实施进度(2026-07-20)
+
+已提交到 PR #1 的批次(均含单测,后端 88 / 前端 27 通过):
+
+- **P0(1–8、10)已完成**:商品图封面残留、清空佣金白改、投流失败截图只落 1 张、千川解绑、
+  saveInfo 静默、raw_intro 脱敏、停用达人重开、**手机号归一化绑定**、上传白名单(存储型 XSS)。
+- **P1 状态机/一致性已完成**:投流防重、删视频留证、签收终态、建联审批快照/失效、寄样并发、
+  达人字段校验与置空、H5 抖音号归一化、详情页调级联动佣金。
+- **前端加载已完成**:路由懒加载 + vendor 分包(入口从 ~408KB→~5KB gz,刷新命中缓存)。
+- **静默失败/竞态已完成**:~20 处写操作补错误提示,5 处列表加 seq 竞态保护。
+- **后端性能/完整性已完成**:达人列表 tag 过滤正确性 + 去 N+1、硬删除完整性、热列索引、多 worker、SQLite 告警。
+
+**待用户配合的运维项(代码侧已就绪/无关):见文末「附录 B:生产运维待办」。**
+
+- **P0-9(OSS 公共读写→私有)** 仍需:①你在阿里云改 bucket ACL;②直传链路改签名(单传已可,分片需逐片签名)。
+  项 10 已在公共 bucket 现状下先堵死 XSS 出口。
+- **索引**:代码已加 `index=True`,但已存在的生产表需手动 `CREATE INDEX`(见附录 B)。
+- **index.html 缓存头 / API 走 CDN**:nginx 配置项(见附录 B)。
 
 ---
 
@@ -201,3 +222,58 @@
 `Samples.vue`:179-184、199-214、218-234;
 `Videos.vue`:211-222、248-298、367-382;
 `BlockRecords.vue`:140-155;`Settings.vue`:99-112;`Workbench.vue`:58;`Followups.vue`:55-65;`Influencers.vue`:329-345、391-399、456-464。
+
+---
+
+## 附录 B:生产运维待办(需在服务器/阿里云控制台执行)
+
+代码侧已就绪或与代码无关,以下需人工操作:
+
+### B1. 补建索引(数据量增长前执行一次)
+
+`create_all` 不会给已存在的表补索引,登录 PostgreSQL 执行:
+
+```sql
+CREATE INDEX IF NOT EXISTS ix_sample_orders_status   ON sample_orders(status);
+CREATE INDEX IF NOT EXISTS ix_sample_orders_created  ON sample_orders(created_at);
+CREATE INDEX IF NOT EXISTS ix_video_tasks_status     ON video_tasks(status);
+CREATE INDEX IF NOT EXISTS ix_video_tasks_created    ON video_tasks(created_at);
+CREATE INDEX IF NOT EXISTS ix_promotions_auth_status ON promotions(auth_status);
+CREATE INDEX IF NOT EXISTS ix_follow_up_tasks_status ON follow_up_tasks(status);
+CREATE INDEX IF NOT EXISTS ix_influencers_updated    ON influencers(updated_at);
+CREATE INDEX IF NOT EXISTS ix_products_updated       ON products(updated_at);
+```
+
+### B2. nginx:index.html 不缓存 + 静态长缓存
+
+保证发版后用户立刻拿到新 index(引用新 hash 资源),而 hash 资源长期缓存:
+
+```nginx
+location = /index.html { add_header Cache-Control "no-cache"; }
+location /assets/     { add_header Cache-Control "public, max-age=31536000, immutable"; }
+client_max_body_size 200m;              # 与后端上传上限一致
+```
+
+验证:`curl -sI https://talent.jisheng.yun/ | grep -i cache-control` 应含 `no-cache`。
+
+### B3. 数据库确认为 PostgreSQL
+
+`docker exec <api容器> python -c "from app.config import settings; print(settings.database_url)"`
+应为 `postgresql+psycopg://...`;若是 sqlite,启动日志会有 `[启动告警]`,须切 PostgreSQL(否则重建丢数据 + 并发写锁)。
+
+### B4. OSS 私有化(P0-9,需你决策)
+
+现状 bucket「公共读写」= 任何人可匿名上传/覆盖/删除/遍历。建议:
+1. 阿里云控制台把 bucket 读写权限改为「私有」;
+2. 后端已配 AK(`OSS_ACCESS_KEY_ID/SECRET`),`storage._bucket()` 会用 AK 鉴权;
+3. 直传票据需改为签名 PUT URL:单文件直传用 `bucket.sign_url('PUT', key, expires)` 即可;
+   大文件分片(视频)需为 initiate/each-part/complete 各签一次——这一步是独立开发项,
+   与本轮其余修复解耦,建议约时间一起做(改 bucket ACL 后当前直传会 403,需同步上线签名版)。
+
+### B5. 旧的 0 字节商品图/素材
+
+历史遗留的 0 字节 OSS 对象无法由代码恢复,显示为「图片失效」占位;对应产品/素材请重新上传一次。
+
+### B6. OSS 生命周期规则
+
+给 bucket 配「删除未完成的分片上传(碎片)」规则(如 3 天),回收分片失败残留。

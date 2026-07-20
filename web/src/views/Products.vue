@@ -891,7 +891,8 @@ async function saveInfo() {
       auto_audit_type: detail.value.auto_audit_type, allow_promotion: detail.value.allow_promotion,
     })
     ElMessage.success('已保存')
-    load()
+    load()            // 刷新列表行
+    await refreshDetail()   // 同步抽屉头部封面/佣金摘要,免得换图后要重开才更新
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '保存失败,请重试')
   }
