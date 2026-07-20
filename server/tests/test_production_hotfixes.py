@@ -53,18 +53,30 @@ def test_non_image_thumbnail_falls_back_to_signed_file_url(monkeypatch):
     assert url.startswith("/api/files/materials/demo.pdf?")
 
 
-def test_oss_material_preview_uses_public_object_url(monkeypatch):
+def test_material_url_proxies_when_ak_configured(monkeypatch):
+    """配了 AK(可能私有)且无自定义域名:走后端代理(自家域名),不暴露裸 OSS URL。"""
     monkeypatch.setattr(storage, "use_oss", lambda: True)
+    monkeypatch.setattr(storage, "oss_signing_enabled", lambda: True)
     monkeypatch.setattr(settings, "oss_endpoint", "oss-cn-shanghai.aliyuncs.com")
     monkeypatch.setattr(settings, "oss_bucket", "viceo-public")
     monkeypatch.setattr(settings, "oss_public_base_url", "")
     monkeypatch.setattr(settings, "oss_inline_preview", False)
 
-    url = storage.public_or_signed_url("materials/demo video.mp4")
-
-    assert url == "https://viceo-public.oss-cn-shanghai.aliyuncs.com/materials/demo%20video.mp4"
-    assert storage.inline_preview_enabled() is False
+    assert storage.public_or_signed_url("materials/demo video.mp4").startswith(
+        "/api/files/materials/demo%20video.mp4?")
     assert storage.preview_url("materials/demo video.mp4").startswith("/api/files/materials/demo%20video.mp4?")
+
+
+def test_material_url_public_when_anonymous_bucket(monkeypatch):
+    """匿名公共 bucket(无 AK、无自定义域名):仍给公共 URL。"""
+    monkeypatch.setattr(storage, "use_oss", lambda: True)
+    monkeypatch.setattr(storage, "oss_signing_enabled", lambda: False)
+    monkeypatch.setattr(settings, "oss_endpoint", "oss-cn-shanghai.aliyuncs.com")
+    monkeypatch.setattr(settings, "oss_bucket", "viceo-public")
+    monkeypatch.setattr(settings, "oss_public_base_url", "")
+
+    assert storage.public_or_signed_url("materials/demo video.mp4") == (
+        "https://viceo-public.oss-cn-shanghai.aliyuncs.com/materials/demo%20video.mp4")
 
 
 def test_custom_oss_domain_can_enable_inline_preview(monkeypatch):

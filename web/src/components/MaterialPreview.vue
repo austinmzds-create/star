@@ -78,11 +78,10 @@ const props = defineProps({
 const isVideo = computed(() => (
   ['video_ai', 'video_hot', 'video_output'].includes(props.material.type)
 ))
-// 质检报告可传图片:按文件扩展名识别图片,按图片方式预览(而非当作 PDF 文件卡)
-const IMG_EXT_RE = /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i
+// 是否按图片预览:后端已按存储对象类型给出 is_image(质检报告传图片也为 true),
+// 不再依赖前端拿 key/扩展名(前端只用域名+id)。
 const isImageLike = computed(() => (
-  props.material.type === 'image'
-  || (props.material.type === 'pdf' && IMG_EXT_RE.test(props.material.oss_key || props.material.url || ''))
+  props.material.is_image === true || props.material.type === 'image'
 ))
 const manualPreview = ref(false)
 const retryToken = ref(0)

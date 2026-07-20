@@ -6,12 +6,14 @@ import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import (FileResponse, RedirectResponse, StreamingResponse)
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from ..db import get_db
 from ..deps import current_user
-from ..models import User
+from ..models import Material, User
 from ..services import storage
 
 router = APIRouter(prefix="/api", tags=["uploads"])
@@ -240,15 +242,11 @@ def _serve_oss(key: str, request: Request):
     )
 
 
-# 文件预览/下载统一走后端代理。即使启用 OSS,也在这里补 inline header,
-# 避免 OSS 默认域名强制 attachment 导致图片、视频预览碎掉。
-@router.get("/files/{key:path}")
-def serve_file(key: str, request: Request, e: str | None = None, s: str | None = None):
-    if not storage.verify_local(key, e, s):
-        raise HTTPException(403, "链接无效或已过期")
+def _serve_key_content(key: str, request: Request):
+    """按 key 输出文件内容(不做签名校验,调用方负责鉴权)。本地有文件直接回,
+    否则走 OSS 代理;统一补内联/下载头。私有 bucket 也可读(后端用 AK)。"""
     if not _is_safe_key(key):
         raise HTTPException(400, "非法路径")
-
     base = os.path.abspath(storage.LOCAL_DIR)
     path = storage.local_path(key)
     # 加分隔符防止 /uploads 前缀误配 /uploads_evil,且拦截 ../ 穿越
@@ -265,11 +263,37 @@ def serve_file(key: str, request: Request, e: str | None = None, s: str | None =
         response.headers["Cache-Control"] = "private, max-age=86400"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
-
     if storage.use_oss():
         return _serve_oss(key, request)
-
     raise HTTPException(404, "文件不存在")
+
+
+# 文件预览/下载统一走后端代理(自家域名)。即使启用 OSS,也在这里补 inline header,
+# 避免 OSS 默认域名强制 attachment 导致图片、视频预览碎掉。
+@router.get("/files/{key:path}")
+def serve_file(key: str, request: Request, e: str | None = None, s: str | None = None):
+    if not storage.verify_local(key, e, s):
+        raise HTTPException(403, "链接无效或已过期")
+    return _serve_key_content(key, request)
+
+
+@router.get("/material-file/{material_id}")
+def serve_material_file(material_id: int, request: Request,
+                        db: Session = Depends(get_db),
+                        e: str | None = None, s: str | None = None, dl: int = 0):
+    """素材文件网关:前端只用"域名 + 素材 id + 签名"请求,后端反查 key 再出内容。
+    - 内联预览(默认):后端代理输出(私有 bucket 也可读,附内联头);
+    - 下载(dl=1)且配了 AK:302 到短时效签名 OSS URL,直读不占 ECS 带宽。
+    签名在渲染素材列表时按 id 下发,只对当时可见的素材签发,等同"渲染时鉴权"。"""
+    if not storage.verify_local(f"mat:{material_id}", e, s):
+        raise HTTPException(403, "链接无效或已过期")
+    m = db.get(Material, material_id)
+    if not m or not m.oss_key:
+        raise HTTPException(404, "文件不存在")
+    if dl and storage.oss_signing_enabled():
+        return RedirectResponse(storage.signed_get_url(m.oss_key), status_code=302,
+                                headers={"Cache-Control": "private, max-age=600"})
+    return _serve_key_content(m.oss_key, request)
 
 
 @router.get("/thumbs/{size}/{key:path}")

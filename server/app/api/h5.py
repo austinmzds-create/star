@@ -305,10 +305,13 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
                                 "created_at": post.created_at.isoformat(),
                                 "assets": [_asset(a) for a in post.assets]}
                                for post in posts],
+            # 达人端只见"域名 + 素材 id + 签名",不下发 bucket/key
             "materials": [{"id": m.id, "type": m.type, "title": m.title,
-                           "url": storage.public_or_signed_url(m.oss_key) if m.oss_key else None,
-                           "preview_url": storage.preview_url(m.oss_key) if m.oss_key else None,
-                           "inline_preview": storage.inline_preview_enabled(),
+                           "url": storage.material_file_url(m.id) if m.oss_key else None,
+                           "preview_url": storage.material_file_url(m.id) if m.oss_key else None,
+                           "download_url": storage.material_file_url(m.id, download=True) if m.oss_key else None,
+                           "is_image": storage.is_image(m.oss_key) if m.oss_key else False,
+                           "inline_preview": True,
                            "source_link": m.source_link, "parsed_text": m.parsed_text,
                            "report_id": m.report_id, "downloadable": m.downloadable}
                           for m in materials]}
@@ -343,4 +346,5 @@ def log_download(material_id: int, inf: Influencer = Depends(current_influencer)
     _assert_granted(db, inf.id, m.product_id)  # 关键:必须授权
     db.add(MaterialDownloadLog(material_id=material_id, influencer_id=inf.id))
     db.commit()
-    return {"url": storage.public_or_signed_url(m.oss_key)}
+    # 返回 id 网关下载地址(自家域名、私有可读、302 直读不占带宽),不暴露裸 OSS URL
+    return {"url": storage.material_file_url(m.id, download=True)}

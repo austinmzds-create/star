@@ -377,10 +377,15 @@ def publish_material(material_id: int, body: MaterialPublishIn,
 
 
 def _material_dict(m: Material) -> dict:
+    # 预览/下载都走"自家域名 + 素材 id + 签名"网关,不再向前端暴露裸 OSS URL。
+    # 内部端保留 oss_key 供编辑时判断"是否已有文件/是否替换"(内部可信;达人端不下发)。
+    has_file = bool(m.oss_key)
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
-            "url": storage.public_or_signed_url(m.oss_key) if m.oss_key else None,
-            "preview_url": storage.preview_url(m.oss_key) if m.oss_key else None,
-            "inline_preview": storage.inline_preview_enabled(),
+            "url": storage.material_file_url(m.id) if has_file else None,
+            "preview_url": storage.material_file_url(m.id) if has_file else None,
+            "download_url": storage.material_file_url(m.id, download=True) if has_file else None,
+            "is_image": storage.is_image(m.oss_key) if has_file else False,
+            "inline_preview": True,
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
             "starred": m.starred, "is_public": m.is_public,

@@ -232,11 +232,39 @@ def signed_url(key: str, expires: int = 86400) -> str:
     return f"/api/files/{quote(key, safe='/')}?e={exp}&s={_sign_local(key, exp)}"
 
 
+def oss_signing_enabled() -> bool:
+    """配了 AK → 可对 OSS 做签名(PUT 上传 / GET 下载 / 私有读)。私有 bucket 必走此路。"""
+    return use_signed_upload()
+
+
 def public_or_signed_url(key: str, expires: int = 86400) -> str:
-    """素材预览地址:OSS 开启时让浏览器直连 OSS,本地环境走后端签名代理。"""
-    if use_oss():
+    """文件地址(不暴露裸 OSS 域名给前端):
+    - 配了可用的自定义域名(oss_public_base_url)→ 用它;
+    - 配了 AK(可能私有/默认域名会强制下载)→ 走后端签名代理(自家域名、AK 读、私有可读);
+    - 匿名公共 bucket 无自定义域名 → 默认公共 URL;
+    - 本地 → 后端代理。"""
+    if not use_oss():
+        return signed_url(key, expires)
+    if settings.oss_public_base_url:
         return public_object_url(key)
-    return signed_url(key, expires)
+    if oss_signing_enabled():
+        return signed_url(key, expires)
+    return public_object_url(key)
+
+
+def signed_get_url(key: str, expires: int = 1800) -> str:
+    """短时效签名 GET URL,用于下载重定向:私有 bucket 直读、不占 ECS 带宽。
+    注意:阿里云默认域名会强制 Content-Disposition: attachment,故仅用于下载,不用于内联预览。"""
+    return _bucket().sign_url("GET", key, expires, slash_safe=True)
+
+
+def material_file_url(material_id: int, download: bool = False, expires: int = 86400) -> str:
+    """素材文件的对外地址:只暴露"自家域名 + 素材 id + 签名",不暴露 bucket/key。
+    后端凭 id 反查 key 后:内联预览走代理(私有可读、附内联头),下载(dl=1)302 到签名 OSS。"""
+    ref = f"mat:{material_id}"
+    exp = _stable_exp(expires)
+    query = f"?e={exp}&s={_sign_local(ref, exp)}" + ("&dl=1" if download else "")
+    return f"/api/material-file/{material_id}{query}"
 
 
 def inline_preview_enabled() -> bool:

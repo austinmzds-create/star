@@ -143,3 +143,58 @@ def test_h5_hides_unpublished_output_shows_after_publish(db, admin):
     publish_material(m["id"], MaterialPublishIn(is_public=True), admin, db)
     res2 = asyncio.run(my_materials(pid, inf, db))
     assert "video_output" in {x["type"] for x in res2["materials"]}
+
+
+# ---------- 做法B:id 文件网关(域名+id+签名,后端反查 key) ----------
+
+def test_material_file_url_is_signed_and_verifiable():
+    from app.services import storage
+    url = storage.material_file_url(42)
+    assert url.startswith("/api/material-file/42?e=")
+    import re
+    e = re.search(r"e=(\d+)", url).group(1)
+    s = re.search(r"s=([0-9a-f]+)", url).group(1)
+    assert storage.verify_local("mat:42", e, s) is True
+    assert storage.verify_local("mat:43", e, s) is False   # 换 id 签名失效
+    # 下载地址带 dl=1
+    assert "&dl=1" in storage.material_file_url(42, download=True)
+
+
+def test_serve_material_file_rejects_bad_signature(db, admin):
+    from app.api.uploads import serve_material_file
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/x.mp4"), admin, db)
+    with pytest.raises(HTTPException) as e:
+        serve_material_file(m["id"], request=None, db=db, e="1", s="deadbeef")
+    assert e.value.status_code == 403
+
+
+def test_serve_material_file_missing_returns_404(db, admin):
+    from app.services import storage
+    from app.api.uploads import serve_material_file
+    import re
+    url = storage.material_file_url(999999)
+    e = re.search(r"e=(\d+)", url).group(1); s = re.search(r"s=([0-9a-f]+)", url).group(1)
+    with pytest.raises(HTTPException) as exc:
+        serve_material_file(999999, request=None, db=db, e=e, s=s)
+    assert exc.value.status_code == 404
+
+
+def test_internal_material_dict_uses_id_gateway(db, admin):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="pdf", oss_key="pdf/report.png"), admin, db)
+    d = next(x for x in product_detail(pid, admin, db)["materials"] if x["id"] == m["id"])
+    assert d["url"].startswith(f"/api/material-file/{m['id']}?")
+    assert d["download_url"].endswith("dl=1") or "&dl=1" in d["download_url"]
+    assert d["is_image"] is True            # .png 报告按图片
+    assert "aliyuncs.com" not in (d["url"] or "")   # 不暴露裸 OSS 域名
+
+
+def test_h5_material_dict_hides_key(db, admin):
+    pid = _product(db, admin)
+    add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/v.mp4"), admin, db)
+    inf = _grant_influencer(db, pid, admin.id)
+    res = asyncio.run(my_materials(pid, inf, db))
+    mat = res["materials"][0]
+    assert "oss_key" not in mat                      # 达人端不下发 key
+    assert mat["url"].startswith(f"/api/material-file/{mat['id']}?")
