@@ -149,7 +149,7 @@ def test_create_rejects_invalid_phone(db, admin):
 
 
 def _insert_valid_code(db, phone, code="123456"):
-    db.add(SmsCode(phone=phone, code=code, expires_at=datetime.utcnow() + timedelta(minutes=5)))
+    db.add(SmsCode(phone=phone, code=code, expires_at=datetime.now() + timedelta(minutes=5)))
     db.commit()
 
 
