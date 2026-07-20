@@ -107,10 +107,14 @@ def use_signed_upload() -> bool:
     return bool(_bucket() and settings.oss_access_key_id and settings.oss_access_key_secret)
 
 
-def signed_put_url(key: str, expires: int = 3600) -> str:
-    """单文件直传的签名 PUT URL。不把 Content-Type 纳入签名,避免前后端头不一致导致 403;
-    对象对外预览统一走 /api/files 代理并由扩展名决定类型,OSS 侧存储类型不影响安全。"""
-    return _bucket().sign_url("PUT", key, expires, slash_safe=True)
+def signed_put_url(key: str, content_type: str, expires: int = 3600) -> str:
+    """单文件直传的签名 PUT URL。
+
+    OSS V1 签名把 Content-Type 计入签名串,因此必须把它纳入签名,且前端 PUT 时必须发送
+    完全一致的 Content-Type(见 direct-ticket 返回的 content_type),否则 403 SignatureDoesNotMatch。
+    对象因此以正确的 Content-Type 落库,后续签名 GET 直读也能拿到正确类型。"""
+    return _bucket().sign_url("PUT", key, expires, slash_safe=True,
+                              headers={"Content-Type": content_type})
 
 
 def init_multipart(key: str, content_type: str | None = None) -> str:

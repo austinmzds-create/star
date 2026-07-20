@@ -43,7 +43,8 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
             "enabled": True,
             "signed": True,
             "key": key,
-            "upload_url": storage.signed_put_url(key),
+            # 签名 PUT 把 content_type 计入签名,前端必须发送同一个 content_type(见下)
+            "upload_url": storage.signed_put_url(key, content_type),
             "content_type": content_type,
             "part_size": MULTIPART_PART_SIZE,
             "preview_url": storage.preview_url(key),

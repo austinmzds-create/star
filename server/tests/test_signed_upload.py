@@ -23,7 +23,8 @@ def signed(monkeypatch):
     """模拟已配 AK 的签名直传环境,打桩所有 OSS 调用。"""
     monkeypatch.setattr(storage, "use_oss", lambda: True)
     monkeypatch.setattr(storage, "use_signed_upload", lambda: True)
-    monkeypatch.setattr(storage, "signed_put_url", lambda key, expires=3600: f"https://oss/{key}?sig=put")
+    monkeypatch.setattr(storage, "signed_put_url",
+                        lambda key, content_type, expires=3600: f"https://oss/{key}?ct={content_type}&sig=put")
     monkeypatch.setattr(storage, "signed_part_url",
                         lambda key, uid, pn, expires=3600: f"https://oss/{key}?partNumber={pn}&uploadId={uid}&sig=1")
     monkeypatch.setattr(storage, "init_multipart", lambda key, content_type=None: "UPLOAD123")
