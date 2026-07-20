@@ -211,3 +211,57 @@ def test_update_can_clear_gmv_and_phone(db, admin):
     row = db.get(Influencer, iid)
     assert row.gmv_30d is None
     assert row.phone is None
+
+
+# ---------- 达人列表:tag 过滤下沉 SQL(total 正确 + 不丢行) ----------
+
+def test_tag_filter_total_and_items_correct(db, admin):
+    from app.api.influencers import list_influencers
+    create_influencer(CreateIn(nickname="A", douyin_id="a", category_tags=None), admin, db)
+    ia = create_influencer(CreateIn(nickname="B", douyin_id="b"), admin, db)
+    ic = create_influencer(CreateIn(nickname="C", douyin_id="c"), admin, db)
+    # 给 B、C 打标签"美妆"
+    from app.api.influencers import update as upd
+    upd(ia["id"], UpdateIn(tags=["美妆"]), admin, db)
+    upd(ic["id"], UpdateIn(tags=["美妆", "护肤"]), admin, db)
+    res = list_influencers(tag="美妆", page=1, page_size=1, user=admin, db=db)
+    assert res["total"] == 2                       # total 反映过滤结果,不虚高
+    assert len(res["items"]) == 1                  # 分页正确
+    # "妆"不应命中"美妆"(带引号锚定整元素)
+    res2 = list_influencers(tag="妆", user=admin, db=db)
+    assert res2["total"] == 0
+
+
+# ---------- 硬删除:出单记录拦删 + 元数据清理 ----------
+
+def test_delete_blocked_by_order_record(db, admin):
+    from datetime import datetime
+    from app.models import OrderRecord
+    inf = create_influencer(CreateIn(nickname="有出单", douyin_id="ord"), admin, db)
+    pid = create_product(ProductIn(name="产品"), admin, db)["id"]
+    db.add(OrderRecord(influencer_id=inf["id"], product_id=pid, amount=100,
+                       order_date=datetime(2026, 1, 1), recorded_by=admin.id))
+    db.commit()
+    from app.api.influencers import delete_influencer
+    with pytest.raises(HTTPException) as exc:
+        delete_influencer(inf["id"], admin, db)
+    assert exc.value.status_code == 400
+
+
+def test_delete_cleans_metadata(db, admin):
+    from app.models import ConnectionRequest, Influencer, OperationLog
+    bd = _bd(db, "13900000009", "商务")
+    inf = create_influencer(CreateIn(nickname="待删", douyin_id="del"), bd, db)
+    iid = inf["id"]
+    # 制造元数据:建联申请 + 操作日志
+    db.add(ConnectionRequest(influencer_id=iid, requester_bd_id=admin.id,
+                             current_owner_bd_id=bd.id, status="pending"))
+    db.add(OperationLog(influencer_id=iid, event_type="x", summary="y", actor_id=admin.id))
+    db.commit()
+    from app.api.influencers import delete_influencer
+    delete_influencer(iid, admin, db)
+    assert db.get(Influencer, iid) is None
+    assert db.scalar(select(func.count()).select_from(ConnectionRequest)
+                     .where(ConnectionRequest.influencer_id == iid)) == 0
+    assert db.scalar(select(func.count()).select_from(OperationLog)
+                     .where(OperationLog.influencer_id == iid)) == 0

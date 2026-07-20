@@ -143,7 +143,7 @@ class SampleOrder(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     cooperation_id: Mapped[int] = mapped_column(ForeignKey("cooperations.id"), index=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
-    status: Mapped[str] = mapped_column(String(16), default="pending")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
     # pending待审批 / approved已通过 / rejected已拒绝 / shipped已发货 / in_transit在途 / signed已签收
     reject_reason: Mapped[str | None] = mapped_column(String(255))   # 从拒绝理由库选或自定义
     address_snapshot: Mapped[dict | None] = mapped_column(JSON)      # 收货信息快照
@@ -349,7 +349,7 @@ class VideoTask(Base, TimestampMixin):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     dy_url: Mapped[str | None] = mapped_column(String(512))
     saved_oss_key: Mapped[str | None] = mapped_column(String(512))   # 转存(防链接失效/投流留证)
-    status: Mapped[str] = mapped_column(String(16), default="submitted")
+    status: Mapped[str] = mapped_column(String(16), default="submitted", index=True)
     # submitted / approved / rejected / blocked卡审
     audit_result: Mapped[dict | None] = mapped_column(JSON)          # 时间点评论等(P1)
     blocked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -362,7 +362,7 @@ class Promotion(Base, TimestampMixin):
     id: Mapped[int] = mapped_column(primary_key=True)
     video_task_id: Mapped[int] = mapped_column(ForeignKey("video_tasks.id"), index=True)
     mode_snapshot: Mapped[str] = mapped_column(String(16))           # 快照:商家投/自投
-    auth_status: Mapped[str] = mapped_column(String(24), default="pending_request")
+    auth_status: Mapped[str] = mapped_column(String(24), default="pending_request", index=True)
     # pending_request待发起授权 / pending_confirm待达人确认 / authorized已授权
     # promoted已投流 / failed投流失败 / done完成 / refused达人拒绝
     fail_proof_oss_key: Mapped[str | None] = mapped_column(String(512))  # 兼容旧数据:首张失败凭证
@@ -455,7 +455,7 @@ class FollowUpTask(Base):
     assignee_bd_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     kind: Mapped[str] = mapped_column(String(24), default="follow_up_shoot")  # 催拍
     note: Mapped[str | None] = mapped_column(String(255))
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open / done
+    status: Mapped[str] = mapped_column(String(16), default="open", index=True)  # open / done
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
 

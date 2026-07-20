@@ -54,6 +54,11 @@ def startup():
     # 生产环境(debug=False)必须显式设置足够强的 SECRET_KEY(非默认/示例、≥16 位)
     if not settings.debug and (settings.secret_key in WEAK_SECRETS or len(settings.secret_key) < 16):
         raise RuntimeError("生产环境必须设置足够强的 SECRET_KEY(非默认/示例值,长度≥16)")
+    # 生产环境不建议用 SQLite:容器重建即丢数据,且多写(审批/回调/多 worker)会 database is locked。
+    if not settings.debug and settings.database_url.startswith("sqlite"):
+        logging.getLogger(__name__).warning(
+            "[启动告警] 生产环境正在使用 SQLite(%s):数据不持久、并发写会锁。"
+            "请将 DATABASE_URL 切换为 PostgreSQL。", settings.database_url)
     # 骨架阶段用 create_all;上生产前切 alembic 迁移
     Base.metadata.create_all(engine)
     ensure_columns()  # 自动补齐已存在表的新增列(create_all 不会 ALTER)

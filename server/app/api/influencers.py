@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
-from ..models import (AccessGrant, Cooperation, Influencer, LevelChangeLog,
-                      OperationLog, OrderRecord, Product, Promotion,
-                      SampleOrder, User, VideoTask)
+from ..models import (AccessGrant, BlockRecord, ConnectionRequest, Cooperation,
+                      FollowUpTask, Influencer, LevelChangeLog,
+                      MaterialDownloadLog, OperationLog, OrderRecord, Product,
+                      Promotion, QianchuanCooperationBinding, SampleOrder, User,
+                      VideoTask)
 from ..services import levels, storage
 from ..services.identity import normalize_douyin, normalize_phone
 from ..services.oplog import log_op
@@ -549,27 +551,36 @@ def list_influencers(q: str | None = None, level: str | None = None,
         base = base.where(Influencer.commission_tier == Decimal(str(commission_tier)))
     if owner_bd_id is not None:
         base = base.where(Influencer.owner_bd_id == owner_bd_id)
-    total = db.scalar(select(func.count()).select_from(base.subquery()))
     page = max(1, page)
     page_size = min(max(1, page_size), 200)
-    rows = db.scalars(base.order_by(Influencer.updated_at.desc())
-                      .offset((page - 1) * page_size).limit(page_size)).all()
-    # 归属商务名字(一次性查出映射)
+    ordered = base.order_by(Influencer.updated_at.desc())
+    if tag:
+        # tags 是 JSON 数组,跨库无统一 contains 写法;此处取 scope 限定后的全量在内存精确过滤再分页,
+        # 保证 total 与翻页正确(此前"分页后再过滤本页"会 total 虚高、翻页丢行)。tag 过滤为低频管理操作。
+        matched = [r for r in db.scalars(ordered).all() if r.tags and tag in r.tags]
+        total = len(matched)
+        rows = matched[(page - 1) * page_size:(page - 1) * page_size + page_size]
+    else:
+        total = db.scalar(select(func.count()).select_from(base.subquery()))
+        rows = db.scalars(ordered.offset((page - 1) * page_size).limit(page_size)).all()
+    # 归属商务名字 + 合作轮次数:各一次批量查出映射,避免逐行 N+1
     bd_ids = {r.owner_bd_id for r in rows if r.owner_bd_id}
     names = {u.id: u.display_name for u in
              db.scalars(select(User).where(User.id.in_(bd_ids or [0]))).all()}
+    inf_ids = [r.id for r in rows]
+    round_counts = dict(db.execute(
+        select(Cooperation.influencer_id, func.count())
+        .where(Cooperation.influencer_id.in_(inf_ids or [0]))
+        .group_by(Cooperation.influencer_id)).all())
     items = [{"id": r.id, "nickname": r.nickname, "douyin_id": r.douyin_id,
               "fans_count": r.fans_count, "gmv_30d": r.gmv_30d, "level": r.level,
               "commission_tier": float(r.commission_tier), "promo_mode": r.promo_mode,
-              "tags": r.tags, "round_count": len(r.cooperations),
+              "tags": r.tags, "round_count": round_counts.get(r.id, 0),
               "owner_bd_id": r.owner_bd_id, "owner_bd_name": names.get(r.owner_bd_id),
               "owned": owns_or_admin(user, r.owner_bd_id),
               "source": r.source, "data_source": r.data_source,
               "updated_at": r.updated_at.isoformat()}
              for r in rows]
-    # tag 过滤(tags 存 JSON,DB 层不易过滤,内存过滤本页)
-    if tag:
-        items = [i for i in items if i["tags"] and tag in i["tags"]]
     return {"items": items, "total": total, "page": page, "page_size": page_size}
 
 
@@ -775,9 +786,12 @@ def apply_update(influencer_id: int, body: ApplyUpdateIn,
 @router.delete("/{influencer_id}")
 def delete_influencer(influencer_id: int, user: User = Depends(current_user),
                       db: Session = Depends(get_db)):
-    """硬删除:仅在无寄样/视频业务记录时允许(录入即开的空合作轮次会一并清理);
-    已有寄样/视频请改用「停用」(archived) 以保留历史。"""
-    from ..models import AccessGrant
+    """硬删除:仅在无寄样/视频/出单业务记录时允许(录入即开的空合作轮次会一并清理);
+    有业务历史请改用「停用」(archived) 以保留记录与 GMV 统计。
+
+    删除时连带清理该达人自身的元数据(授权/日志/建联/催拍/下载记录/千川合作绑定),
+    避免遗留悬挂外键(PostgreSQL 会因外键约束报错,SQLite 则留孤儿数据)。
+    卡审知识库(BlockRecord)是共享沉淀,仅解绑不删除。"""
     inf = db.scalars(scope(select(Influencer).where(Influencer.id == influencer_id), user)).first()
     if not inf:
         raise HTTPException(404, "达人不存在或无权限")
@@ -786,10 +800,22 @@ def delete_influencer(influencer_id: int, user: User = Depends(current_user),
                            .where(SampleOrder.cooperation_id.in_(coop_ids)).limit(1))
     has_video = db.scalar(select(VideoTask.id)
                           .where(VideoTask.cooperation_id.in_(coop_ids)).limit(1))
-    if has_sample or has_video:
-        raise HTTPException(400, "该达人已有寄样/视频记录,不能删除;请改用「停用」")
+    has_order = db.scalar(select(OrderRecord.id)
+                          .where(OrderRecord.influencer_id == inf.id).limit(1))
+    if has_sample or has_video or has_order:
+        raise HTTPException(400, "该达人已有寄样/视频/出单记录,不能删除;请改用「停用」")
+    # 解绑共享知识(卡审库保留内容,仅去掉达人关联)
+    db.query(BlockRecord).filter(BlockRecord.influencer_id == inf.id) \
+        .update({BlockRecord.influencer_id: None})
+    # 清理达人自身元数据
     db.query(AccessGrant).filter(AccessGrant.influencer_id == inf.id).delete()
     db.query(LevelChangeLog).filter(LevelChangeLog.influencer_id == inf.id).delete()
+    db.query(OperationLog).filter(OperationLog.influencer_id == inf.id).delete()
+    db.query(ConnectionRequest).filter(ConnectionRequest.influencer_id == inf.id).delete()
+    db.query(FollowUpTask).filter(FollowUpTask.influencer_id == inf.id).delete()
+    db.query(MaterialDownloadLog).filter(MaterialDownloadLog.influencer_id == inf.id).delete()
+    db.query(QianchuanCooperationBinding) \
+        .filter(QianchuanCooperationBinding.influencer_id == inf.id).delete()
     for c in inf.cooperations:
         db.delete(c)
     db.delete(inf)
