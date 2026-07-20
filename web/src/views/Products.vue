@@ -494,6 +494,8 @@ const pct = (value) => (value != null ? `${value}%` : '—')
 const uploadStatusText = computed(() => {
   const prefix = matBatch.value ? `第 ${matBatch.value.index}/${matBatch.value.total} 个 · ` : ''
   if (matUploadStage.value === 'confirming') return `${prefix}已传完，正在确认...`
+  if (matUploadStage.value === 'oss') return `${prefix}OSS直传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'fallback') return `${prefix}直传不可用，正在切换兜底...`
   if (matUploadStage.value === 'backend') return `${prefix}后端上传中 ${matProgress.value}%`
   if (matUploadStage.value === 'backend_confirming') return `${prefix}已传完，正在保存...`
   return `${prefix}上传中 ${matProgress.value}%`
@@ -792,11 +794,11 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   target.file_name = displayName
   if (syncTitle) target.title = displayName
   try {
-    // 优先浏览器直传 OSS(大视频顺畅,不经后端/nginx);直传卡住/不可用则自动回退后端中转。
+    // 后端只签名,文件本体直传 OSS;线上不把视频流量回退到后端。
     const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
       matProgress.value = percent
       matUploadStage.value = stage || 'uploading'
-    }, { direct: true, allowBackendFallback: true })
+    }, { direct: true, allowBackendFallback: false })
     target.oss_key = uploaded.key
     target.file_name = displayName
     if (syncTitle) target.title = displayName
@@ -843,12 +845,12 @@ async function batchUploadAiVideos(files) {
         const uploaded = await uploadMaterialFile(api, f, (percent, stage) => {
           matProgress.value = percent
           matUploadStage.value = stage || 'uploading'
-        }, { direct: true, allowBackendFallback: true })
+        }, { direct: true, allowBackendFallback: false })
         await api.post(`/api/products/${productId}/materials`,
           { type: 'video_ai', title: f.name, oss_key: uploaded.key }, { skipBadgeRefresh: true })
         ok += 1
       } catch (e) {
-        failed.push(f.name)
+        failed.push(`${f.name}: ${e.response?.data?.detail || e.message || '上传失败'}`)
       }
     }
   } finally {
@@ -856,8 +858,9 @@ async function batchUploadAiVideos(files) {
     matUploadStage.value = ''
     matBatch.value = null
   }
-  if (ok) ElMessage.success(`已上传 ${ok} 条 AI 视频${failed.length ? `,${failed.length} 条失败` : ''}`)
-  else ElMessage.error('上传失败,请检查网络或存储配置')
+  if (ok && failed.length) ElMessage.warning(`已上传 ${ok} 条,失败 ${failed.length} 条:${failed[0]}`)
+  else if (ok) ElMessage.success(`已上传 ${ok} 条 AI 视频`)
+  else ElMessage.error(failed[0] || '上传失败,请检查网络或存储配置')
   uploadVisible.value = false
   mtype.value = 'video_ai'
   await refreshDetail()   // 重新拉取素材列表

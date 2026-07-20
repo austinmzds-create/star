@@ -56,9 +56,9 @@ async function onPick(event) {
   uploading.value = true
   uploadProgress.value = 0
   try {
-    // 与素材一致:优先直传 OSS(大图分片并行),卡住/不可用回退后端中转
+    // 与素材一致:后端只签名,文件本体直传 OSS;OSS 未启用的本地环境才走后端。
     const r = await uploadMaterialFile(api, file, (percent) => { uploadProgress.value = percent }, {
-      direct: true, allowBackendFallback: true, prefix: props.prefix,
+      direct: true, allowBackendFallback: false, prefix: props.prefix,
     })
     if (r.url) previews[r.key] = r.url
     emit('update:modelValue', [...keys.value, r.key])

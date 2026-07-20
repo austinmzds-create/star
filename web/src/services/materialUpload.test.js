@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { uploadAndCreateMaterial } from './materialUpload'
+import { uploadAndCreateMaterial, uploadMaterialFile } from './materialUpload'
 
 const sentFiles = []
 const sentHeaders = []
@@ -10,7 +10,8 @@ class FakeXMLHttpRequest {
   constructor() {
     this.headers = {}
     this.upload = {}
-    this.status = 200
+    this.status = FakeXMLHttpRequest.nextStatus
+    this.responseText = FakeXMLHttpRequest.nextResponseText
     this.timeout = 0
   }
 
@@ -32,10 +33,14 @@ class FakeXMLHttpRequest {
 
   abort() {}
 }
+FakeXMLHttpRequest.nextStatus = 200
+FakeXMLHttpRequest.nextResponseText = ''
 
 function mockDirectUpload() {
   sentFiles.length = 0
   sentHeaders.length = 0
+  FakeXMLHttpRequest.nextStatus = 200
+  FakeXMLHttpRequest.nextResponseText = ''
   vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
 }
 
@@ -150,5 +155,53 @@ describe('uploadAndCreateMaterial', () => {
       type: 'image',
       file: new File(['image'], 'a.jpg'),
     })).rejects.toMatchObject({ materialStage: 'create' })
+  })
+
+  it('uses one signed OSS PUT for large videos without multipart orchestration', async () => {
+    mockDirectUpload()
+    const api = {
+      post: vi.fn().mockResolvedValueOnce({
+        enabled: true,
+        signed: true,
+        key: 'materials/big.mp4',
+        upload_url: 'https://bucket.oss/materials/big.mp4?sig=put',
+        content_type: 'video/mp4',
+        preview_url: '/api/files/materials/big.mp4?e=1&s=x',
+      }),
+    }
+    const file = new File([new Uint8Array(7 * 1024 * 1024)], 'big.mp4', { type: 'video/mp4' })
+    const progress = vi.fn()
+
+    const result = await uploadMaterialFile(api, file, progress, { allowBackendFallback: true })
+
+    expect(result).toMatchObject({ key: 'materials/big.mp4', direct: true, storage: 'oss' })
+    expect(api.post).toHaveBeenCalledTimes(1)
+    expect(api.post.mock.calls[0][0]).toBe('/api/upload/direct-ticket')
+    expect(api.post.mock.calls.some((call) => String(call[0]).includes('/multipart/'))).toBe(false)
+    expect(api.post.mock.calls.some((call) => String(call[0]).startsWith('/api/upload?'))).toBe(false)
+    expect(sentFiles).toEqual([file])
+    expect(progress).toHaveBeenCalledWith(100, 'confirming')
+  })
+
+  it('does not push failed videos through the backend fallback path', async () => {
+    mockDirectUpload()
+    FakeXMLHttpRequest.nextStatus = 403
+    FakeXMLHttpRequest.nextResponseText = 'SignatureDoesNotMatch'
+    const api = {
+      post: vi.fn().mockResolvedValueOnce({
+        enabled: true,
+        signed: true,
+        key: 'materials/fail.mp4',
+        upload_url: 'https://bucket.oss/materials/fail.mp4?sig=put',
+        content_type: 'video/mp4',
+      }),
+    }
+    const file = new File([new Uint8Array(9 * 1024 * 1024)], 'fail.mp4', { type: 'video/mp4' })
+
+    await expect(uploadMaterialFile(api, file, vi.fn(), { allowBackendFallback: true }))
+      .rejects.toThrow('OSS 直传失败 403')
+
+    expect(api.post).toHaveBeenCalledTimes(1)
+    expect(api.post.mock.calls.some((call) => String(call[0]).startsWith('/api/upload?'))).toBe(false)
   })
 })
