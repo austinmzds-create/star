@@ -170,12 +170,14 @@ def get_oss_size(key: str) -> int:
 
 
 def _stable_exp(expires: int) -> int:
-    """让长效签名按小时稳定，提升浏览器缓存命中率。"""
+    """长效签名按天对齐:同一天内签名/URL 稳定(浏览器缓存命中,不必每小时重拉缩略图),
+    且实际有效期不短于 expires(day+1 的对齐保证跨午夜也不会临期失效)。"""
     now = int(time.time())
     if expires <= 3600:
         return now + expires
-    bucket = 3600
-    return ((now // bucket) + max(1, expires // bucket)) * bucket
+    day = 86400
+    periods = max(1, (expires + day - 1) // day)
+    return ((now // day) + periods + 1) * day
 
 
 def signed_url(key: str, expires: int = 86400) -> str:

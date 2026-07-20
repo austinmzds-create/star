@@ -146,7 +146,7 @@ def _serve_oss(key: str, request: Request):
     headers = {
         "Accept-Ranges": "bytes",
         "Content-Disposition": f'{disposition}; filename="{_inline_name(key)}"',
-        "Cache-Control": "private, max-age=3600",
+        "Cache-Control": "private, max-age=86400",
         "X-Content-Type-Options": "nosniff",
     }
     status_code = 200
@@ -187,7 +187,7 @@ def serve_file(key: str, request: Request, e: str | None = None, s: str | None =
         disposition = "inline" if safe else "attachment"
         response = FileResponse(path, media_type=media_type)
         response.headers["Content-Disposition"] = f'{disposition}; filename="{_inline_name(key)}"'
-        response.headers["Cache-Control"] = "private, max-age=3600"
+        response.headers["Cache-Control"] = "private, max-age=86400"
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
@@ -219,5 +219,5 @@ def serve_thumb(size: int, key: str, request: Request, e: str | None = None, s: 
             raise HTTPException(404, "文件不存在")
     response = FileResponse(path, media_type="image/webp")
     response.headers["Content-Disposition"] = f'inline; filename="{_inline_name(key)}.webp"'
-    response.headers["Cache-Control"] = "private, max-age=3600"
+    response.headers["Cache-Control"] = "private, max-age=86400"
     return response
