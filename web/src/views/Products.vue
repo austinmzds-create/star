@@ -464,6 +464,7 @@ const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
 const matUploadStage = ref('')
+const matBatch = ref(null)   // 批量上传进度 {index, total};非批量为 null
 const materialSaving = ref(false)
 const uploadFileInput = ref(null)
 const editFileInput = ref(null)
@@ -491,10 +492,11 @@ const videoTag = (s) => tag(VIDEO_STATUS, s)
 const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
 const pct = (value) => (value != null ? `${value}%` : '—')
 const uploadStatusText = computed(() => {
-  if (matUploadStage.value === 'confirming') return '已传完，正在确认...'
-  if (matUploadStage.value === 'backend') return `后端上传中 ${matProgress.value}%`
-  if (matUploadStage.value === 'backend_confirming') return '已传完，正在保存...'
-  return `上传中 ${matProgress.value}%`
+  const prefix = matBatch.value ? `第 ${matBatch.value.index}/${matBatch.value.total} 个 · ` : ''
+  if (matUploadStage.value === 'confirming') return `${prefix}已传完，正在确认...`
+  if (matUploadStage.value === 'backend') return `${prefix}后端上传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'backend_confirming') return `${prefix}已传完，正在保存...`
+  return `${prefix}上传中 ${matProgress.value}%`
 })
 const canSyncQianchuanCoop = computed(() => Boolean(
   qcCoopForm.influencer_id && qianchuan.can_sync_cooperation && qianchuan.qianchuan_product_id,
@@ -737,7 +739,10 @@ async function delOrder(row) {
     ElMessage.error(e.response?.data?.detail || '删除失败')
   }
 }
-async function refreshDetail() { detail.value = await api.get(`/api/products/${detail.value.id}`) }
+async function refreshDetail() {
+  if (!detail.value?.id) return   // 抽屉已关闭则不刷新,避免读空指针
+  detail.value = await api.get(`/api/products/${detail.value.id}`)
+}
 
 async function toggleProduct(row) {
   const action = row.status === 'on' ? '禁用' : '启用'
@@ -823,27 +828,34 @@ async function handleUploadFileChange(event) {
 
 async function batchUploadAiVideos(files) {
   if (matUploading.value) return
+  const productId = detail.value?.id
+  if (!productId) return
   matUploading.value = true
   let ok = 0
   const failed = []
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i]
-    matUploadStage.value = 'uploading'
-    matProgress.value = 0
-    try {
-      const uploaded = await uploadMaterialFile(api, f, (percent, stage) => {
-        matProgress.value = percent
-        matUploadStage.value = stage || 'uploading'
-      }, { direct: true, allowBackendFallback: true })
-      await api.post(`/api/products/${detail.value.id}/materials`,
-        { type: 'video_ai', title: f.name, oss_key: uploaded.key }, { skipBadgeRefresh: true })
-      ok += 1
-    } catch (e) {
-      failed.push(f.name)
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      matBatch.value = { index: i + 1, total: files.length }
+      matUploadStage.value = 'uploading'
+      matProgress.value = 0
+      try {
+        const uploaded = await uploadMaterialFile(api, f, (percent, stage) => {
+          matProgress.value = percent
+          matUploadStage.value = stage || 'uploading'
+        }, { direct: true, allowBackendFallback: true })
+        await api.post(`/api/products/${productId}/materials`,
+          { type: 'video_ai', title: f.name, oss_key: uploaded.key }, { skipBadgeRefresh: true })
+        ok += 1
+      } catch (e) {
+        failed.push(f.name)
+      }
     }
+  } finally {
+    matUploading.value = false
+    matUploadStage.value = ''
+    matBatch.value = null
   }
-  matUploading.value = false
-  matUploadStage.value = ''
   if (ok) ElMessage.success(`已上传 ${ok} 条 AI 视频${failed.length ? `,${failed.length} 条失败` : ''}`)
   else ElMessage.error('上传失败,请检查网络或存储配置')
   uploadVisible.value = false
@@ -914,24 +926,28 @@ function clearEditFile() {
 }
 async function saveMat() {
   if (!hasMaterialContent(matEdit)) return ElMessage.warning('请保留文件、链接或文案中的至少一项')
-  await api.put(`/api/products/materials/${matEdit.id}`, {
-    title: matEdit.title || undefined,
-    oss_key: cleanText(matEdit.oss_key) || null,
-    parsed_text: cleanText(matEdit.parsed_text) || null,
-    source_link: cleanText(matEdit.source_link) || null,
-    report_id: cleanText(matEdit.report_id) || null,
-    downloadable: matEdit.downloadable,
-  }, { skipBadgeRefresh: true })
-  updateMaterialLocal(matEdit.id, {
-    title: matEdit.title,
-    oss_key: cleanText(matEdit.oss_key) || null,
-    url: matEdit.oss_key ? matEdit.url : null,
-    parsed_text: cleanText(matEdit.parsed_text) || null,
-    source_link: cleanText(matEdit.source_link) || null,
-    report_id: cleanText(matEdit.report_id) || null,
-    downloadable: matEdit.downloadable,
-  })
-  editMatVisible.value = false; ElMessage.success('已保存')
+  try {
+    await api.put(`/api/products/materials/${matEdit.id}`, {
+      title: matEdit.title || undefined,
+      oss_key: cleanText(matEdit.oss_key) || null,
+      parsed_text: cleanText(matEdit.parsed_text) || null,
+      source_link: cleanText(matEdit.source_link) || null,
+      report_id: cleanText(matEdit.report_id) || null,
+      downloadable: matEdit.downloadable,
+    }, { skipBadgeRefresh: true })
+    updateMaterialLocal(matEdit.id, {
+      title: matEdit.title,
+      oss_key: cleanText(matEdit.oss_key) || null,
+      url: matEdit.oss_key ? matEdit.url : null,
+      parsed_text: cleanText(matEdit.parsed_text) || null,
+      source_link: cleanText(matEdit.source_link) || null,
+      report_id: cleanText(matEdit.report_id) || null,
+      downloadable: matEdit.downloadable,
+    })
+    editMatVisible.value = false; ElMessage.success('已保存')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
 }
 async function removeProduct(row) {
   await ElMessageBox.confirm('确认删除该产品?(仅无寄样/视频/出单记录时可删)', '删除', { type: 'warning' })

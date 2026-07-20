@@ -12,9 +12,9 @@ from sqlalchemy.pool import StaticPool
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.api.h5 import my_materials  # noqa: E402
-from app.api.products import (MaterialIn, MaterialPublishIn, ProductIn,  # noqa: E402
+from app.api.products import (MaterialEditIn, MaterialIn, MaterialPublishIn, ProductIn,  # noqa: E402
                               add_material, create as create_product, detail as product_detail,
-                              publish_material)
+                              edit_material, list_products, publish_material)
 from app.db import Base  # noqa: E402
 from app.models import AccessGrant, Cooperation, Influencer, User  # noqa: E402
 
@@ -83,6 +83,26 @@ def test_publish_rejects_non_output_type(db, admin):
     with pytest.raises(HTTPException) as e:
         publish_material(m["id"], MaterialPublishIn(is_public=True), admin, db)
     assert e.value.status_code == 400
+
+
+def test_edit_video_output_requires_admin(db, admin, bd):
+    """越权防护:商务即使拿到成片 id 也不能编辑。"""
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    with pytest.raises(HTTPException) as e:
+        edit_material(m["id"], MaterialEditIn(title="改标题"), bd, db)
+    assert e.value.status_code == 403
+
+
+def test_material_count_role_consistent(db, admin, bd):
+    """列表计数与详情可见性一致:商务看到的计数不含达人成片。"""
+    pid = _product(db, admin)
+    add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/b.mp4"), admin, db)
+    admin_row = next(x for x in list_products(user=admin, db=db) if x["id"] == pid)
+    bd_row = next(x for x in list_products(user=bd, db=db) if x["id"] == pid)
+    assert admin_row["material_count"] == 2
+    assert bd_row["material_count"] == 1   # 不含达人成片
 
 
 # ---------- 内部详情:商务看不到达人成片,管理员看得到 ----------

@@ -236,11 +236,12 @@ def list_products(q: str | None = None, status: str | None = None,
     grant_counts = {}
     binding_by_product = {}
     if product_ids:
-        material_counts = dict(db.execute(
-            select(Material.product_id, func.count(Material.id))
-            .where(Material.product_id.in_(product_ids))
-            .group_by(Material.product_id)
-        ).all())
+        mat_count_stmt = (select(Material.product_id, func.count(Material.id))
+                          .where(Material.product_id.in_(product_ids)))
+        if user.role != "admin":
+            # 与详情一致:商务看不到达人成片,列表计数也不计入,避免"计数比可见素材多"
+            mat_count_stmt = mat_count_stmt.where(Material.type.notin_(ADMIN_ONLY_MATERIAL_TYPES))
+        material_counts = dict(db.execute(mat_count_stmt.group_by(Material.product_id)).all())
         grant_counts = dict(db.execute(
             select(AccessGrant.product_id, func.count(AccessGrant.id))
             .where(AccessGrant.product_id.in_(product_ids))
@@ -330,6 +331,8 @@ def edit_material(material_id: int, body: MaterialEditIn,
     m = db.get(Material, material_id)
     if not m:
         raise HTTPException(404, "素材不存在")
+    if m.type in ADMIN_ONLY_MATERIAL_TYPES and user.role != "admin":
+        raise HTTPException(403, "达人成片仅管理员可维护")
     data = _normalized_material_data(body.model_dump(exclude_unset=True), m.type)
     for k, v in data.items():
         setattr(m, k, v)
