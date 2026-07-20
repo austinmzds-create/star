@@ -136,6 +136,41 @@ def signed_put_url(key: str, content_type: str, expires: int = 3600) -> str:
         "PUT", key, expires, slash_safe=True, headers={"Content-Type": content_type})))
 
 
+# 分片并行直传:大视频提速的关键。init/complete 走后端(小请求、不暴露 AK),
+# 唯一的大流量步骤"上传分片"由浏览器凭签名 URL 并行直传 OSS,吃满上行带宽。
+MULTIPART_PART_SIZE = 5 * 1024 * 1024   # 与前端 PART_SIZE 对齐
+MULTIPART_MAX_PARTS = 10000             # OSS 硬上限
+
+
+def init_multipart(key: str, content_type: str | None = None) -> str:
+    """初始化分片上传,返回 upload_id。Content-Type 在此设定,合并后对象即为该类型
+    (与单文件签名 PUT 落库类型一致)。"""
+    headers = {"Content-Type": content_type} if content_type else None
+    return _bucket().init_multipart_upload(key, headers=headers).upload_id
+
+
+def signed_part_url(key: str, upload_id: str, part_number: int, expires: int = 3600) -> str:
+    """单个分片的签名 PUT URL。分片 PUT 不携带 Content-Type(不纳入签名),前端 send(blob)
+    时 blob.type 为空、浏览器不会补 Content-Type,故签名一致、不会 403。"""
+    return _maybe_accelerate(_https_url(_bucket().sign_url(
+        "PUT", key, expires, slash_safe=True,
+        params={"partNumber": str(part_number), "uploadId": upload_id})))
+
+
+def complete_multipart(key: str, upload_id: str, parts: list[dict]) -> None:
+    from oss2.models import PartInfo
+    infos = [PartInfo(int(p["part_number"]), str(p["etag"]).strip('"'))
+             for p in sorted(parts, key=lambda x: int(x["part_number"]))]
+    _bucket().complete_multipart_upload(key, upload_id, infos)
+
+
+def abort_multipart(key: str, upload_id: str) -> None:
+    try:
+        _bucket().abort_multipart_upload(key, upload_id)
+    except Exception:  # 取消是尽力而为;残留分片由 OSS 生命周期规则回收
+        pass
+
+
 def public_object_url(key: str) -> str:
     if settings.oss_public_base_url:
         base = settings.oss_public_base_url.rstrip("/")

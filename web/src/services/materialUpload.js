@@ -8,6 +8,11 @@ const STALL_TIMEOUT_MS = 60000
 // 兜底硬上限:即便进度回调因浏览器异常不触发,也不至于永久挂起。
 const HARD_CAP_MS = 30 * 60 * 1000
 
+// 分片并行直传:大视频提速的关键。单条 TCP 直传到上海 OSS 常吃不满上行带宽
+//(受 RTT/丢包限制),多个分片并行才能把管道打满——这正是「验签直传很快」的做法。
+const PART_SIZE = 5 * 1024 * 1024
+const PART_CONCURRENCY = 4
+
 function isVideoFile(file) {
   const type = (file.type || '').toLowerCase()
   const name = (file.name || '').toLowerCase()
@@ -23,7 +28,9 @@ function assertUploadFile(file, options = {}) {
   }
 }
 
-function putFileToOss(ticket, file, onProgress, options = {}) {
+// 通用的「带停顿看门狗的 PUT」:body 可为整文件或单个分片 blob。
+// onProgress(loadedBytes) 汇报本次请求已上传字节;setContentType 决定是否发送 Content-Type 头。
+function putWithWatchdog({ url, body, contentType, onLoaded, options = {} }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     let settled = false
@@ -40,7 +47,6 @@ function putFileToOss(ticket, file, onProgress, options = {}) {
       clearTimers()
       fn(value)
     }
-    // 每次有字节进展就重置停顿计时;真正连续无进展才中断。
     const armStall = () => {
       if (stallTimer) clearTimeout(stallTimer)
       stallTimer = setTimeout(() => {
@@ -48,21 +54,16 @@ function putFileToOss(ticket, file, onProgress, options = {}) {
         try { xhr.abort() } catch { /* 已中断,忽略 */ }
       }, stallMs)
     }
-    xhr.open('PUT', ticket.upload_url)
-    // 签名 PUT 把 Content-Type 计入签名,必须与票据一致,否则 403 SignatureDoesNotMatch。
-    xhr.setRequestHeader('Content-Type', ticket.content_type || file.type || 'application/octet-stream')
+    xhr.open('PUT', url)
+    // 单文件签名 PUT 把 Content-Type 计入签名,必须发送且一致;分片签名不含 Content-Type,不能发。
+    if (contentType) xhr.setRequestHeader('Content-Type', contentType)
     xhr.upload.onprogress = (event) => {
       armStall()
-      if (event.lengthComputable && onProgress) {
-        const total = event.total || file.size
-        const percent = total > 0 ? Math.min(100, Math.round((event.loaded / total) * 100)) : 0
-        onProgress(percent, percent >= 100 ? 'confirming' : 'oss')
-      }
+      if (event.lengthComputable) onLoaded?.(event.loaded, event.total)
     }
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        onProgress?.(100, 'confirming')
-        finish(resolve)
+        finish(resolve, xhr)
       } else {
         const detail = xhr.responseText ? `: ${xhr.responseText.slice(0, 200)}` : ''
         finish(reject, new Error(`OSS 直传失败 ${xhr.status}${detail}`))
@@ -75,8 +76,99 @@ function putFileToOss(ticket, file, onProgress, options = {}) {
       try { xhr.abort() } catch { /* 已中断,忽略 */ }
     }, HARD_CAP_MS)
     armStall()
-    xhr.send(file)
+    xhr.send(body)
   })
+}
+
+// 单次签名 PUT:整文件一把传(小文件,或分片不可用时的兜底)。
+async function putFileToOss(ticket, file, onProgress, options = {}) {
+  await putWithWatchdog({
+    url: ticket.upload_url,
+    body: file,
+    contentType: ticket.content_type || file.type || 'application/octet-stream',
+    options,
+    onLoaded: (loaded, total) => {
+      const t = total || file.size
+      const percent = t > 0 ? Math.min(100, Math.round((loaded / t) * 100)) : 0
+      onProgress?.(percent, percent >= 100 ? 'confirming' : 'oss')
+    },
+  })
+  onProgress?.(100, 'confirming')
+}
+
+// 单个分片:失败自动重试一次;返回 ETag(需 OSS CORS 暴露 ETag)。
+async function putSignedPart(url, blob, onLoaded, options = {}) {
+  const send = () => putWithWatchdog({ url, body: blob, contentType: null, onLoaded, options })
+  let xhr
+  try {
+    xhr = await send()
+  } catch {
+    xhr = await send()   // 单片失败重试一次(抖动/瞬断)
+  }
+  const etag = xhr.getResponseHeader('ETag')
+  if (!etag) throw new Error('分片未返回 ETag(请检查 OSS 跨域规则 ExposeHeader 含 ETag)')
+  return etag
+}
+
+// 分片并行签名直传:init/complete 走后端(小请求、不暴露 AK),分片本体浏览器并行直传 OSS。
+async function multipartSignedUpload(api, ticket, file, onProgress, options = {}) {
+  const partSize = Number(ticket.part_size) > 0 ? Number(ticket.part_size) : PART_SIZE
+  const total = file.size
+  const partCount = Math.ceil(total / partSize)
+  const init = await api.post('/api/upload/multipart/init',
+    { key: ticket.key, parts: partCount }, { skipBadgeRefresh: true })
+  const uploadId = init.upload_id
+  const partUrls = init.parts   // [{part_number, url}],按 part_number 升序
+  if (!Array.isArray(partUrls) || partUrls.length !== partCount) {
+    throw new Error('分片初始化返回不完整')
+  }
+  const loaded = new Array(partCount).fill(0)
+  const report = () => {
+    const sum = loaded.reduce((a, b) => a + b, 0)
+    onProgress?.(Math.min(99, Math.round((sum / total) * 100)), 'oss')
+  }
+  const done = new Array(partCount)
+  let nextIndex = 0
+  async function worker() {
+    while (nextIndex < partCount) {
+      const i = nextIndex++
+      const { part_number: pn, url } = partUrls[i]
+      const start = i * partSize
+      const blob = file.slice(start, Math.min(start + partSize, total))
+      const etag = await putSignedPart(url, blob, (l) => { loaded[i] = l; report() }, options)
+      loaded[i] = blob.size
+      report()
+      done[i] = { part_number: pn, etag }
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, partCount) }, worker))
+    await api.post('/api/upload/multipart/complete',
+      { key: ticket.key, upload_id: uploadId, parts: done }, { skipBadgeRefresh: true })
+    onProgress?.(100, 'confirming')
+  } catch (e) {
+    // 取消尽力而为,残留分片由 OSS 生命周期规则回收
+    try {
+      await api.post('/api/upload/multipart/abort',
+        { key: ticket.key, upload_id: uploadId }, { skipBadgeRefresh: true })
+    } catch { /* noop */ }
+    throw e
+  }
+}
+
+// 大文件优先分片并行,失败则回退单次签名 PUT——保证「不劣于现状」,可用时更快。
+async function uploadSignedToOss(api, ticket, file, onProgress, options = {}) {
+  const partSize = Number(ticket.part_size) > 0 ? Number(ticket.part_size) : PART_SIZE
+  if (file.size > partSize) {
+    try {
+      await multipartSignedUpload(api, ticket, file, onProgress, options)
+      return
+    } catch (e) {
+      // 分片不可用(如 CORS 未暴露 ETag)或中途失败 → 回退整文件单次 PUT,慢但可用。
+      onProgress?.(0, 'oss')
+    }
+  }
+  await putFileToOss(ticket, file, onProgress, options)
 }
 
 async function uploadViaBackend(api, file, onProgress, prefix = 'materials') {
@@ -124,7 +216,13 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
 
     if (ticket.enabled && ticket.upload_url && ticket.key) {
       try {
-        await putFileToOss(ticket, file, onProgress, options)
+        if (ticket.signed) {
+          // 签名直传(私有 bucket 也可):大文件分片并行、小文件单次 PUT。
+          await uploadSignedToOss(api, ticket, file, onProgress, options)
+        } else {
+          // 匿名公共 bucket:保持单次 PUT(分片需签名编排,这里不适用)。
+          await putFileToOss(ticket, file, onProgress, options)
+        }
       } catch (error) {
         if (canBackendFallback(file, options)) {
           onProgress?.(0, 'fallback')

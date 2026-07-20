@@ -56,6 +56,8 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
             # 签名 PUT 把 content_type 计入签名,前端必须发送同一个 content_type(见下)
             "upload_url": storage.signed_put_url(key, content_type),
             "content_type": content_type,
+            # 大文件走分片并行直传(前端据此决定阈值/分片大小),小文件仍单次 PUT
+            "part_size": storage.MULTIPART_PART_SIZE,
             "preview_url": storage.preview_url(key),
             "inline_preview": storage.inline_preview_enabled(),
         }
@@ -70,6 +72,68 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
         "preview_url": storage.preview_url(key),
         "inline_preview": storage.inline_preview_enabled(),
     }
+
+
+class MultipartInitIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    parts: int = Field(ge=1, le=storage.MULTIPART_MAX_PARTS)
+
+
+class MultipartCompleteIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    upload_id: str = Field(min_length=1, max_length=128)
+    parts: list[dict]
+
+
+class MultipartAbortIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    upload_id: str = Field(min_length=1, max_length=128)
+
+
+def _assert_uploadable_key(key: str) -> None:
+    """校验 key 合法且类型在白名单——防止借分片接口写任意/危险对象。"""
+    if not _is_safe_key(key) or not storage.extension_allowed(key):
+        raise HTTPException(400, "非法的上传对象")
+
+
+@router.post("/upload/multipart/init")
+def multipart_init(body: MultipartInitIn, user: User = Depends(current_user)):
+    """初始化分片:后端调 OSS 拿 upload_id,并为每个分片签发直传 URL。
+    大流量的分片本体由浏览器凭签名 URL 并行直传,不经 ECS。"""
+    if not storage.use_signed_upload():
+        raise HTTPException(400, "未启用签名直传")
+    _assert_uploadable_key(body.key)
+    upload_id = storage.init_multipart(body.key, storage.content_type(body.key))
+    part_urls = [{"part_number": i,
+                  "url": storage.signed_part_url(body.key, upload_id, i)}
+                 for i in range(1, body.parts + 1)]
+    return {"upload_id": upload_id, "parts": part_urls}
+
+
+@router.post("/upload/multipart/complete")
+def multipart_complete(body: MultipartCompleteIn, user: User = Depends(current_user)):
+    if not storage.use_signed_upload():
+        raise HTTPException(400, "未启用签名直传")
+    _assert_uploadable_key(body.key)
+    if not body.parts:
+        raise HTTPException(400, "缺少分片信息")
+    try:
+        storage.complete_multipart(body.key, body.upload_id, body.parts)
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "分片信息格式不正确")
+    except Exception:
+        logger.exception("[upload] 分片合并失败")
+        raise HTTPException(502, "分片合并失败,请重试")
+    return {"ok": True, "key": body.key}
+
+
+@router.post("/upload/multipart/abort")
+def multipart_abort(body: MultipartAbortIn, user: User = Depends(current_user)):
+    if not storage.use_signed_upload():
+        raise HTTPException(400, "未启用签名直传")
+    _assert_uploadable_key(body.key)
+    storage.abort_multipart(body.key, body.upload_id)
+    return {"ok": True}
 
 
 @router.post("/upload")
