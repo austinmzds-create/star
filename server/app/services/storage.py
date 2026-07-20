@@ -101,14 +101,25 @@ def use_signed_upload() -> bool:
     return bool(_bucket() and settings.oss_access_key_id and settings.oss_access_key_secret)
 
 
+def _https_url(url: str) -> str:
+    """交给浏览器的直传/直读地址强制 https。
+
+    oss2 在 endpoint 缺少协议时会生成 http:// 签名 URL;而站点是 https,浏览器会把对 http 的
+    请求当"混合内容"直接拦截 → 表现为直传 onerror("OSS 直传网络异常")。scheme 不参与 OSS
+    签名,替换后签名依然有效。"""
+    if url.startswith("http://"):
+        return "https://" + url[len("http://"):]
+    return url
+
+
 def signed_put_url(key: str, content_type: str, expires: int = 3600) -> str:
     """单文件直传的签名 PUT URL。
 
     OSS V1 签名把 Content-Type 计入签名串,因此必须把它纳入签名,且前端 PUT 时必须发送
     完全一致的 Content-Type(见 direct-ticket 返回的 content_type),否则 403 SignatureDoesNotMatch。
     对象因此以正确的 Content-Type 落库,后续签名 GET 直读也能拿到正确类型。"""
-    return _bucket().sign_url("PUT", key, expires, slash_safe=True,
-                              headers={"Content-Type": content_type})
+    return _https_url(_bucket().sign_url("PUT", key, expires, slash_safe=True,
+                                         headers={"Content-Type": content_type}))
 
 
 def public_object_url(key: str) -> str:
@@ -225,7 +236,7 @@ def public_or_signed_url(key: str, expires: int = 86400) -> str:
 def signed_get_url(key: str, expires: int = 1800) -> str:
     """短时效签名 GET URL,用于下载重定向:私有 bucket 直读、不占 ECS 带宽。
     注意:阿里云默认域名会强制 Content-Disposition: attachment,故仅用于下载,不用于内联预览。"""
-    return _bucket().sign_url("GET", key, expires, slash_safe=True)
+    return _https_url(_bucket().sign_url("GET", key, expires, slash_safe=True))
 
 
 def material_file_url(material_id: int, download: bool = False, expires: int = 86400) -> str:
