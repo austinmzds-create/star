@@ -273,6 +273,8 @@ class Material(Base, TimestampMixin):
     report_id: Mapped[str | None] = mapped_column(String(64))        # 质检报告ID(挂视频下方用)
     downloadable: Mapped[bool] = mapped_column(Boolean, default=True)
     starred: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 是否对达人端公开。主要用于 video_output(达人成片):默认私有(仅内部),管理员点"公开"后才对外展示
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
 
     product: Mapped[Product] = relationship(back_populates="materials")
 

@@ -269,9 +269,11 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
                   "signed_at": o.signed_at.isoformat() if o.signed_at else None,
                   "reject_reason": o.reject_reason,
                   "created_at": o.created_at.isoformat()}
+    # 达人端:达人成片(video_output)默认不展示,仅管理员公开(is_public)的才作为参考露出
     materials = db.scalars(
         select(Material)
-        .where(Material.product_id == product_id)
+        .where(Material.product_id == product_id,
+               or_(Material.type != "video_output", Material.is_public.is_(True)))
         .order_by(Material.created_at.desc(), Material.id.desc())
     ).all()
     posts = db.scalars(
@@ -334,6 +336,9 @@ def log_download(material_id: int, inf: Influencer = Depends(current_influencer)
     """下载留痕;严格校验该素材所属产品已授权给本达人(数据隔离红线)"""
     m = db.get(Material, material_id)
     if not m or not m.downloadable or not m.oss_key:
+        raise HTTPException(403, "素材不可下载")
+    # 达人成片未公开时,达人不得凭 id 直接下载
+    if m.type == "video_output" and not m.is_public:
         raise HTTPException(403, "素材不可下载")
     _assert_granted(db, inf.id, m.product_id)  # 关键:必须授权
     db.add(MaterialDownloadLog(material_id=material_id, influencer_id=inf.id))

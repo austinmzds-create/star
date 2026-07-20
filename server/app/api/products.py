@@ -21,6 +21,8 @@ from ..services.sample_orders import dedupe_sample_rows
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 MATERIAL_TYPES = {"video_ai", "video_hot", "video_output", "image", "pdf", "copy"}
+# 达人成片:仅管理员可维护/查看,默认不对达人公开(需手动"公开")
+ADMIN_ONLY_MATERIAL_TYPES = {"video_output"}
 QIANCHUAN_BINDING_STATUSES = {"draft", "configured", "disabled"}
 QIANCHUAN_COOP_STATUSES = {"bound", "pending", "failed", "disabled"}
 
@@ -300,6 +302,8 @@ def add_material(product_id: int, body: MaterialIn,
                  user: User = Depends(current_user), db: Session = Depends(get_db)):
     if not db.get(Product, product_id):
         raise HTTPException(404, "产品不存在")
+    if body.type in ADMIN_ONLY_MATERIAL_TYPES and user.role != "admin":
+        raise HTTPException(403, "达人成片仅管理员可维护")
     data = _normalized_material_data(body.model_dump(), body.type)
     _validate_material_data(data, body.type)
     m = Material(product_id=product_id, **data)
@@ -342,9 +346,31 @@ def edit_material(material_id: int, body: MaterialEditIn,
 def delete_material(material_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     m = db.get(Material, material_id)
     if m:
+        if m.type in ADMIN_ONLY_MATERIAL_TYPES and user.role != "admin":
+            raise HTTPException(403, "达人成片仅管理员可维护")
         db.delete(m)
         db.commit()
     return {"ok": True}
+
+
+class MaterialPublishIn(BaseModel):
+    is_public: bool
+
+
+@router.post("/materials/{material_id}/publish")
+def publish_material(material_id: int, body: MaterialPublishIn,
+                     user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """公开/取消公开达人成片:仅管理员;公开后才在达人端(H5)作为参考展示。"""
+    if user.role != "admin":
+        raise HTTPException(403, "仅管理员可公开达人成片")
+    m = db.get(Material, material_id)
+    if not m:
+        raise HTTPException(404, "素材不存在")
+    if m.type not in ADMIN_ONLY_MATERIAL_TYPES:
+        raise HTTPException(400, "该素材类型无需公开控制")
+    m.is_public = body.is_public
+    db.commit()
+    return {"ok": True, "is_public": m.is_public}
 
 
 def _material_dict(m: Material) -> dict:
@@ -354,7 +380,8 @@ def _material_dict(m: Material) -> dict:
             "inline_preview": storage.inline_preview_enabled(),
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
-            "starred": m.starred, "created_at": m.created_at.isoformat()}
+            "starred": m.starred, "is_public": m.is_public,
+            "created_at": m.created_at.isoformat()}
 
 
 MATERIAL_POST_CATEGORIES = {"video", "image", "doc", "copy"}
@@ -721,11 +748,13 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
-    materials = db.scalars(
-        select(Material)
-        .where(Material.product_id == product_id)
-        .order_by(Material.created_at.desc(), Material.id.desc())
-    ).all()
+    mat_stmt = (select(Material)
+                .where(Material.product_id == product_id)
+                .order_by(Material.created_at.desc(), Material.id.desc()))
+    if user.role != "admin":
+        # 达人成片仅管理员可见,商务连内部详情都拿不到
+        mat_stmt = mat_stmt.where(Material.type.notin_(ADMIN_ONLY_MATERIAL_TYPES))
+    materials = db.scalars(mat_stmt).all()
     binding = db.scalars(select(ProductQianchuanBinding)
                          .where(ProductQianchuanBinding.product_id == product_id)).first()
     return {"id": p.id, "name": p.name, "price_text": p.price_text, "shop_name": p.shop_name,

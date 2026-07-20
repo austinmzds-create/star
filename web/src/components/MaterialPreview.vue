@@ -14,7 +14,7 @@
       </div>
     </div>
     <el-image
-      v-else-if="material.type === 'image' && material.url"
+      v-else-if="isImageLike && material.url"
       :key="imageUrl"
       :src="imageUrl"
       :preview-src-list="[imageUrl]"
@@ -77,6 +77,12 @@ const props = defineProps({
 
 const isVideo = computed(() => (
   ['video_ai', 'video_hot', 'video_output'].includes(props.material.type)
+))
+// 质检报告可传图片:按文件扩展名识别图片,按图片方式预览(而非当作 PDF 文件卡)
+const IMG_EXT_RE = /\.(png|jpe?g|webp|gif|bmp)(\?|$)/i
+const isImageLike = computed(() => (
+  props.material.type === 'image'
+  || (props.material.type === 'pdf' && IMG_EXT_RE.test(props.material.oss_key || props.material.url || ''))
 ))
 const manualPreview = ref(false)
 const retryToken = ref(0)
