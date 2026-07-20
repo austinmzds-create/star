@@ -28,25 +28,99 @@ class DirectUploadIn(BaseModel):
 def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user)):
     """前端直传 OSS 的临时目标。
 
-    当前测试 bucket 是公共读写,所以不签名;后续切生产私有 bucket 时,
-    这里可以平滑替换成 STS 或带签名 PUT URL,前端调用语义不变。
+    配了 AK → 返回签名 PUT URL(signed=True),浏览器凭签名直传,bucket 可为私有;
+    未配 AK(匿名公共 bucket)→ 返回不签名的公共 URL,保持旧行为。
     """
     if not storage.extension_allowed(body.filename):
         raise HTTPException(400, "不支持的文件类型,仅允许图片/视频/PDF")
     if not storage.use_oss():
         return {"enabled": False}
     key = storage.make_key(body.filename, body.prefix)
+    # Content-Type 由扩展名推导,不采信前端(避免伪造 text/html);预览统一走 /api/files 代理
+    content_type = storage.content_type(key)
+    if storage.use_signed_upload():
+        return {
+            "enabled": True,
+            "signed": True,
+            "key": key,
+            "upload_url": storage.signed_put_url(key),
+            "content_type": content_type,
+            "part_size": MULTIPART_PART_SIZE,
+            "preview_url": storage.preview_url(key),
+            "inline_preview": storage.inline_preview_enabled(),
+        }
     public_url = storage.public_object_url(key)
-    # Content-Type 一律由扩展名推导,不采信前端传入(否则可伪造 text/html 内联执行)
     return {
         "enabled": True,
+        "signed": False,
         "key": key,
         "upload_url": public_url,
-        "content_type": storage.content_type(key),
+        "content_type": content_type,
         "url": public_url,
         "preview_url": storage.preview_url(key),
         "inline_preview": storage.inline_preview_enabled(),
     }
+
+
+# 分片直传:与前端 PART_SIZE 对齐(5MB),后端据此换算/校验分片数
+MULTIPART_PART_SIZE = 5 * 1024 * 1024
+
+
+class MultipartInitIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    parts: int = Field(ge=1, le=storage.MULTIPART_MAX_PARTS)
+
+
+class MultipartCompleteIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    upload_id: str = Field(min_length=1, max_length=128)
+    parts: list[dict]
+
+
+class MultipartAbortIn(BaseModel):
+    key: str = Field(min_length=1, max_length=512)
+    upload_id: str = Field(min_length=1, max_length=128)
+
+
+def _assert_uploadable_key(key: str) -> None:
+    """校验 key 合法且类型在白名单——防止借分片接口写任意/危险对象。"""
+    if not _is_safe_key(key) or not storage.extension_allowed(key):
+        raise HTTPException(400, "非法的上传对象")
+
+
+@router.post("/upload/multipart/init")
+def multipart_init(body: MultipartInitIn, user: User = Depends(current_user)):
+    if not storage.use_signed_upload():
+        raise HTTPException(400, "未启用签名直传")
+    _assert_uploadable_key(body.key)
+    upload_id = storage.init_multipart(body.key, storage.content_type(body.key))
+    part_urls = [{"part_number": i,
+                  "url": storage.signed_part_url(body.key, upload_id, i)}
+                 for i in range(1, body.parts + 1)]
+    return {"upload_id": upload_id, "parts": part_urls}
+
+
+@router.post("/upload/multipart/complete")
+def multipart_complete(body: MultipartCompleteIn, user: User = Depends(current_user)):
+    if not storage.use_signed_upload():
+        raise HTTPException(400, "未启用签名直传")
+    _assert_uploadable_key(body.key)
+    if not body.parts:
+        raise HTTPException(400, "缺少分片信息")
+    try:
+        storage.complete_multipart(body.key, body.upload_id, body.parts)
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "分片信息格式不正确")
+    except Exception:
+        logger.exception("[upload] 分片合并失败")
+        raise HTTPException(502, "分片合并失败,请重试")
+    return {"ok": True, "key": body.key}
+
+
+@router.post("/upload/multipart/abort")
+def multipart_abort(body: MultipartAbortIn, user: User = Depends(current_user)):
+    storage.abort_multipart(body.key, body.upload_id)
+    return {"ok": True}
 
 
 # 素材可能是视频,单文件上限放到 200MB;超限直接 413。

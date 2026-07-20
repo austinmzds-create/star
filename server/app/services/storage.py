@@ -96,6 +96,47 @@ def make_key(filename: str, prefix: str = "materials") -> str:
     return f"{clean_prefix}/{uuid.uuid4().hex}{ext}"
 
 
+# ---- 签名直传(支持私有 bucket)。配了 AK 即启用:浏览器凭签名 URL 直传 OSS,
+# 不再依赖 bucket 公共写。单文件用签名 PUT;大文件分片——init/complete 走服务端(小请求、快、
+# 不暴露 AK),仅"上传分片"这一大流量步骤由浏览器凭签名 URL 直传。 ----
+MULTIPART_MAX_PARTS = 10000  # OSS 硬上限
+
+
+def use_signed_upload() -> bool:
+    """AK 齐全 → 用签名直传(私有 bucket 也可);否则(匿名公共 bucket)退回不签名直传。"""
+    return bool(_bucket() and settings.oss_access_key_id and settings.oss_access_key_secret)
+
+
+def signed_put_url(key: str, expires: int = 3600) -> str:
+    """单文件直传的签名 PUT URL。不把 Content-Type 纳入签名,避免前后端头不一致导致 403;
+    对象对外预览统一走 /api/files 代理并由扩展名决定类型,OSS 侧存储类型不影响安全。"""
+    return _bucket().sign_url("PUT", key, expires, slash_safe=True)
+
+
+def init_multipart(key: str, content_type: str | None = None) -> str:
+    headers = {"Content-Type": content_type} if content_type else None
+    return _bucket().init_multipart_upload(key, headers=headers).upload_id
+
+
+def signed_part_url(key: str, upload_id: str, part_number: int, expires: int = 3600) -> str:
+    return _bucket().sign_url("PUT", key, expires, slash_safe=True,
+                              params={"partNumber": str(part_number), "uploadId": upload_id})
+
+
+def complete_multipart(key: str, upload_id: str, parts: list[dict]) -> None:
+    from oss2.models import PartInfo
+    infos = [PartInfo(int(p["part_number"]), str(p["etag"]).strip('"'))
+             for p in sorted(parts, key=lambda x: int(x["part_number"]))]
+    _bucket().complete_multipart_upload(key, upload_id, infos)
+
+
+def abort_multipart(key: str, upload_id: str) -> None:
+    try:
+        _bucket().abort_multipart_upload(key, upload_id)
+    except Exception:  # 取消是尽力而为;残留分片由 OSS 生命周期规则回收
+        pass
+
+
 def public_object_url(key: str) -> str:
     if settings.oss_public_base_url:
         base = settings.oss_public_base_url.rstrip("/")

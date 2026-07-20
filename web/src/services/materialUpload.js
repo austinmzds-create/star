@@ -58,7 +58,9 @@ function putFileToOss(ticket, file, onProgress) {
       if (event.lengthComputable && onProgress) {
         const percent = Math.round((event.loaded / event.total) * 100)
         onProgress(percent, percent >= 100 ? 'confirming' : 'uploading')
-        if (percent >= 100) startConfirmTimer()
+        // 签名直传:PUT 签名的 URL 不能用 HEAD 复核(会 403),直接等 onload 判定;
+        // 仅不签名的公共直传才用 HEAD 轮询兜底 onload 不回的场景。
+        if (percent >= 100 && !ticket.signed) startConfirmTimer()
       }
     }
     xhr.onload = () => {
@@ -159,6 +161,73 @@ async function multipartUploadToOss(objectUrl, file, contentType, onProgress) {
   }
 }
 
+// ---- 签名分片直传:init/complete 走后端(小请求、不暴露 AK),分片本体浏览器凭签名 URL 直传 ----
+function putSignedPart(url, blob, onLoaded) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', url)
+    xhr.timeout = PART_TIMEOUT_MS
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onLoaded(e.loaded) }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        const etag = xhr.getResponseHeader('ETag')
+        // 读不到 ETag 通常是 OSS CORS 未 ExposeHeader: ETag
+        if (!etag) reject(new Error('分片未返回 ETag(请检查 OSS 跨域规则的 ExposeHeader 含 ETag)'))
+        else resolve(etag)
+      } else reject(new Error(`分片失败: ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('分片网络错误'))
+    xhr.ontimeout = () => reject(new Error('分片超时'))
+    xhr.send(blob)
+  })
+}
+
+async function multipartSignedUpload(api, ticket, file, onProgress) {
+  const partSize = ticket.part_size || PART_SIZE
+  const total = file.size
+  const partCount = Math.ceil(total / partSize)
+  const init = await api.post('/api/upload/multipart/init',
+    { key: ticket.key, parts: partCount }, { skipBadgeRefresh: true })
+  const uploadId = init.upload_id
+  const partUrls = init.parts   // [{part_number, url}],按 part_number 升序
+  const loaded = new Array(partCount).fill(0)
+  const report = () => {
+    const sum = loaded.reduce((a, b) => a + b, 0)
+    onProgress?.(Math.min(99, Math.round((sum / total) * 100)), 'uploading')
+  }
+  const done = new Array(partCount)
+  let nextIndex = 0
+  async function worker() {
+    while (nextIndex < partCount) {
+      const i = nextIndex++
+      const { part_number: pn, url } = partUrls[i]
+      const start = i * partSize
+      const blob = file.slice(start, Math.min(start + partSize, total))
+      let etag
+      try {
+        etag = await putSignedPart(url, blob, (l) => { loaded[i] = l; report() })
+      } catch (e) {
+        etag = await putSignedPart(url, blob, (l) => { loaded[i] = l; report() }) // 单片失败重试一次
+      }
+      loaded[i] = blob.size
+      report()
+      done[i] = { part_number: pn, etag }
+    }
+  }
+  try {
+    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, partCount) }, worker))
+    await api.post('/api/upload/multipart/complete',
+      { key: ticket.key, upload_id: uploadId, parts: done }, { skipBadgeRefresh: true })
+    onProgress?.(100, 'confirming')
+  } catch (e) {
+    try {
+      await api.post('/api/upload/multipart/abort',
+        { key: ticket.key, upload_id: uploadId }, { skipBadgeRefresh: true })
+    } catch { /* 取消尽力而为,残留分片由 OSS 生命周期规则回收 */ }
+    throw e
+  }
+}
+
 async function uploadViaBackend(api, file, onProgress, prefix = 'materials') {
   const formData = new FormData()
   formData.append('file', file)
@@ -187,10 +256,14 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
       }, { skipBadgeRefresh: true })
       if (ticket.enabled && ticket.upload_url && ticket.key) {
         const contentType = ticket.content_type || file.type || 'application/octet-stream'
-        if (file.size > MULTIPART_THRESHOLD) {
-          await multipartUploadToOss(ticket.upload_url, file, contentType, onProgress)  // 大文件/视频:并行分片,快
+        if (ticket.signed) {
+          // 签名直传(支持私有 bucket):大文件走服务端编排的分片,小文件单次签名 PUT
+          if (file.size > MULTIPART_THRESHOLD) await multipartSignedUpload(api, ticket, file, onProgress)
+          else await putFileToOss(ticket, file, onProgress)
+        } else if (file.size > MULTIPART_THRESHOLD) {
+          await multipartUploadToOss(ticket.upload_url, file, contentType, onProgress)  // 匿名公共 bucket:并行分片
         } else {
-          await putFileToOss(ticket, file, onProgress)                                   // 小文件:单次 PUT
+          await putFileToOss(ticket, file, onProgress)                                   // 匿名公共 bucket:单次 PUT
         }
         // 回显用后端内联代理地址(preview_url = /api/files/...),OSS 默认域名会强制下载无法内联显示
         return { key: ticket.key, url: ticket.preview_url || ticket.url, direct: true }
