@@ -1,61 +1,43 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
-// 内部端(管理员/商务)
-import AdminLayout from './views/AdminLayout.vue'
-import BlockRecords from './views/BlockRecords.vue'
-import ConnectionRequests from './views/ConnectionRequests.vue'
-import Dashboard from './views/Dashboard.vue'
-import Followups from './views/Followups.vue'
-import InfluencerDetail from './views/InfluencerDetail.vue'
-import Influencers from './views/Influencers.vue'
+// 路由级懒加载:各页面拆成独立 chunk,按需加载。首屏只下载入口 + 命中页面的 chunk,
+// 内部端与 H5 端互不牵连(达人不必下载后台管理代码,反之亦然)。
+// 登录页保持同步,保证落地首屏即时可见。
 import Login from './views/Login.vue'
-import Products from './views/Products.vue'
-import Samples from './views/Samples.vue'
-import Settings from './views/Settings.vue'
-import Videos from './views/Videos.vue'
-import Workbench from './views/Workbench.vue'
-
-// 达人端 H5(task.jisheng.yun)
-import H5Layout from './h5/H5Layout.vue'
-import H5Home from './h5/Home.vue'
-import H5ProductList from './h5/ProductList.vue'
-import H5Me from './h5/Me.vue'
-import H5Materials from './h5/Materials.vue'
-import H5Notice from './h5/Notice.vue'
 
 const routes = [
   { path: '/login', component: Login },
   {
     path: '/',
-    component: AdminLayout,
+    component: () => import('./views/AdminLayout.vue'),
     children: [
       { path: '', redirect: '/workbench' },
-      { path: 'workbench', component: Workbench },
-      { path: 'influencers', component: Influencers },
-      { path: 'influencers/:id', component: InfluencerDetail },
-      { path: 'samples', component: Samples },
-      { path: 'followups', component: Followups },
-      { path: 'videos', component: Videos },
-      { path: 'products', component: Products },
-      { path: 'block-records', component: BlockRecords },
-      { path: 'connections', component: ConnectionRequests, meta: { adminOnly: true } },
-      { path: 'dashboard', component: Dashboard, meta: { adminOnly: true } },
-      { path: 'settings', component: Settings, meta: { adminOnly: true } },
+      { path: 'workbench', component: () => import('./views/Workbench.vue') },
+      { path: 'influencers', component: () => import('./views/Influencers.vue') },
+      { path: 'influencers/:id', component: () => import('./views/InfluencerDetail.vue') },
+      { path: 'samples', component: () => import('./views/Samples.vue') },
+      { path: 'followups', component: () => import('./views/Followups.vue') },
+      { path: 'videos', component: () => import('./views/Videos.vue') },
+      { path: 'products', component: () => import('./views/Products.vue') },
+      { path: 'block-records', component: () => import('./views/BlockRecords.vue') },
+      { path: 'connections', component: () => import('./views/ConnectionRequests.vue'), meta: { adminOnly: true } },
+      { path: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { adminOnly: true } },
+      { path: 'settings', component: () => import('./views/Settings.vue'), meta: { adminOnly: true } },
     ],
   },
   // 达人 H5:底部 tab(首页/产品/个人),布局内嵌登录门禁与手机/电脑切换
   {
     path: '/h5',
-    component: H5Layout,
+    component: () => import('./h5/H5Layout.vue'),
     children: [
-      { path: '', component: H5Home },
-      { path: 'products', component: H5ProductList },
-      { path: 'me', component: H5Me },
+      { path: '', component: () => import('./h5/Home.vue') },
+      { path: 'products', component: () => import('./h5/ProductList.vue') },
+      { path: 'me', component: () => import('./h5/Me.vue') },
     ],
   },
   // 详情类页面(全屏,自带返回):产品资料中心 / 拍摄前必读
-  { path: '/h5/products/:id', component: H5Materials },
-  { path: '/h5/notice', component: H5Notice },
+  { path: '/h5/products/:id', component: () => import('./h5/Materials.vue') },
+  { path: '/h5/notice', component: () => import('./h5/Notice.vue') },
 ]
 
 const router = createRouter({ history: createWebHistory(), routes })
