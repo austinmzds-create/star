@@ -69,7 +69,9 @@ def _apply_status(order: SampleOrder, status: dict) -> None:
     if status.get("signed") and not order.signed_at:
         order.signed_at = datetime.now()
         order.status = "signed"
-    elif status.get("status") and order.status in ("shipped", "in_transit", "signed"):
+    # 签收是终态,只进不退:已签收单不因后续(缓存回填/重查)非签收轨迹被改回在途,
+    # 否则催拍扫描(只认 signed)会把已签收单漏掉。
+    elif status.get("status") and order.status in ("shipped", "in_transit"):
         order.status = status["status"]
 
 

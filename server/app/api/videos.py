@@ -17,6 +17,11 @@ from ..services.oplog import influencer_id_for_coop, log_op
 # 投流失败凭证截图张数上限(与前端 MultiUpload :max 对齐,后端兜底防滥用)
 MAX_FAIL_PROOFS = 6
 
+# 进行中的投流状态:同一视频若已有此类投流,禁止重复发起
+PROMO_ACTIVE_STATES = {"pending_request", "pending_confirm", "authorized", "promoted"}
+# 有授权/投流/凭证的状态:删除视频前必须先在投流中处理,避免连带抹掉留证
+PROMO_PROTECTED_STATES = {"authorized", "promoted", "done", "failed"}
+
 
 def _fail_proof_keys(promo: Promotion) -> list[str]:
     """失败凭证 key 列表:优先新数组列,回退旧单值列(历史数据)。"""
@@ -93,12 +98,19 @@ def create_video(body: CreateVideoIn,
 
 @router.delete("/{task_id}")
 def delete_video(task_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """删除视频任务(连带其投流记录);已通过并已发起投流的需先处理投流。"""
+    """删除视频任务(连带其投流记录)。存在授权/投流/失败凭证的投流需先处理,不能连带静默抹掉。"""
     task = _load_owned_task(db, user, task_id)
     promos = db.scalars(select(Promotion).where(Promotion.video_task_id == task.id)).all()
+    if any(p.auth_status in PROMO_PROTECTED_STATES for p in promos):
+        raise HTTPException(400, "该视频存在授权/投流记录,请先在投流中处理后再删除")
+    inf_id = influencer_id_for_coop(db, task.cooperation_id)
     for p in promos:
         db.delete(p)
     db.delete(task)
+    if inf_id:
+        log_op(db, influencer_id=inf_id, product_id=task.product_id,
+               event_type="video_deleted", actor=user,
+               summary=f"{user.display_name} 删除视频任务(含 {len(promos)} 条未生效投流)")
     db.commit()
     return {"ok": True}
 
@@ -228,6 +240,12 @@ def create_promotion(body: CreatePromotionIn,
     inf = db.get(Influencer, coop.influencer_id)
     if not inf:
         raise HTTPException(400, "达人不存在")
+    # 幂等防重:同一视频已有进行中的投流,禁止再发起(双击/重复提交产生脏状态机)
+    active = db.scalars(select(Promotion).where(
+        Promotion.video_task_id == task.id,
+        Promotion.auth_status.in_(PROMO_ACTIVE_STATES))).first()
+    if active:
+        raise HTTPException(409, "该视频已有进行中的投流,请勿重复发起")
     promo = Promotion(video_task_id=task.id, mode_snapshot=inf.promo_mode,
                       auth_status="pending_request")
     db.add(promo)

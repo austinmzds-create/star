@@ -355,6 +355,7 @@ const connectReason = ref('')
 const connecting = ref(false)
 const act = ref({ samples: [], videos: [], promotions: [] })
 const edit = reactive({})
+const editOrig = reactive({})   // 打开编辑时的原值,用于判断用户是否手动改过佣金
 const tags = ref([])
 const tagInput = ref(null)
 const bds = ref([])
@@ -545,6 +546,7 @@ async function load() {
       level: d.value.level, commission_tier: d.value.commission_tier,
       promo_mode: d.value.promo_mode, owner_bd_id: d.value.owner_bd_id, reason: '',
     })
+    Object.assign(editOrig, { level: d.value.level, commission_tier: d.value.commission_tier })
     act.value = activity
     collab.value = collabRes.items || []
     if (tab.value === 'logs') await loadLogs()
@@ -554,9 +556,18 @@ async function load() {
 }
 
 async function save() {
-  await api.patch(`/api/influencers/${route.params.id}`, edit)
-  ElMessage.success('已保存')
-  load()
+  const payload = { ...edit }
+  // 只调级、未手动改佣金 → 不传 commission_tier,让后端联动到新等级的默认佣金档
+  if (payload.level !== editOrig.level && payload.commission_tier === editOrig.commission_tier) {
+    payload.commission_tier = null
+  }
+  try {
+    await api.patch(`/api/influencers/${route.params.id}`, payload)
+    ElMessage.success('已保存')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
 }
 async function saveAdminNote() {
   savingAdminNote.value = true

@@ -14,7 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       MaterialDownloadLog, MaterialPost, Product, SampleOrder,
                       VideoTask)
 from ..services import storage
-from ..services.identity import normalize_phone
+from ..services.identity import normalize_douyin, normalize_phone
 from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -35,7 +35,8 @@ def _clean_identity(value):
 def _assert_identity_available(db: Session, inf: Influencer, fields: dict) -> None:
     conds = []
     for field in H5_IDENTITY_FIELDS:
-        value = _clean_identity(fields.get(field))
+        raw = fields.get(field)
+        value = normalize_douyin(raw) if field == "douyin_id" else _clean_identity(raw)
         if value:
             conds.append(getattr(Influencer, field) == value)
     if not conds:
@@ -153,7 +154,8 @@ async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
                   "fans_count", "category_tags", "shoot_type", "real_name",
                   "cooperation_code", "default_address"):
         if f.get(field):
-            setattr(inf, field, f[field])
+            # 抖音号统一去前导 @,与内部端撞库口径一致,避免同一人两条档案
+            setattr(inf, field, normalize_douyin(f[field]) if field == "douyin_id" else f[field])
     db.commit()
     return {"ok": True, "parsed": f}
 

@@ -14,7 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, LevelChangeLog,
                       OperationLog, OrderRecord, Product, Promotion,
                       SampleOrder, User, VideoTask)
 from ..services import levels, storage
-from ..services.identity import normalize_phone
+from ..services.identity import normalize_douyin, normalize_phone
 from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/influencers", tags=["influencers"])
 TRACKED_FIELDS = ("level", "commission_tier", "promo_mode", "owner_bd_id")
 IDENTITY_FIELDS = ("douyin_uid", "douyin_id", "phone", "cooperation_code")
 VALID_LEVELS = ("L1", "L2", "L3")
+VALID_PROMO_MODES = ("merchant", "self")   # 商家投 / 自投(与 mode_snapshot 口径一致)
 
 IMPORT_COLUMNS = [
     ("昵称", "nickname", True),
@@ -128,14 +129,6 @@ def _clean_identity(value):
     if isinstance(value, str):
         value = value.strip()
     return value or None
-
-
-def normalize_douyin(value):
-    """抖音号规范化:去首尾空格 + 去前导 @(方案B 需求2 唯一标识口径)。"""
-    v = _clean_identity(value)
-    if not v:
-        return None
-    return v.lstrip("@").strip() or None
 
 
 def _clean_phone(value):
@@ -641,6 +634,16 @@ def update(influencer_id: int, body: UpdateIn,
     if "admin_note" in body.model_fields_set and user.role != "admin":
         raise HTTPException(403, "管理员备注仅管理员可维护")
 
+    # 关键字段合法性校验:非法值一旦落库,后续佣金档/权益快照全部错乱
+    if body.level is not None and body.level not in VALID_LEVELS:
+        raise HTTPException(400, "等级只能填写 L1/L2/L3")
+    if body.promo_mode is not None and body.promo_mode not in VALID_PROMO_MODES:
+        raise HTTPException(400, "投流方式只能是 商家投(merchant)/ 自投(self)")
+    if body.owner_bd_id is not None:
+        target = db.get(User, body.owner_bd_id)
+        if not target or target.role != "bd" or not target.is_active:
+            raise HTTPException(400, "目标归属商务不存在或已停用")
+
     for field in TRACKED_FIELDS:
         new_val = getattr(body, field, None)
         if new_val is None:
@@ -665,8 +668,9 @@ def update(influencer_id: int, body: UpdateIn,
             cfg = levels.effective_config(db, str(new_val))
             if cfg:
                 inf.commission_tier = cfg.commission_tier
+    # 可空档案字段:按"是否显式提交"决定,支持显式置空(录错可清),不再"None 即跳过"
     for field in ("tags", "gmv_30d", "shoot_type"):
-        if getattr(body, field) is not None:
+        if field in body.model_fields_set:
             setattr(inf, field, getattr(body, field))
     # 核心档案字段(录错可改);身份字段统一撞库校验,避免重复达人。
     identity_updates = {}
@@ -686,22 +690,30 @@ def update(influencer_id: int, body: UpdateIn,
         if clash and clash.archived is not True:
             raise HTTPException(400, f"该达人已存在(ID {clash.id}),不能重复使用相同抖音号/UID/手机号/合作码")
     for field in CORE_FIELDS:
-        if getattr(body, field) is not None:
-            value = getattr(body, field)
-            if field == "douyin_id":
-                value = normalize_douyin(value)
-            elif field == "phone":
-                value = _clean_phone(value)
-            elif field in IDENTITY_FIELDS:
-                value = _clean_identity(value)
-            old_val = getattr(inf, field)
-            if str(old_val) != str(value):
-                label = FIELD_LABELS.get(field, field)
-                log_op(db, influencer_id=inf.id, event_type="profile_changed", actor=user,
-                       summary=f"{user.display_name} 修改{label}:{_display(field, old_val)}→{_display(field, value)}",
-                       detail={"field": field, "old": _display(field, old_val),
-                               "new": _display(field, value)})
-            setattr(inf, field, value)
+        # 显式提交才处理:可空字段支持置空;必填字段(昵称/抖音号)不允许清空
+        if field not in body.model_fields_set:
+            continue
+        value = getattr(body, field)
+        if field == "douyin_id":
+            value = normalize_douyin(value)
+            if not value:
+                raise HTTPException(400, "抖音号不能为空")
+        elif field == "nickname":
+            value = (value or "").strip()
+            if not value:
+                raise HTTPException(400, "昵称不能为空")
+        elif field == "phone":
+            value = _clean_phone(value)
+        elif field in IDENTITY_FIELDS:
+            value = _clean_identity(value)
+        old_val = getattr(inf, field)
+        if str(old_val) != str(value):
+            label = FIELD_LABELS.get(field, field)
+            log_op(db, influencer_id=inf.id, event_type="profile_changed", actor=user,
+                   summary=f"{user.display_name} 修改{label}:{_display(field, old_val)}→{_display(field, value)}",
+                   detail={"field": field, "old": _display(field, old_val),
+                           "new": _display(field, value)})
+        setattr(inf, field, value)
     if "admin_note" in body.model_fields_set:
         inf.admin_note = body.admin_note
     db.commit()

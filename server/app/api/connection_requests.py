@@ -26,6 +26,8 @@ def create_request(body: CreateIn, user: User = Depends(current_user),
     inf = db.get(Influencer, body.influencer_id)
     if not inf:
         raise HTTPException(404, "达人不存在")
+    if inf.archived:
+        raise HTTPException(400, "该达人已停用,不能建联")
     if inf.owner_bd_id == user.id:
         raise HTTPException(400, "该达人已归属于你,无需建联")
     dup = db.scalars(select(ConnectionRequest).where(
@@ -104,15 +106,33 @@ def review(req_id: int, body: ReviewIn, user: User = Depends(current_admin),
         inf = db.get(Influencer, req.influencer_id)
         if not inf:
             raise HTTPException(404, "达人不存在")
-        old_owner = db.get(User, inf.owner_bd_id) if inf.owner_bd_id else None
-        new_owner = db.get(User, req.requester_bd_id)
-        inf.owner_bd_id = req.requester_bd_id
         req.status = "approved"
-        log_op(db, influencer_id=inf.id, event_type="owner_transferred", actor=user,
-               summary=f"建联通过:归属由 {old_owner.display_name if old_owner else '无'} "
-                       f"转给 {new_owner.display_name if new_owner else ''}",
-               detail={"old_owner_bd_id": req.current_owner_bd_id,
-                       "new_owner_bd_id": req.requester_bd_id, "note": body.note})
+        # 以"当前真实归属"为准,而非申请时的快照——期间归属可能已被别的审批改变
+        actual_owner_id = inf.owner_bd_id
+        if actual_owner_id == req.requester_bd_id:
+            # 归属此前已转给该商务(如同达人另一条申请先通过),本次无需重复转移
+            req.review_note = (body.note + "；" if body.note else "") + "归属此前已转移,无需重复处理"
+        else:
+            new_owner = db.get(User, req.requester_bd_id)
+            if not new_owner or new_owner.role != "bd" or not new_owner.is_active:
+                raise HTTPException(400, "申请商务不存在或已停用,无法转移归属")
+            old_owner = db.get(User, actual_owner_id) if actual_owner_id else None
+            inf.owner_bd_id = req.requester_bd_id
+            log_op(db, influencer_id=inf.id, event_type="owner_transferred", actor=user,
+                   summary=f"建联通过:归属由 {old_owner.display_name if old_owner else '无'} "
+                           f"转给 {new_owner.display_name}",
+                   detail={"old_owner_bd_id": actual_owner_id,
+                           "new_owner_bd_id": req.requester_bd_id, "note": body.note})
+            # 同达人其余待审申请自动失效,避免基于过期归属再次静默转移
+            others = db.scalars(select(ConnectionRequest).where(
+                ConnectionRequest.influencer_id == inf.id,
+                ConnectionRequest.status == "pending",
+                ConnectionRequest.id != req.id)).all()
+            for other in others:
+                other.status = "rejected"
+                other.reviewed_by = user.id
+                other.reviewed_at = datetime.now()
+                other.review_note = "该达人已被建联转移,申请自动失效"
     else:
         req.status = "rejected"
     db.commit()

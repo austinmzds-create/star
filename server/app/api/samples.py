@@ -3,7 +3,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -175,10 +175,18 @@ def audit(order_id: int, body: AuditIn,
           user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _load_owned_order(db, user, order_id)
     if order.status != "pending":
-        raise HTTPException(404, "寄样单不存在或已处理")
-    order.status = "approved" if body.approve else "rejected"
-    order.reject_reason = None if body.approve else (body.reject_reason or "资质未达标,暂不寄样")
-    order.approved_by = user.id
+        raise HTTPException(409, "该寄样单已处理")
+    new_status = "approved" if body.approve else "rejected"
+    reject_reason = None if body.approve else (body.reject_reason or "资质未达标,暂不寄样")
+    # 乐观并发:仅当仍为 pending 才落库;并发双审时后到者 rowcount=0 → 409,不重复写日志
+    changed = db.execute(
+        update(SampleOrder)
+        .where(SampleOrder.id == order.id, SampleOrder.status == "pending")
+        .values(status=new_status, reject_reason=reject_reason, approved_by=user.id)
+    ).rowcount
+    if not changed:
+        db.rollback()
+        raise HTTPException(409, "该寄样单已被处理")
     inf_id = _order_influencer_id(db, order)
     if inf_id:
         if body.approve:
@@ -188,8 +196,8 @@ def audit(order_id: int, body: AuditIn,
         else:
             log_op(db, influencer_id=inf_id, product_id=order.product_id,
                    event_type="sample_rejected", actor=user,
-                   summary=f"{user.display_name} 拒绝寄样:{order.reject_reason}",
-                   detail={"reject_reason": order.reject_reason})
+                   summary=f"{user.display_name} 拒绝寄样:{reject_reason}",
+                   detail={"reject_reason": reject_reason})
     db.commit()
     return {"ok": True}
 

@@ -25,6 +25,14 @@ def _to_halfwidth(value: str) -> str:
     return "".join(out)
 
 
+def normalize_douyin(value) -> str | None:
+    """抖音号规范化:去首尾空格 + 去前导 @(方案B 唯一标识口径)。空返回 None。"""
+    if value is None:
+        return None
+    v = str(value).strip().lstrip("@").strip()
+    return v or None
+
+
 def normalize_phone(value) -> str | None:
     """中国大陆手机号规范化 → 裸 11 位;空或格式非法返回 None。
 
