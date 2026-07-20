@@ -188,7 +188,7 @@ def test_archived_influencer_cannot_reopen_via_sms(db, admin):
 def test_direct_ticket_rejects_dangerous_extension(db, admin, monkeypatch):
     monkeypatch.setattr(storage, "use_oss", lambda: True)
     with pytest.raises(HTTPException) as exc:
-        direct_upload_ticket(DirectUploadIn(filename="evil.html", content_type="text/html"), admin)
+        direct_upload_ticket(DirectUploadIn(filename="evil.html", content_type="text/html", size_bytes=1), admin)
     assert exc.value.status_code == 400
 
 
@@ -196,7 +196,7 @@ def test_direct_ticket_ignores_client_content_type(db, admin, monkeypatch):
     monkeypatch.setattr(storage, "use_oss", lambda: True)
     monkeypatch.setattr(storage.settings, "oss_endpoint", "oss-cn-shanghai.aliyuncs.com")
     monkeypatch.setattr(storage.settings, "oss_bucket", "viceo-public")
-    ticket = direct_upload_ticket(DirectUploadIn(filename="pic.png", content_type="text/html"), admin)
+    ticket = direct_upload_ticket(DirectUploadIn(filename="pic.png", content_type="text/html", size_bytes=1), admin)
     # 采信扩展名而非前端伪造的 text/html
     assert ticket["content_type"] == "image/png"
 

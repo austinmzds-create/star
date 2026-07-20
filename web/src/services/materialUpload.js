@@ -3,6 +3,7 @@ const MAX_UPLOAD_TIMEOUT_MS = 9 * 60 * 1000
 const UPLOAD_TIMEOUT_GRACE_MS = 30000
 const UPLOAD_TIMEOUT_BYTES_PER_SECOND = 256 * 1024
 const BACKEND_FALLBACK_MAX_BYTES = 8 * 1024 * 1024
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 function resolveUploadTimeoutMs(file, options = {}) {
   const explicit = Number(options.timeoutMs)
@@ -15,6 +16,15 @@ function isVideoFile(file) {
   const type = (file.type || '').toLowerCase()
   const name = (file.name || '').toLowerCase()
   return type.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/.test(name)
+}
+
+function assertUploadFile(file, options = {}) {
+  if (!file) throw new Error('请先选择文件')
+  if (!file.size) throw new Error('上传文件为空,请重新选择')
+  const maxBytes = Number(options.maxBytes) || MAX_UPLOAD_BYTES
+  if (file.size > maxBytes) {
+    throw new Error(`文件超过 ${Math.round(maxBytes / 1024 / 1024)}MB 上限,请压缩后再传`)
+  }
 }
 
 function putFileToOss(ticket, file, onProgress, options = {}) {
@@ -78,6 +88,7 @@ function canBackendFallback(file, options = {}) {
 
 // 默认:后端只签名,文件本体浏览器直传 OSS;只有 OSS 未启用时才走本地/后端兜底。
 export async function uploadMaterialFile(api, file, onProgress, options = {}) {
+  assertUploadFile(file, options)
   const prefix = options.prefix || 'materials'
   if (options.direct !== false) {
     let ticket
@@ -86,6 +97,7 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
         filename: file.name || 'file',
         prefix,
         content_type: file.type || undefined,
+        size_bytes: file.size,
       }, { skipBadgeRefresh: true })
     } catch (error) {
       if (canBackendFallback(file, options)) {
@@ -116,39 +128,4 @@ export async function uploadMaterialFile(api, file, onProgress, options = {}) {
     throw new Error('上传地址返回不完整')
   }
   return await uploadViaBackend(api, file, onProgress, prefix)
-}
-
-export async function uploadAndCreateMaterial(api, options) {
-  const {
-    productId,
-    type,
-    file,
-    title = '',
-    parsedText = '',
-    reportId = '',
-    onProgress,
-  } = options
-  let uploaded
-  try {
-    uploaded = await uploadMaterialFile(api, file, onProgress, { direct: true })
-    if (!uploaded?.key) throw new Error('上传结果缺少文件 key')
-  } catch (error) {
-    error.materialStage = 'upload'
-    throw error
-  }
-
-  const body = {
-    type,
-    title: title.trim() || file.name,
-    oss_key: uploaded.key,
-  }
-  if (parsedText.trim()) body.parsed_text = parsedText.trim()
-  if (type === 'pdf' && reportId) body.report_id = reportId
-
-  try {
-    return await api.post(`/api/products/${productId}/materials`, body)
-  } catch (error) {
-    error.materialStage = 'create'
-    throw error
-  }
 }

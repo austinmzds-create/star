@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { uploadAndCreateMaterial, uploadMaterialFile } from './materialUpload'
+import { uploadMaterialFile } from './materialUpload'
 
 const sentFiles = []
 const sentHeaders = []
@@ -44,117 +44,9 @@ function mockDirectUpload() {
   vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
 }
 
-describe('uploadAndCreateMaterial', () => {
+describe('uploadMaterialFile', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
-  })
-
-  it('uploads a file and immediately creates its material record', async () => {
-    mockDirectUpload()
-    const api = {
-      post: vi.fn()
-        .mockResolvedValueOnce({
-          enabled: true,
-          key: 'materials/a.mp4',
-          upload_url: 'https://bucket.oss/materials/a.mp4',
-          content_type: 'video/mp4',
-          url: 'https://bucket.oss/materials/a.mp4',
-        })
-        .mockResolvedValueOnce({ id: 9 }),
-    }
-    const file = new File(['video'], '带货视频.mp4', { type: 'video/mp4' })
-
-    await uploadAndCreateMaterial(api, {
-      productId: 3,
-      type: 'video_ai',
-      file,
-      title: '',
-      parsedText: '这条视频用来给达人参考开头节奏',
-      reportId: '',
-    })
-
-    expect(api.post.mock.calls[0][0]).toBe('/api/upload/direct-ticket')
-    expect(sentFiles).toEqual([file])
-    expect(sentHeaders[0]).toMatchObject({
-      'Content-Type': 'video/mp4',
-    })
-    expect(sentHeaders[0]).not.toHaveProperty('Content-Disposition')
-    expect(api.post).not.toHaveBeenCalledWith('/api/upload', expect.anything(), expect.anything())
-    expect(api.post.mock.calls[1]).toEqual([
-      '/api/products/3/materials',
-      {
-        type: 'video_ai',
-        title: '带货视频.mp4',
-        oss_key: 'materials/a.mp4',
-        parsed_text: '这条视频用来给达人参考开头节奏',
-      },
-    ])
-  })
-
-  it('includes report id for an uploaded PDF', async () => {
-    mockDirectUpload()
-    const api = {
-      post: vi.fn()
-        .mockResolvedValueOnce({
-          enabled: true,
-          key: 'materials/a.pdf',
-          upload_url: 'https://bucket.oss/materials/a.pdf',
-          content_type: 'application/pdf',
-          url: 'https://bucket.oss/materials/a.pdf',
-        })
-        .mockResolvedValueOnce({ id: 10 }),
-    }
-
-    await uploadAndCreateMaterial(api, {
-      productId: 3,
-      type: 'pdf',
-      file: new File(['pdf'], '报告.pdf'),
-      title: '质检报告',
-      parsedText: '达人可引用这份质检报告里的成分和检测结论',
-      reportId: 'REPORT-1',
-    })
-
-    expect(api.post.mock.calls[1][1]).toEqual({
-      type: 'pdf',
-      title: '质检报告',
-      oss_key: 'materials/a.pdf',
-      parsed_text: '达人可引用这份质检报告里的成分和检测结论',
-      report_id: 'REPORT-1',
-    })
-  })
-
-  it('marks upload failures as upload stage errors', async () => {
-    const api = {
-      post: vi.fn()
-        .mockResolvedValueOnce({ enabled: true, key: 'materials/a.jpg' }),
-    }
-
-    await expect(uploadAndCreateMaterial(api, {
-      productId: 3,
-      type: 'image',
-      file: new File(['image'], 'a.jpg'),
-    })).rejects.toMatchObject({ materialStage: 'upload' })
-  })
-
-  it('marks material creation failures separately from upload failures', async () => {
-    mockDirectUpload()
-    const api = {
-      post: vi.fn()
-        .mockResolvedValueOnce({
-          enabled: true,
-          key: 'materials/a.jpg',
-          upload_url: 'https://bucket.oss/materials/a.jpg',
-          content_type: 'image/jpeg',
-          url: 'https://bucket.oss/materials/a.jpg',
-        })
-        .mockRejectedValueOnce(new Error('create failed')),
-    }
-
-    await expect(uploadAndCreateMaterial(api, {
-      productId: 3,
-      type: 'image',
-      file: new File(['image'], 'a.jpg'),
-    })).rejects.toMatchObject({ materialStage: 'create' })
   })
 
   it('uses one signed OSS PUT for large videos without multipart orchestration', async () => {
@@ -177,9 +69,16 @@ describe('uploadAndCreateMaterial', () => {
     expect(result).toMatchObject({ key: 'materials/big.mp4', direct: true, storage: 'oss' })
     expect(api.post).toHaveBeenCalledTimes(1)
     expect(api.post.mock.calls[0][0]).toBe('/api/upload/direct-ticket')
+    expect(api.post.mock.calls[0][1]).toMatchObject({
+      filename: 'big.mp4',
+      content_type: 'video/mp4',
+      size_bytes: file.size,
+    })
     expect(api.post.mock.calls.some((call) => String(call[0]).includes('/multipart/'))).toBe(false)
     expect(api.post.mock.calls.some((call) => String(call[0]).startsWith('/api/upload?'))).toBe(false)
     expect(sentFiles).toEqual([file])
+    expect(sentHeaders[0]).toMatchObject({ 'Content-Type': 'video/mp4' })
+    expect(sentHeaders[0]).not.toHaveProperty('Content-Disposition')
     expect(progress).toHaveBeenCalledWith(100, 'confirming')
   })
 
@@ -203,5 +102,33 @@ describe('uploadAndCreateMaterial', () => {
 
     expect(api.post).toHaveBeenCalledTimes(1)
     expect(api.post.mock.calls.some((call) => String(call[0]).startsWith('/api/upload?'))).toBe(false)
+  })
+
+  it('rejects empty and over-limit files before requesting an upload ticket', async () => {
+    const api = { post: vi.fn() }
+    await expect(uploadMaterialFile(api, new File([], 'empty.mp4', { type: 'video/mp4' })))
+      .rejects.toThrow('上传文件为空')
+    await expect(uploadMaterialFile(
+      api,
+      new File([new Uint8Array(2)], 'large.mp4', { type: 'video/mp4' }),
+      vi.fn(),
+      { maxBytes: 1 },
+    )).rejects.toThrow('文件超过')
+    expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it('keeps local development fallback when OSS is disabled', async () => {
+    const api = {
+      post: vi.fn()
+        .mockResolvedValueOnce({ enabled: false })
+        .mockResolvedValueOnce({ key: 'materials/local.png', url: '/api/files/materials/local.png', use_oss: false }),
+    }
+    const file = new File(['image'], 'local.png', { type: 'image/png' })
+
+    const result = await uploadMaterialFile(api, file, vi.fn())
+
+    expect(result).toMatchObject({ key: 'materials/local.png' })
+    expect(api.post.mock.calls[0][0]).toBe('/api/upload/direct-ticket')
+    expect(api.post.mock.calls[1][0]).toBe('/api/upload?prefix=materials')
   })
 })
