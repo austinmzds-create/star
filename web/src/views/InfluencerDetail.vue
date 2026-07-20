@@ -396,9 +396,13 @@ async function saveEdit() {
 async function toggleArchive() {
   const to = !d.value.archived
   await ElMessageBox.confirm(to ? '停用后该达人默认从列表隐藏(不影响历史记录),确认?' : '确认重新启用?', '提示', { type: 'warning' })
-  await api.patch(`/api/influencers/${route.params.id}`, { archived: to })
-  ElMessage.success(to ? '已停用' : '已启用')
-  await load()
+  try {
+    await api.patch(`/api/influencers/${route.params.id}`, { archived: to })
+    ElMessage.success(to ? '已停用' : '已启用')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
 }
 function openConnect() {
   connectReason.value = ''
@@ -581,13 +585,28 @@ async function saveAdminNote() {
     savingAdminNote.value = false
   }
 }
-async function saveTags() { await api.patch(`/api/influencers/${route.params.id}`, { tags: tags.value }) }
+async function saveTags(prev) {
+  try {
+    await api.patch(`/api/influencers/${route.params.id}`, { tags: tags.value })
+  } catch (e) {
+    if (prev) tags.value = prev   // 失败回滚,避免"界面已改但未落库"
+    ElMessage.error(e.response?.data?.detail || '标签保存失败')
+  }
+}
 function addTag() {
   const v = (tagInput.value || '').trim()
-  if (v && !tags.value.includes(v)) { tags.value.push(v); saveTags() }
+  if (v && !tags.value.includes(v)) {
+    const prev = [...tags.value]
+    tags.value.push(v)
+    saveTags(prev)
+  }
   tagInput.value = null
 }
-function removeTag(t) { tags.value = tags.value.filter((x) => x !== t); saveTags() }
+function removeTag(t) {
+  const prev = [...tags.value]
+  tags.value = tags.value.filter((x) => x !== t)
+  saveTags(prev)
+}
 
 function openQuick(type) {
   quickType.value = type
@@ -616,15 +635,23 @@ async function doQuick() {
 }
 async function delSample(s) {
   await ElMessageBox.confirm('确认删除该寄样单?', '提示', { type: 'warning' })
-  await api.delete(`/api/samples/${s.id}`)
-  ElMessage.success('已删除')
-  act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  try {
+    await api.delete(`/api/samples/${s.id}`)
+    ElMessage.success('已删除')
+    act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 async function delVideo(v) {
   await ElMessageBox.confirm('确认删除该视频任务?(连带其投流记录)', '提示', { type: 'warning' })
-  await api.delete(`/api/videos/${v.id}`)
-  ElMessage.success('已删除')
-  act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  try {
+    await api.delete(`/api/videos/${v.id}`)
+    ElMessage.success('已删除')
+    act.value = await api.get(`/api/influencers/${route.params.id}/activity`)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 
 onMounted(async () => {

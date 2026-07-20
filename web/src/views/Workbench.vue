@@ -44,6 +44,7 @@
 </template>
 
 <script setup>
+import { ElMessage } from 'element-plus'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
@@ -55,7 +56,13 @@ const data = ref(null)
 const totalTodo = computed(() => data.value ? Object.values(data.value.todos).reduce((a, b) => a + (Number(b) || 0), 0) : 0)
 const go = (path, query) => router.push({ path, query })
 
-onMounted(async () => { data.value = await api.get('/api/dashboard/workbench') })
+onMounted(async () => {
+  try {
+    data.value = await api.get('/api/dashboard/workbench')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '工作台加载失败')
+  }
+})
 </script>
 
 <style scoped>

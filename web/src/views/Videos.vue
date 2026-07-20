@@ -210,15 +210,23 @@ async function doCreateVideo() {
 }
 async function removeVideo(row) {
   await ElMessageBox.confirm('确认删除该视频任务?(连带其投流记录)', '提示', { type: 'warning' })
-  await api.delete(`/api/videos/${row.id}`)
-  ElMessage.success('已删除')
-  loadVideos()
+  try {
+    await api.delete(`/api/videos/${row.id}`)
+    ElMessage.success('已删除')
+    loadVideos()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 async function removePromo(row) {
   await ElMessageBox.confirm('确认删除该投流记录?', '提示', { type: 'warning' })
-  await api.delete(`/api/promotions/${row.id}`)
-  ElMessage.success('已删除')
-  loadPromotions()
+  try {
+    await api.delete(`/api/promotions/${row.id}`)
+    ElMessage.success('已删除')
+    loadPromotions()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 
 // ---------- 视频审核 ----------
@@ -245,7 +253,9 @@ let currentVideo = null
 const videoTabLabel = (k) => VIDEO_TABS.find((t) => t.key === k)?.label || k
 const videoBadgeType = (k) => (['submitted', 'blocked'].includes(k) ? 'danger' : 'info')
 
+let vSeq = 0
 async function loadVideos() {
+  const seq = ++vSeq
   vLoading.value = true
   try {
     const [r, nextCounts] = await Promise.all([
@@ -254,19 +264,26 @@ async function loadVideos() {
       }),
       api.get('/api/videos/status-counts'),
     ])
+    if (seq !== vSeq) return   // 丢弃过期响应
     videos.value = r.items
     vTotal.value = r.total
     vCounts.value = nextCounts
+  } catch (e) {
+    if (seq === vSeq) ElMessage.error(e.response?.data?.detail || '加载失败')
   } finally {
-    vLoading.value = false
+    if (seq === vSeq) vLoading.value = false
   }
 }
 function reloadVideos() { vPage.value = 1; loadVideos() }
 function onVPage(p) { vPage.value = p; loadVideos() }
 
 async function passVideo(row) {
-  await api.post(`/api/videos/${row.id}/audit`, { approve: true })
-  ElMessage.success('已通过')
+  try {
+    await api.post(`/api/videos/${row.id}/audit`, { approve: true })
+    ElMessage.success('已通过')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
   loadVideos()
 }
 
@@ -364,7 +381,9 @@ let currentPromo = null
 const promoLabel = (k) => PROMO_TABS.find((t) => t.key === k)?.label || k
 const promoBadgeType = (k) => (['pending_request', 'pending_confirm', 'failed'].includes(k) ? 'danger' : 'info')
 
+let pSeq = 0
 async function loadPromotions() {
+  const seq = ++pSeq
   pLoading.value = true
   try {
     const [r, nextCounts] = await Promise.all([
@@ -373,11 +392,14 @@ async function loadPromotions() {
       }),
       api.get('/api/promotions/status-counts'),
     ])
+    if (seq !== pSeq) return   // 丢弃过期响应
     promotions.value = r.items
     pTotal.value = r.total
     pCounts.value = nextCounts
+  } catch (e) {
+    if (seq === pSeq) ElMessage.error(e.response?.data?.detail || '加载失败')
   } finally {
-    pLoading.value = false
+    if (seq === pSeq) pLoading.value = false
   }
 }
 

@@ -33,14 +33,17 @@ const loading = ref(false)
 
 watch(() => props.modelValue, (v) => { inner.value = v })
 
+let searchSeq = 0
 async function search(q) {
   if (!q) { options.value = []; return }
+  const seq = ++searchSeq
   loading.value = true
   try {
     const data = await api.get('/api/influencers', { params: { q, page_size: 20 } })
+    if (seq !== searchSeq) return   // 快速输入时丢弃过期关键词的响应,避免选项与输入不符
     options.value = data.items || []
   } finally {
-    loading.value = false
+    if (seq === searchSeq) loading.value = false
   }
 }
 

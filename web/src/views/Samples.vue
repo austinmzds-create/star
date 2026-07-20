@@ -178,9 +178,13 @@ async function doCreate() {
 }
 async function removeRow(row) {
   await ElMessageBox.confirm('确认删除该寄样单?', '提示', { type: 'warning' })
-  await api.delete(`/api/samples/${row.id}`)
-  ElMessage.success('已删除')
-  load()
+  try {
+    await api.delete(`/api/samples/${row.id}`)
+    ElMessage.success('已删除')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 
 const tabLabel = (k) => TABS.find((t) => t.key === k)?.label || k
@@ -196,7 +200,9 @@ function logisticsMessage(row) {
   return '暂无轨迹明细,请确认快递公司/单号/收件手机号后刷新'
 }
 
+let loadSeq = 0
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   try {
     const [r, nextCounts] = await Promise.all([
@@ -205,20 +211,27 @@ async function load() {
       }),
       api.get('/api/samples/status-counts'),
     ])
+    if (seq !== loadSeq) return   // 快速切分栏/翻页时丢弃过期响应,避免覆盖当前视图
     rows.value = r.items
     total.value = r.total
     counts.value = nextCounts
+  } catch (e) {
+    if (seq === loadSeq) ElMessage.error(e.response?.data?.detail || '加载失败')
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 function reload() { page.value = 1; load() }
 function onPage(p) { page.value = p; load() }
 
 async function pass(row) {
-  await api.post(`/api/samples/${row.id}/audit`, { approve: true })
-  ElMessage.success('已通过')
-  load()
+  try {
+    await api.post(`/api/samples/${row.id}/audit`, { approve: true })
+    ElMessage.success('已通过')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
+  load()   // 无论成败都刷新,纠正并发已处理时的界面状态
 }
 
 function openReject(row) {
@@ -227,9 +240,13 @@ function openReject(row) {
   rejectVisible.value = true
 }
 async function doReject() {
-  await api.post(`/api/samples/${current.id}/audit`, { approve: false, reject_reason: rejectReason.value })
-  rejectVisible.value = false
-  ElMessage.success('已拒绝')
+  try {
+    await api.post(`/api/samples/${current.id}/audit`, { approve: false, reject_reason: rejectReason.value })
+    rejectVisible.value = false
+    ElMessage.success('已拒绝')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
   load()
 }
 

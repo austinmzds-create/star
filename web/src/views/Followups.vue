@@ -53,15 +53,23 @@ async function load() {
 }
 
 async function done(row) {
-  await api.post(`/api/followups/${row.id}/done`)
-  ElMessage.success('已标记')
-  load()
+  try {
+    await api.post(`/api/followups/${row.id}/done`)
+    ElMessage.success('已标记')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
 }
 
 async function scan() {
-  const r = await api.post('/api/followups/scan')
-  ElMessage.success(`扫描完成,新增 ${r.created} 条催拍待办`)
-  load()
+  try {
+    const r = await api.post('/api/followups/scan')
+    ElMessage.success(`扫描完成,新增 ${r.created} 条催拍待办`)
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '扫描失败')
+  }
 }
 
 onMounted(load)

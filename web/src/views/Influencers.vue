@@ -326,7 +326,9 @@ function resetDialog() {
   form.level = 'L1'
 }
 
+let listSeq = 0
 async function load() {
+  const seq = ++listSeq
   loading.value = true
   try {
     const data = await api.get('/api/influencers', {
@@ -337,10 +339,13 @@ async function load() {
         page: page.value, page_size: pageSize,
       },
     })
+    if (seq !== listSeq) return   // 快速切换筛选/翻页时丢弃过期响应
     rows.value = data.items
     total.value = data.total
+  } catch (e) {
+    if (seq === listSeq) ElMessage.error(e.response?.data?.detail || '加载失败')
   } finally {
-    loading.value = false
+    if (seq === listSeq) loading.value = false
   }
 }
 const ownerBdName = computed(() => rows.value.find((r) => r.owner_bd_id === ownerBdId.value)?.owner_bd_name)

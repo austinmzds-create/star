@@ -504,12 +504,19 @@ const imgPreviewMap = computed(() => {
   return Object.fromEntries(keys.map((k, i) => [k, urls[i]]))
 })
 
+let listSeq = 0
 async function load() {
-  const r = await api.get('/api/products', {
-    params: { q: search.value || undefined, page: page.value, page_size: pageSize, paged: true },
-  })
-  rows.value = r.items
-  total.value = r.total
+  const seq = ++listSeq
+  try {
+    const r = await api.get('/api/products', {
+      params: { q: search.value || undefined, page: page.value, page_size: pageSize, paged: true },
+    })
+    if (seq !== listSeq) return   // 快速搜索/翻页时丢弃过期响应
+    rows.value = r.items
+    total.value = r.total
+  } catch (e) {
+    if (seq === listSeq) ElMessage.error(e.response?.data?.detail || '加载失败')
+  }
 }
 function reload() { page.value = 1; load() }
 function onPage(p) { page.value = p; load() }
@@ -522,8 +529,12 @@ function openCreate() {
 }
 async function saveCreate() {
   if (!form.name) return ElMessage.warning('请填写名称')
-  await api.post('/api/products', { ...form })
-  ElMessage.success('已创建'); createVisible.value = false; load()
+  try {
+    await api.post('/api/products', { ...form })
+    ElMessage.success('已创建'); createVisible.value = false; load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '创建失败')
+  }
 }
 
 function resetQianchuan(value = {}) {
@@ -688,25 +699,37 @@ function openEditOrder(row) {
   editOrderVisible.value = true
 }
 async function saveOrder() {
-  await api.patch(`/api/products/orders/${orderEdit.id}`, {
-    order_date: orderEdit.order_date, amount: orderEdit.amount, note: orderEdit.note,
-  })
-  editOrderVisible.value = false; ElMessage.success('已保存'); loadOrders()
+  try {
+    await api.patch(`/api/products/orders/${orderEdit.id}`, {
+      order_date: orderEdit.order_date, amount: orderEdit.amount, note: orderEdit.note,
+    })
+    editOrderVisible.value = false; ElMessage.success('已保存'); loadOrders()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
 }
 async function delOrder(row) {
   await ElMessageBox.confirm('确认删除该出单记录?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/orders/${row.id}`); ElMessage.success('已删除'); loadOrders()
+  try {
+    await api.delete(`/api/products/orders/${row.id}`); ElMessage.success('已删除'); loadOrders()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 async function refreshDetail() { detail.value = await api.get(`/api/products/${detail.value.id}`) }
 
 async function toggleProduct(row) {
   const action = row.status === 'on' ? '禁用' : '启用'
   await ElMessageBox.confirm(`确认${action}该产品?`, '提示', { type: 'warning' })
-  const r = await api.post(`/api/products/${row.id}/toggle`)
-  row.status = r.status
-  if (detail.value?.id === row.id) detail.value.status = r.status
-  ElMessage.success(`已${action}`)
-  load()
+  try {
+    const r = await api.post(`/api/products/${row.id}/toggle`)
+    row.status = r.status
+    if (detail.value?.id === row.id) detail.value.status = r.status
+    ElMessage.success(`已${action}`)
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '操作失败')
+  }
 }
 
 function prependMaterial(material) {
@@ -790,10 +813,14 @@ async function addMaterial(options = {}) {
 }
 async function delMaterial(m) {
   await ElMessageBox.confirm('确认删除该素材?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/materials/${m.id}`, { skipBadgeRefresh: true })
-  detail.value.materials = detail.value.materials.filter((item) => item.id !== m.id)
-  ElMessage.success('已删除')
-  load()
+  try {
+    await api.delete(`/api/products/materials/${m.id}`, { skipBadgeRefresh: true })
+    detail.value.materials = detail.value.materials.filter((item) => item.id !== m.id)
+    ElMessage.success('已删除')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '删除失败')
+  }
 }
 
 const editMatVisible = ref(false)
@@ -957,19 +984,33 @@ async function syncQianchuanCoop() {
 
 async function removeQianchuanCoop(row) {
   await ElMessageBox.confirm('确认移除该千川合作绑定?', '提示', { type: 'warning' })
-  await api.delete(`/api/products/${detail.value.id}/qianchuan-cooperations/${row.id}`)
-  qianchuanCoops.value = await api.get(`/api/products/${detail.value.id}/qianchuan-cooperations`)
-  ElMessage.success('已移除')
+  try {
+    await api.delete(`/api/products/${detail.value.id}/qianchuan-cooperations/${row.id}`)
+    qianchuanCoops.value = await api.get(`/api/products/${detail.value.id}/qianchuan-cooperations`)
+    ElMessage.success('已移除')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '移除失败')
+  }
 }
 
 async function addGrant() {
-  await api.post(`/api/products/${detail.value.id}/grant`, { influencer_id: grantId.value })
-  ElMessage.success('已开放'); grantId.value = null
-  grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
+  if (!grantId.value) return ElMessage.warning('请选择达人')
+  try {
+    await api.post(`/api/products/${detail.value.id}/grant`, { influencer_id: grantId.value })
+    ElMessage.success('已开放'); grantId.value = null
+    grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '开放失败')
+  }
 }
 async function removeGrant(row) {
-  await api.delete(`/api/products/${detail.value.id}/grant/${row.influencer_id}`)
-  grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
+  await ElMessageBox.confirm('确认取消该达人的产品授权?', '提示', { type: 'warning' })
+  try {
+    await api.delete(`/api/products/${detail.value.id}/grant/${row.influencer_id}`)
+    grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '移除失败')
+  }
 }
 
 function onQianchuanMessage(event) {

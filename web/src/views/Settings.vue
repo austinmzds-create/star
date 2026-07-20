@@ -97,18 +97,26 @@ async function load() {
 }
 
 async function saveLevel(row) {
-  await api.put(`/api/admin/level-configs/${row.level}`, {
-    commission_tier: row.commission_tier,
-    max_sample_products: row.max_sample_products,
-    video_audit_required: row.video_audit_required,
-  })
-  ElMessage.success(`${row.level} 配置已生效(仅影响新数据)`)
-  load()
+  try {
+    await api.put(`/api/admin/level-configs/${row.level}`, {
+      commission_tier: row.commission_tier,
+      max_sample_products: row.max_sample_products,
+      video_audit_required: row.video_audit_required,
+    })
+    ElMessage.success(`${row.level} 配置已生效(仅影响新数据)`)
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
 }
 
 async function saveFollowUp() {
-  await api.put('/api/admin/system-configs/follow_up_days', { value: { days: followUpDays.value } })
-  ElMessage.success('已保存')
+  try {
+    await api.put('/api/admin/system-configs/follow_up_days', { value: { days: followUpDays.value } })
+    ElMessage.success('已保存')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败')
+  }
 }
 
 async function createBd() {
