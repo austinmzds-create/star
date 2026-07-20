@@ -11,7 +11,18 @@ from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (Cooperation, Influencer, Product, Promotion, User,
                       VideoTask)
+from ..services import storage
 from ..services.oplog import influencer_id_for_coop, log_op
+
+# 投流失败凭证截图张数上限(与前端 MultiUpload :max 对齐,后端兜底防滥用)
+MAX_FAIL_PROOFS = 6
+
+
+def _fail_proof_keys(promo: Promotion) -> list[str]:
+    """失败凭证 key 列表:优先新数组列,回退旧单值列(历史数据)。"""
+    if promo.fail_proof_oss_keys:
+        return list(promo.fail_proof_oss_keys)
+    return [promo.fail_proof_oss_key] if promo.fail_proof_oss_key else []
 
 
 def _load_owned_task(db, user, task_id):
@@ -231,7 +242,8 @@ def create_promotion(body: CreatePromotionIn,
 class TransitionIn(BaseModel):
     action: str
     fail_reason: str | None = None
-    fail_proof_oss_key: str | None = None
+    fail_proof_oss_key: str | None = None       # 兼容旧前端:单张
+    fail_proof_oss_keys: list[str] | None = None  # 新:多张失败凭证截图
 
 
 @promotion_router.post("/{promo_id}/transition")
@@ -246,7 +258,15 @@ def transition(promo_id: int, body: TransitionIn,
     promo.auth_status = allowed[body.action]
     if body.action == "mark_failed":
         promo.fail_reason = body.fail_reason
-        promo.fail_proof_oss_key = body.fail_proof_oss_key
+        # 收全部失败凭证:新版传数组;兼容旧版单值。去空白、限张数,首张同步写旧列。
+        keys = list(body.fail_proof_oss_keys or [])
+        if body.fail_proof_oss_key:
+            keys.append(body.fail_proof_oss_key)
+        keys = [k.strip() for k in keys if isinstance(k, str) and k.strip()]
+        if len(keys) > MAX_FAIL_PROOFS:
+            raise HTTPException(400, f"失败凭证最多上传 {MAX_FAIL_PROOFS} 张")
+        promo.fail_proof_oss_keys = keys or None
+        promo.fail_proof_oss_key = keys[0] if keys else None
     task = db.get(VideoTask, promo.video_task_id)
     inf_id = influencer_id_for_coop(db, task.cooperation_id) if task else None
     if inf_id:
@@ -319,6 +339,7 @@ def list_promotions(auth_status: str | None = None, q: str | None = None,
         "cooperation_code": inf.cooperation_code,
         "product_id": prod.id, "product_name": prod.name,
         "dy_url": vt.dy_url, "fail_reason": promo.fail_reason,
+        "fail_proof_urls": [storage.preview_url(k) for k in _fail_proof_keys(promo)],
         "created_at": promo.created_at.isoformat(),
     } for promo, inf, prod, vt in rows]
     return {"items": items, "total": total, "page": page, "page_size": page_size}

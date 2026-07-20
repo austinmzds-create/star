@@ -14,6 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, LevelChangeLog,
                       OperationLog, OrderRecord, Product, Promotion,
                       SampleOrder, User, VideoTask)
 from ..services import levels, storage
+from ..services.identity import normalize_phone
 from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -137,12 +138,25 @@ def normalize_douyin(value):
     return v.lstrip("@").strip() or None
 
 
+def _clean_phone(value):
+    """交互式录入的手机号:规范化成裸 11 位;空返回 None,非空但格式非法则 400。
+
+    统一口径后,商务建档填的号能被达人短信登录稳定匹配到同一档案(见 services.identity)。
+    """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    phone = normalize_phone(value)
+    if not phone:
+        raise HTTPException(400, "手机号格式不正确,请填写 11 位手机号")
+    return phone
+
+
 def _normalize_create(body) -> dict:
     data = body.model_dump()
     data["nickname"] = (data.get("nickname") or "").strip()
     data["douyin_id"] = normalize_douyin(data.get("douyin_id"))
     data["douyin_uid"] = _clean_identity(data.get("douyin_uid"))
-    data["phone"] = _clean_identity(data.get("phone"))
+    data["phone"] = _clean_phone(data.get("phone"))
     data["cooperation_code"] = _clean_identity(data.get("cooperation_code"))
     data["data_source"] = _clean_identity(data.get("data_source"))
     data["source_note"] = _clean_identity(data.get("source_note"))
@@ -271,13 +285,18 @@ def _payload_from_import_row(db: Session, user: User, row_data: dict) -> tuple[d
     if level not in VALID_LEVELS:
         raise ValueError("等级只能填写 L1/L2/L3")
 
+    phone_raw = _cell_to_str(row_data.get("phone"))
+    phone = normalize_phone(phone_raw) if phone_raw else None
+    if phone_raw and not phone:
+        raise ValueError("手机号格式不正确,请填写 11 位手机号")
+
     payload = {
         "nickname": nickname,
         "douyin_id": douyin_id,
         "douyin_uid": _clean_identity(_cell_to_str(row_data.get("douyin_uid"))),
         "homepage_url": _cell_to_str(row_data.get("homepage_url")),
         "real_name": _cell_to_str(row_data.get("real_name")),
-        "phone": _clean_identity(_cell_to_str(row_data.get("phone"))),
+        "phone": phone,
         "fans_count": _parse_int(row_data.get("fans_count"), "粉丝数"),
         "gmv_30d": _parse_int(row_data.get("gmv_30d"), "近30天GMV"),
         "category_tags": _split_list(row_data.get("category_tags")),
@@ -654,7 +673,12 @@ def update(influencer_id: int, body: UpdateIn,
     for field in IDENTITY_FIELDS:
         if getattr(body, field, None) is not None:
             raw = getattr(body, field)
-            identity_updates[field] = normalize_douyin(raw) if field == "douyin_id" else _clean_identity(raw)
+            if field == "douyin_id":
+                identity_updates[field] = normalize_douyin(raw)
+            elif field == "phone":
+                identity_updates[field] = _clean_phone(raw)
+            else:
+                identity_updates[field] = _clean_identity(raw)
     if "douyin_id" in identity_updates and not identity_updates["douyin_id"]:
         raise HTTPException(400, "抖音号不能为空")
     if identity_updates:
@@ -666,6 +690,8 @@ def update(influencer_id: int, body: UpdateIn,
             value = getattr(body, field)
             if field == "douyin_id":
                 value = normalize_douyin(value)
+            elif field == "phone":
+                value = _clean_phone(value)
             elif field in IDENTITY_FIELDS:
                 value = _clean_identity(value)
             old_val = getattr(inf, field)
@@ -778,7 +804,8 @@ def detail(influencer_id: int, user: User = Depends(current_user), db: Session =
         "level": inf.level, "commission_tier": float(inf.commission_tier),
         "promo_mode": inf.promo_mode, "tags": inf.tags, "source": inf.source,
         "data_source": inf.data_source, "source_note": inf.source_note,
-        "raw_intro": inf.raw_intro, "owner_bd_id": inf.owner_bd_id,
+        # raw_intro 原文常含手机号/收件人/地址,非归属商务一并脱敏(与 phone/地址口径一致)
+        "raw_intro": inf.raw_intro if owned else None, "owner_bd_id": inf.owner_bd_id,
         "cooperation_code": inf.cooperation_code,
         "default_address": inf.default_address if owned else None,
         "homepage_raw": inf.homepage_raw, "archived": inf.archived,

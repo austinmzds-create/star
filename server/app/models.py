@@ -365,7 +365,8 @@ class Promotion(Base, TimestampMixin):
     auth_status: Mapped[str] = mapped_column(String(24), default="pending_request")
     # pending_request待发起授权 / pending_confirm待达人确认 / authorized已授权
     # promoted已投流 / failed投流失败 / done完成 / refused达人拒绝
-    fail_proof_oss_key: Mapped[str | None] = mapped_column(String(512))
+    fail_proof_oss_key: Mapped[str | None] = mapped_column(String(512))  # 兼容旧数据:首张失败凭证
+    fail_proof_oss_keys: Mapped[list | None] = mapped_column(JSON)        # 失败凭证截图(oss_key 数组)
     fail_reason: Mapped[str | None] = mapped_column(String(255))
     days: Mapped[int | None] = mapped_column(Integer)                # 千川合作天数
 

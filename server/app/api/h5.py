@@ -14,6 +14,7 @@ from ..models import (AccessGrant, Cooperation, Influencer, Material,
                       MaterialDownloadLog, MaterialPost, Product, SampleOrder,
                       VideoTask)
 from ..services import storage
+from ..services.identity import normalize_phone
 from ..services.oplog import log_op
 from ..services.parser import parse_influencer_text
 from ..services.sample_orders import dedupe_sample_rows
@@ -54,10 +55,12 @@ class PhoneIn(BaseModel):
 
 @router.post("/sms/send")
 async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
-    if len(body.phone) != 11 or not body.phone.startswith("1"):
+    # 归一化后再发码,保证验证码键、登录匹配键与商务建档口径完全一致
+    phone = normalize_phone(body.phone)
+    if not phone:
         raise HTTPException(400, "手机号格式不正确")
     try:
-        await send_code(db, body.phone)
+        await send_code(db, phone)
     except SmsError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
@@ -70,19 +73,31 @@ class VerifyIn(BaseModel):
 
 @router.post("/sms/verify")
 def sms_verify(body: VerifyIn, db: Session = Depends(get_db)):
-    if not verify_code(db, body.phone, body.code):
+    phone = normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(400, "手机号格式不正确")
+    if not verify_code(db, phone, body.code):
         raise HTTPException(400, "验证码错误或已过期")
+    # 用归一化手机号匹配已有档案(含已停用):
+    # - 命中在用档案 → 进入该档案(商务预先建好的资料即在此)
+    # - 命中已停用档案 → 拒绝,不新开号(与内部端 auth 口径一致,避免绕过停用)
+    # - 未命中 → 首次登录,新建自助档案
     inf = db.scalars(
         select(Influencer)
-        .where(Influencer.phone == body.phone, Influencer.archived.is_not(True))
+        .where(Influencer.phone == phone)
         .order_by(Influencer.id)
     ).first()
+    if inf and inf.archived:
+        raise HTTPException(403, "该账号已停用,请联系对接商务")
+    created = False
     if not inf:
-        inf = Influencer(nickname=f"达人{body.phone[-4:]}", phone=body.phone, source="h5")
+        inf = Influencer(nickname=f"达人{phone[-4:]}", phone=phone, source="h5")
         db.add(inf)
         db.commit()
+        created = True
+    # is_new 表示"本次首登新建的账号",而非"资料是否填过";商务预建的档案不应被当新用户
     return {"token": make_token("influencer", inf.id),
-            "is_new": inf.raw_intro is None, "nickname": inf.nickname}
+            "is_new": created, "nickname": inf.nickname}
 
 
 @router.get("/me")

@@ -851,25 +851,31 @@ async function removeProduct(row) {
 }
 
 async function saveInfo() {
-  await api.put(`/api/products/${detail.value.id}`, {
-    name: detail.value.name, shop_name: detail.value.shop_name,
-    price_text: detail.value.price_text, shop_product_id: detail.value.shop_product_id,
-    link: detail.value.link,
-    product_images: detail.value.product_images_keys || [],
-    default_commission: detail.value.default_commission,
-    merchant_promotion_commission: detail.value.merchant_promotion_commission,
-    selling_points: detail.value.selling_points, shooting_notes: detail.value.shooting_notes,
-    sample_remark: detail.value.sample_remark, promo_remark: detail.value.promo_remark,
-    auto_audit_type: detail.value.auto_audit_type, allow_promotion: detail.value.allow_promotion,
-  })
-  ElMessage.success('已保存'); load()
+  try {
+    await api.put(`/api/products/${detail.value.id}`, {
+      name: detail.value.name, shop_name: detail.value.shop_name,
+      price_text: detail.value.price_text, shop_product_id: detail.value.shop_product_id,
+      link: detail.value.link,
+      product_images: detail.value.product_images_keys || [],
+      default_commission: detail.value.default_commission,
+      merchant_promotion_commission: detail.value.merchant_promotion_commission,
+      selling_points: detail.value.selling_points, shooting_notes: detail.value.shooting_notes,
+      sample_remark: detail.value.sample_remark, promo_remark: detail.value.promo_remark,
+      auto_audit_type: detail.value.auto_audit_type, allow_promotion: detail.value.allow_promotion,
+    })
+    ElMessage.success('已保存')
+    load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '保存失败,请重试')
+  }
 }
 
 async function saveQianchuan() {
   savingQianchuan.value = true
   try {
     const saved = await api.put(`/api/products/${detail.value.id}/qianchuan-binding`, {
-      shop_auth_id: qianchuan.shop_auth_id || undefined,
+      // 显式传 null 才能解绑;传 undefined 会被 JSON 丢键,后端无法区分"未改"与"清空"
+      shop_auth_id: qianchuan.shop_auth_id || null,
       shop_id: qianchuan.shop_id,
       shop_name: qianchuan.shop_name,
       advertiser_id: qianchuan.advertiser_id,

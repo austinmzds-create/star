@@ -62,6 +62,32 @@ def use_oss() -> bool:
     return _bucket() is not None
 
 
+# 允许上传/预览的文件类型(按扩展名白名单)。只放业务真正需要的图片/视频/PDF,
+# 其余(尤其 .html/.svg/.js)一律拒绝——否则会被当 text/html 内联下发,构成存储型 XSS。
+ALLOWED_EXTENSIONS = frozenset({
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp",   # 图片
+    ".mp4", ".mov", ".m4v", ".webm",                     # 视频
+    ".pdf",                                              # 报告/文档
+})
+# 可安全内联预览的 MIME 前缀/类型;其余强制 attachment 下载,避免浏览器执行
+_INLINE_SAFE_PREFIXES = ("image/", "video/", "audio/")
+_INLINE_SAFE_TYPES = frozenset({"application/pdf"})
+
+
+def ext_of(filename: str) -> str:
+    return os.path.splitext(filename or "")[1].lower()
+
+
+def extension_allowed(filename: str) -> bool:
+    return ext_of(filename) in ALLOWED_EXTENSIONS
+
+
+def is_inline_safe(key_or_filename: str) -> bool:
+    """该类型能否安全地 inline 预览(图片/视频/音频/PDF);其余按下载处理。"""
+    ct = content_type(key_or_filename)
+    return ct.startswith(_INLINE_SAFE_PREFIXES) or ct in _INLINE_SAFE_TYPES
+
+
 def make_key(filename: str, prefix: str = "materials") -> str:
     clean_prefix = "/".join(part for part in prefix.split("/") if part and part not in (".", ".."))
     if not clean_prefix:

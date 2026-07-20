@@ -43,7 +43,37 @@ class ProductIn(BaseModel):
     allow_promotion: bool | None = None
 
 
+class ProductUpdateIn(BaseModel):
+    """编辑产品:所有字段可选,只更新前端"显式提交"的字段。
+
+    关键语义:区分"没传"(不动)与"传了 null"(清空可空字段)。用同一个必填 name 的
+    ProductIn 做 PUT 会导致:① 每次都得带 name;② 清空佣金/图片这类操作被"None 即跳过"
+    吞掉(用户改了等于白改)。故单独定义全可选的更新模型。
+    """
+    name: str | None = None
+    price_text: str | None = None
+    shop_name: str | None = None
+    shop_product_id: str | None = None
+    link: str | None = None
+    default_commission: float | None = None
+    merchant_promotion_commission: float | None = None
+    selling_points: str | None = None
+    shooting_notes: str | None = None
+    product_image: str | None = None
+    product_images: list[str] | None = None
+    sample_remark: str | None = None
+    promo_remark: str | None = None
+    auto_audit_type: str | None = None
+    allow_promotion: bool | None = None
+
+
+# NOT NULL 且带数据库默认值的列:前端即使误传 null 也不覆盖(避免 IntegrityError / 语义丢失)
+_PRODUCT_NON_NULLABLE = {"name", "auto_audit_type", "allow_promotion"}
+
+
 def _normalize_commission(data: dict, key: str, label: str) -> None:
+    # data[key] 为 None 有两种含义:未提交(不在 data 里)或显式清空(在 data 里且为 None)。
+    # 两种都不需要范围校验;显式清空时保留 None 让上层 setattr 置空。
     if data.get(key) is None:
         return
     if data[key] < 0 or data[key] > 100:
@@ -69,23 +99,33 @@ def create(body: ProductIn, user: User = Depends(current_user), db: Session = De
 
 
 @router.put("/{product_id}")
-def update_product(product_id: int, body: ProductIn,
+def update_product(product_id: int, body: ProductUpdateIn,
                    user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = db.get(Product, product_id)
     if not p:
         raise HTTPException(404, "产品不存在")
-    data = body.model_dump()
-    if data.get("name") is not None:
-        data["name"] = data["name"].strip()
-        if not data["name"]:
+    # 只处理前端显式提交的字段:区分"未传"(不动)与"传 null"(清空可空列)
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data:
+        name = (data["name"] or "").strip()
+        if not name:
             raise HTTPException(400, "产品名称不能为空")
+        data["name"] = name
+    # NOT NULL 列若被误传 null,丢弃该键(保持原值),不清空也不触发约束错误
+    for key in _PRODUCT_NON_NULLABLE:
+        if key in data and data[key] is None:
+            data.pop(key)
     _normalize_commission(data, "default_commission", "自然流佣金")
     _normalize_commission(data, "merchant_promotion_commission", "商家投流佣金")
-    if data.get("product_images") and not data.get("product_image"):
-        data["product_image"] = data["product_images"][0]
+    # 商品图与封面联动:显式提交了图集就同步封面——空集清空封面(否则残留已删除的失效图),
+    # 非空取首张为封面(未单独指定封面时)。
+    if "product_images" in data:
+        images = data["product_images"] or []
+        if images:
+            data.setdefault("product_image", images[0])
+        else:
+            data["product_image"] = None
     for k, v in data.items():
-        if v is None:
-            continue
         setattr(p, k, v)
     db.commit()
     return {"ok": True}
@@ -490,14 +530,19 @@ def save_qianchuan_binding(product_id: int, body: QianchuanBindingIn,
     row.shop_id = _clean_text(body.shop_id, 64, "千川店铺ID")
     row.shop_name = _clean_text(body.shop_name, 128, "千川店铺名称")
     row.advertiser_id = _clean_text(body.advertiser_id, 64, "广告主ID")
-    if body.shop_auth_id is not None:
-        shop_auth = db.get(QianchuanShopAuth, body.shop_auth_id)
-        if not shop_auth or shop_auth.auth_status != "active":
-            raise HTTPException(400, "千川店铺授权不存在或不可用")
-        row.shop_auth_id = shop_auth.id
-        row.shop_id = row.shop_id or shop_auth.shop_id
-        row.shop_name = row.shop_name or shop_auth.shop_name
-        row.advertiser_id = row.advertiser_id or shop_auth.advertiser_id
+    # 店铺授权:区分"未提交"与"显式清空(解绑)"。前端清空需显式传 shop_auth_id: null,
+    # 否则(undefined 被 JSON 丢键)无法解绑,旧授权会一直残留。
+    if "shop_auth_id" in body.model_fields_set:
+        if body.shop_auth_id is None:
+            row.shop_auth_id = None      # 解绑店铺授权
+        else:
+            shop_auth = db.get(QianchuanShopAuth, body.shop_auth_id)
+            if not shop_auth or shop_auth.auth_status != "active":
+                raise HTTPException(400, "千川店铺授权不存在或不可用")
+            row.shop_auth_id = shop_auth.id
+            row.shop_id = row.shop_id or shop_auth.shop_id
+            row.shop_name = row.shop_name or shop_auth.shop_name
+            row.advertiser_id = row.advertiser_id or shop_auth.advertiser_id
     row.qianchuan_product_id = _clean_text(body.qianchuan_product_id, 64, "千川商品ID")
     row.bind_status = status
     row.remark = _clean_text(body.remark, 1000, "备注")

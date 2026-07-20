@@ -31,15 +31,18 @@ def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user
     当前测试 bucket 是公共读写,所以不签名;后续切生产私有 bucket 时,
     这里可以平滑替换成 STS 或带签名 PUT URL,前端调用语义不变。
     """
+    if not storage.extension_allowed(body.filename):
+        raise HTTPException(400, "不支持的文件类型,仅允许图片/视频/PDF")
     if not storage.use_oss():
         return {"enabled": False}
     key = storage.make_key(body.filename, body.prefix)
     public_url = storage.public_object_url(key)
+    # Content-Type 一律由扩展名推导,不采信前端传入(否则可伪造 text/html 内联执行)
     return {
         "enabled": True,
         "key": key,
         "upload_url": public_url,
-        "content_type": body.content_type or storage.content_type(body.filename),
+        "content_type": storage.content_type(key),
         "url": public_url,
         "preview_url": storage.preview_url(key),
         "inline_preview": storage.inline_preview_enabled(),
@@ -55,6 +58,8 @@ async def upload(file: UploadFile, prefix: str = "materials",
                  user: User = Depends(current_user)):
     # 读入内容并落库:OSS 用 put_object(bytes) 一次写全(此前分块流式写会写出 0 字节文件,
     # 导致 OSS 对象为空、缩略图 502);OSS 的阻塞上传放线程池,不卡事件循环。
+    if not storage.extension_allowed(file.filename or ""):
+        raise HTTPException(400, "不支持的文件类型,仅允许图片/视频/PDF")
     data = await file.read()
     if not data:
         raise HTTPException(400, "上传文件为空,请重新选择")
@@ -135,10 +140,14 @@ def _serve_oss(key: str, request: Request):
         logger.exception("[upload] OSS 读取失败")
         raise HTTPException(502, "文件读取失败,请检查 OSS 配置")
 
+    safe = storage.is_inline_safe(key)
+    media_type = storage.content_type(key) if safe else "application/octet-stream"
+    disposition = "inline" if safe else "attachment"
     headers = {
         "Accept-Ranges": "bytes",
-        "Content-Disposition": f'inline; filename="{_inline_name(key)}"',
+        "Content-Disposition": f'{disposition}; filename="{_inline_name(key)}"',
         "Cache-Control": "private, max-age=3600",
+        "X-Content-Type-Options": "nosniff",
     }
     status_code = 200
     if isinstance(byte_range, tuple):
@@ -150,7 +159,7 @@ def _serve_oss(key: str, request: Request):
         headers["Content-Length"] = str(size)
     return StreamingResponse(
         _oss_chunks(obj),
-        media_type=storage.content_type(key),
+        media_type=media_type,
         headers=headers,
         status_code=status_code,
     )
@@ -171,9 +180,15 @@ def serve_file(key: str, request: Request, e: str | None = None, s: str | None =
     if path != base and not path.startswith(base + os.sep):
         raise HTTPException(400, "非法路径")
     if os.path.isfile(path):
-        response = FileResponse(path, media_type=storage.content_type(key))
-        response.headers["Content-Disposition"] = f'inline; filename="{_inline_name(key)}"'
+        # 只有图片/视频/音频/PDF 允许内联预览;其余(如历史遗留的 html/svg)强制下载,
+        # 且用 octet-stream 防止浏览器按内容嗅探执行,杜绝存储型 XSS。
+        safe = storage.is_inline_safe(key)
+        media_type = storage.content_type(key) if safe else "application/octet-stream"
+        disposition = "inline" if safe else "attachment"
+        response = FileResponse(path, media_type=media_type)
+        response.headers["Content-Disposition"] = f'{disposition}; filename="{_inline_name(key)}"'
         response.headers["Cache-Control"] = "private, max-age=3600"
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
     if storage.use_oss():

@@ -401,7 +401,7 @@ async function doFail() {
   try {
     await api.post(`/api/promotions/${currentPromo.id}/transition`, {
       action: 'mark_failed', fail_reason: failReason.value,
-      fail_proof_oss_key: failProofKeys.value[0] || undefined,
+      fail_proof_oss_keys: failProofKeys.value,   // 全部失败凭证截图,不再只取第一张
     })
     failVisible.value = false
     ElMessage.success('已标记失败')
