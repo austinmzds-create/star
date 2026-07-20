@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # 不能自动放进 video/iframe 里预览。
     oss_public_base_url: str = ""
     oss_inline_preview: bool = False
+    # 传输加速(可选):在 OSS 控制台为 bucket 开启「传输加速」后置 true,
+    # 直传/下载的签名 URL 会改用加速域名(就近接入边缘节点,显著改善远距离/跨地域上行)。
+    # 签名的 CanonicalizedResource 只含 /bucket/key、与 host 无关,换域名后签名依然有效。
+    # 默认关闭:未在控制台开启就置 true 会导致直传 403。
+    oss_accelerate: bool = False
+    oss_accelerate_endpoint: str = "oss-accelerate.aliyuncs.com"
 
     # 阿里云短信(达人 H5 手机验证码)
     sms_access_key_id: str = ""

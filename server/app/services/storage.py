@@ -112,14 +112,28 @@ def _https_url(url: str) -> str:
     return url
 
 
+def _maybe_accelerate(url: str) -> str:
+    """开启传输加速时,把签名 URL 的 host 换成 bucket 的加速域名。
+
+    OSS V1 签名的 CanonicalizedResource 只含 ``/bucket/key``(不含 host),换域名后签名仍有效;
+    远距离/跨地域用户直传时,加速域名会就近接入边缘节点,明显提升上行速度。
+    需先在 OSS 控制台为该 bucket 开启「传输加速」,否则加速域名会拒绝请求。"""
+    if not settings.oss_accelerate:
+        return url
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    host = f"{settings.oss_bucket}.{settings.oss_accelerate_endpoint}"
+    return urlunsplit((parts.scheme, host, parts.path, parts.query, parts.fragment))
+
+
 def signed_put_url(key: str, content_type: str, expires: int = 3600) -> str:
     """单文件直传的签名 PUT URL。
 
     OSS V1 签名把 Content-Type 计入签名串,因此必须把它纳入签名,且前端 PUT 时必须发送
     完全一致的 Content-Type(见 direct-ticket 返回的 content_type),否则 403 SignatureDoesNotMatch。
     对象因此以正确的 Content-Type 落库,后续签名 GET 直读也能拿到正确类型。"""
-    return _https_url(_bucket().sign_url("PUT", key, expires, slash_safe=True,
-                                         headers={"Content-Type": content_type}))
+    return _maybe_accelerate(_https_url(_bucket().sign_url(
+        "PUT", key, expires, slash_safe=True, headers={"Content-Type": content_type})))
 
 
 def public_object_url(key: str) -> str:
@@ -236,7 +250,7 @@ def public_or_signed_url(key: str, expires: int = 86400) -> str:
 def signed_get_url(key: str, expires: int = 1800) -> str:
     """短时效签名 GET URL,用于下载重定向:私有 bucket 直读、不占 ECS 带宽。
     注意:阿里云默认域名会强制 Content-Disposition: attachment,故仅用于下载,不用于内联预览。"""
-    return _https_url(_bucket().sign_url("GET", key, expires, slash_safe=True))
+    return _maybe_accelerate(_https_url(_bucket().sign_url("GET", key, expires, slash_safe=True)))
 
 
 def material_file_url(material_id: int, download: bool = False, expires: int = 86400) -> str:

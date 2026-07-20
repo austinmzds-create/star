@@ -1,16 +1,12 @@
-const MIN_UPLOAD_TIMEOUT_MS = 45000
-const MAX_UPLOAD_TIMEOUT_MS = 9 * 60 * 1000
-const UPLOAD_TIMEOUT_GRACE_MS = 30000
-const UPLOAD_TIMEOUT_BYTES_PER_SECOND = 256 * 1024
-const BACKEND_FALLBACK_MAX_BYTES = 8 * 1024 * 1024
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024
-
-function resolveUploadTimeoutMs(file, options = {}) {
-  const explicit = Number(options.timeoutMs)
-  if (Number.isFinite(explicit) && explicit > 0) return Math.trunc(explicit)
-  const estimated = UPLOAD_TIMEOUT_GRACE_MS + (file.size / UPLOAD_TIMEOUT_BYTES_PER_SECOND) * 1000
-  return Math.max(MIN_UPLOAD_TIMEOUT_MS, Math.min(MAX_UPLOAD_TIMEOUT_MS, Math.ceil(estimated)))
-}
+const BACKEND_FALLBACK_MAX_BYTES = 8 * 1024 * 1024
+// 直传采用「停顿看门狗」而非固定超时:只要还在往上传字节就一直续命,
+// 只有连续 STALL_TIMEOUT_MS 没有任何进展(网络真的断了)才判定失败。
+// 固定超时会把「慢但在传」的上传误杀——例如 1.2Mbps 上行传 9MB 需 ~60s,
+// 却被按 2Mbps 估算的 66s 阈值卡掉(线上真实事故),停顿看门狗从根上避免这点。
+const STALL_TIMEOUT_MS = 60000
+// 兜底硬上限:即便进度回调因浏览器异常不触发,也不至于永久挂起。
+const HARD_CAP_MS = 30 * 60 * 1000
 
 function isVideoFile(file) {
   const type = (file.type || '').toLowerCase()
@@ -31,15 +27,32 @@ function putFileToOss(ticket, file, onProgress, options = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     let settled = false
+    let stallTimer = null
+    let hardTimer = null
+    const stallMs = Number(options.stallTimeoutMs) > 0 ? Math.trunc(options.stallTimeoutMs) : STALL_TIMEOUT_MS
+    const clearTimers = () => {
+      if (stallTimer) { clearTimeout(stallTimer); stallTimer = null }
+      if (hardTimer) { clearTimeout(hardTimer); hardTimer = null }
+    }
     const finish = (fn, value) => {
       if (settled) return
       settled = true
+      clearTimers()
       fn(value)
     }
+    // 每次有字节进展就重置停顿计时;真正连续无进展才中断。
+    const armStall = () => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        finish(reject, new Error(`OSS 直传中断:${Math.round(stallMs / 1000)} 秒内无数据传输,请检查网络后重试`))
+        try { xhr.abort() } catch { /* 已中断,忽略 */ }
+      }, stallMs)
+    }
     xhr.open('PUT', ticket.upload_url)
-    xhr.timeout = resolveUploadTimeoutMs(file, options)
+    // 签名 PUT 把 Content-Type 计入签名,必须与票据一致,否则 403 SignatureDoesNotMatch。
     xhr.setRequestHeader('Content-Type', ticket.content_type || file.type || 'application/octet-stream')
     xhr.upload.onprogress = (event) => {
+      armStall()
       if (event.lengthComputable && onProgress) {
         const total = event.total || file.size
         const percent = total > 0 ? Math.min(100, Math.round((event.loaded / total) * 100)) : 0
@@ -56,10 +69,12 @@ function putFileToOss(ticket, file, onProgress, options = {}) {
       }
     }
     xhr.onerror = () => finish(reject, new Error('OSS 直传网络异常'))
-    xhr.ontimeout = () => finish(reject, new Error(`OSS 直传超时,请检查网络后重试(超过 ${Math.round(xhr.timeout / 1000)} 秒)`))
-    xhr.onabort = () => {
-      if (!settled) finish(reject, new Error('OSS 直传已取消'))
-    }
+    xhr.onabort = () => { if (!settled) finish(reject, new Error('OSS 直传已取消')) }
+    hardTimer = setTimeout(() => {
+      finish(reject, new Error('OSS 直传超时,请重试'))
+      try { xhr.abort() } catch { /* 已中断,忽略 */ }
+    }, HARD_CAP_MS)
+    armStall()
     xhr.send(file)
   })
 }

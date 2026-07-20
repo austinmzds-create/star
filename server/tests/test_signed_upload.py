@@ -69,3 +69,24 @@ def test_unsigned_ticket_shape_when_anonymous(monkeypatch):
     monkeypatch.setattr(storage, "inline_preview_enabled", lambda: False)
     t = direct_upload_ticket(DirectUploadIn(filename="a.png", size_bytes=1), _User())
     assert t["signed"] is False and t["upload_url"].startswith("https://pub/")
+
+
+def test_https_url_forces_https():
+    assert storage._https_url("http://x.oss/y?z=1") == "https://x.oss/y?z=1"
+    assert storage._https_url("https://x.oss/y") == "https://x.oss/y"
+
+
+def test_maybe_accelerate_swaps_host_only_when_enabled(monkeypatch):
+    """开传输加速:只换 host 为加速域名,path/query(含签名)原样保留;关则不动。"""
+    monkeypatch.setattr(storage.settings, "oss_bucket", "viceo-public")
+    monkeypatch.setattr(storage.settings, "oss_accelerate_endpoint", "oss-accelerate.aliyuncs.com")
+    url = "https://viceo-public.oss-cn-shanghai.aliyuncs.com/materials/x.mp4?Signature=abc%2B%3D&Expires=1"
+
+    monkeypatch.setattr(storage.settings, "oss_accelerate", False)
+    assert storage._maybe_accelerate(url) == url
+
+    monkeypatch.setattr(storage.settings, "oss_accelerate", True)
+    out = storage._maybe_accelerate(url)
+    assert out == "https://viceo-public.oss-accelerate.aliyuncs.com/materials/x.mp4?Signature=abc%2B%3D&Expires=1"
+    # 签名串(query)未被改动,换域名后签名依然有效
+    assert out.split("?", 1)[1] == url.split("?", 1)[1]
