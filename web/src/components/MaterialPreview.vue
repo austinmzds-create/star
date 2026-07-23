@@ -10,14 +10,13 @@
       <span>视频文件已上传</span>
       <div class="file-actions">
         <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
-        <a :href="material.url" target="_blank" rel="noopener">打开/下载</a>
+        <a :href="material.download_url || material.url" target="_blank" rel="noopener">打开/下载</a>
       </div>
     </div>
     <el-image
       v-else-if="isImageLike && material.url"
       :key="imageUrl"
       :src="imageUrl"
-      :preview-src-list="[imageUrl]"
       fit="contain"
       @error="imageFailed = true"
     />
@@ -34,7 +33,7 @@
       <span>报告文件已上传</span>
       <div class="file-actions">
         <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
-        <a :href="material.url" target="_blank" rel="noopener">打开/下载</a>
+        <a :href="material.download_url || material.url" target="_blank" rel="noopener">打开/下载</a>
       </div>
     </div>
     <div v-else-if="material.type === 'copy' && material.parsed_text" class="copy-preview">

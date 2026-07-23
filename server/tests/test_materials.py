@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.api.h5 import (ApplyProductIn, MaterialReadIn, apply_product,  # noqa: E402
                         mark_material_read, my_materials, my_products)
 from app.api.product_applications import (ReviewIn, list_applications,  # noqa: E402
-                                          review_application)
+                                          pending_count, review_application,
+                                          status_counts)
 from app.api.products import (MaterialCommentAttachmentIn, MaterialCommentIn,  # noqa: E402
                               MaterialAssetIn, MaterialEditIn, MaterialIn,
                               MaterialPostIn, MaterialPublishIn, ProductIn,
@@ -125,10 +126,14 @@ def test_detail_shows_video_output_to_bd(db, admin, bd):
     pid = _product(db, admin)
     add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
     add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/b.mp4"), admin, db)
-    admin_types = {m["type"] for m in product_detail(pid, admin, db)["materials"]}
-    bd_types = {m["type"] for m in product_detail(pid, bd, db)["materials"]}
+    admin_detail = product_detail(pid, admin, db)
+    bd_detail = product_detail(pid, bd, db)
+    admin_types = {m["type"] for m in admin_detail["materials"]}
+    bd_types = {m["type"] for m in bd_detail["materials"]}
     assert "video_output" in admin_types
     assert "video_output" in bd_types and "video_ai" in bd_types
+    output = next(m for m in bd_detail["materials"] if m["type"] == "video_output")
+    assert output["inline_preview"] is False
 
 
 def test_bd_can_comment_on_video_output_with_attachments(db, admin, bd):
@@ -211,6 +216,28 @@ def test_h5_apply_product_creates_pending_application(db, admin):
     assert detail["application"]["status"] == "pending"
     listed = list_applications(status="pending", user=admin, db=db)["items"]
     assert len(listed) == 1 and listed[0]["influencer_id"] == inf.id
+    product_row = next(x for x in list_products(user=admin, db=db) if x["id"] == pid)
+    assert product_row["application_count"] == 1
+
+
+def test_product_applications_mask_phone_and_scope_counts(db, admin, bd):
+    pid = _product(db, admin)
+    owner_inf = _influencer(db, owner=bd, phone="15000000001", douyin_id="owner1")
+    other_bd = User(phone="13900000002", display_name="其他商务", role="bd")
+    db.add(other_bd)
+    db.commit()
+    apply_product(pid, ApplyProductIn(), owner_inf, db)
+
+    owner_rows = list_applications(status="pending", user=bd, db=db)["items"]
+    other_rows = list_applications(status="pending", user=other_bd, db=db)["items"]
+
+    assert owner_rows[0]["phone"] == "15000000001"
+    assert owner_rows[0]["can_operate"] is True
+    assert other_rows[0]["phone"] is None
+    assert other_rows[0]["can_operate"] is False
+    assert status_counts(user=other_bd, db=db)["pending"] == 1
+    assert status_counts(mine_only=True, user=other_bd, db=db) == {}
+    assert pending_count(user=other_bd, db=db)["count"] == 0
 
 
 def test_review_application_approve_creates_to_ship_sample(db, admin, bd):

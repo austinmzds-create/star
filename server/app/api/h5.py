@@ -443,12 +443,13 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
     for m in materials:
         unread = _unread_for(m)
         unread_badges["video_output"] += unread["unread_total"] if m.type == "video_output" else 0
+        inline_preview = bool(m.oss_key and storage.is_image(m.oss_key))
         item = {"id": m.id, "type": m.type, "title": m.title,
                 "url": storage.material_file_url(m.id) if m.oss_key else None,
                 "preview_url": storage.material_file_url(m.id) if m.oss_key else None,
                 "download_url": storage.material_file_url(m.id, download=True) if m.oss_key else None,
                 "is_image": storage.is_image(m.oss_key) if m.oss_key else False,
-                "inline_preview": True,
+                "inline_preview": inline_preview,
                 "source_link": m.source_link, "parsed_text": m.parsed_text,
                 "report_id": m.report_id, "downloadable": m.downloadable,
                 **unread}

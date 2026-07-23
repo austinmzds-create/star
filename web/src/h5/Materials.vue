@@ -243,7 +243,7 @@ async function refreshLogi() {
     if (r.ok || r.events?.length) ElMessage.success('物流已更新')
     else if (r.code === 'CONFIG_MISSING') ElMessage.warning(r.message || '物流接口未配置')
     else ElMessage.info(r.message || '暂无轨迹')
-    await loadDetail()
+    await loadDetail({ resetTab: false })
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '查询失败')
   } finally {
@@ -274,9 +274,9 @@ async function applyProduct() {
   }
 }
 
-async function loadDetail() {
+async function loadDetail({ resetTab = true } = {}) {
   expandLogi.value = false
-  activeTab.value = 'detail'
+  if (resetTab) activeTab.value = 'detail'
   d.value = await api.get(`/api/h5/products/${route.params.id}/materials`)
 }
 

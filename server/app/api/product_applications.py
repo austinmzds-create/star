@@ -17,6 +17,7 @@ from ..models import (Cooperation, Influencer, OrderRecord, Product,
                       ProductApplication, Promotion, SampleOrder, User,
                       VideoTask)
 from ..services import product_applications as apps
+from ..services import storage
 from ..services.oplog import log_op
 from .samples import ShipIn, ship as ship_sample
 
@@ -123,15 +124,16 @@ def _app_dict(db: Session, app: ProductApplication, inf: Influencer, product: Pr
     sample = _sample_for_app(db, app)
     status = apps.display_status(app, sample)
     stats = _stats_for(db, inf.id, product.id)
+    can_operate = bool(current_user_obj and owns_or_admin(current_user_obj, inf.owner_bd_id))
     return {
         "id": app.id,
         "product_id": product.id,
         "product_name": product.name,
-        "product_image": product.product_image,
+        "product_image": storage.thumbnail_url(product.product_image, 96),
         "influencer_id": inf.id,
         "influencer_nickname": inf.nickname,
         "douyin_id": inf.douyin_id,
-        "phone": inf.phone,
+        "phone": inf.phone if can_operate else None,
         "owner_bd_id": inf.owner_bd_id,
         "owner_bd_name": owner.display_name if owner else None,
         "source": app.source,
@@ -152,39 +154,48 @@ def _app_dict(db: Session, app: ProductApplication, inf: Influencer, product: Pr
         "latest_video_status": stats["latest_video_status"],
         "promotion_status": stats["promotion_status"],
         "gmv": stats["gmv"],
-        "can_operate": bool(current_user_obj and owns_or_admin(current_user_obj, inf.owner_bd_id)),
+        "can_operate": can_operate,
         "created_at": app.created_at.isoformat(),
         "updated_at": app.updated_at.isoformat(),
     }
 
 
-@router.get("")
-def list_applications(status: str | None = None, q: str | None = None,
-                      mine_only: bool = False, page: int = 1, page_size: int = 50,
-                      user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """带货管理列表。商务可看全库;非归属达人只读,操作时再拦截。"""
+def _application_rows_stmt(user: User, mine_only: bool = False, q: str | None = None):
     stmt = (select(ProductApplication, Influencer, Product, User)
             .join(Influencer, ProductApplication.influencer_id == Influencer.id)
             .join(Product, ProductApplication.product_id == Product.id)
             .outerjoin(User, Influencer.owner_bd_id == User.id))
     if mine_only and user.role != "admin":
         stmt = stmt.where(Influencer.owner_bd_id == user.id)
-    if status:
-        if status in {"approved", "shipped", "in_transit", "signed"}:
-            stmt = stmt.outerjoin(SampleOrder, ProductApplication.sample_order_id == SampleOrder.id)
-            stmt = stmt.where(ProductApplication.status == "approved")
-            if status == "approved":
-                stmt = stmt.where(or_(SampleOrder.id.is_(None), SampleOrder.status == "approved"))
-            else:
-                stmt = stmt.where(SampleOrder.status == status)
-        elif status in apps.APPLICATION_STATUSES:
-            stmt = stmt.where(ProductApplication.status == status)
     if q:
         like = f"%{q}%"
         stmt = stmt.where(or_(Influencer.nickname.like(like),
                               Influencer.douyin_id.like(like),
                               Influencer.phone.like(like),
                               Product.name.like(like)))
+    return stmt
+
+
+def _apply_status_filter(stmt, status: str | None):
+    if not status:
+        return stmt
+    if status in {"approved", "shipped", "in_transit", "signed"}:
+        stmt = stmt.outerjoin(SampleOrder, ProductApplication.sample_order_id == SampleOrder.id)
+        stmt = stmt.where(ProductApplication.status == "approved")
+        if status == "approved":
+            return stmt.where(or_(SampleOrder.id.is_(None), SampleOrder.status == "approved"))
+        return stmt.where(SampleOrder.status == status)
+    if status in apps.APPLICATION_STATUSES:
+        return stmt.where(ProductApplication.status == status)
+    return stmt
+
+
+@router.get("")
+def list_applications(status: str | None = None, q: str | None = None,
+                      mine_only: bool = False, page: int = 1, page_size: int = 50,
+                      user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """带货管理列表。商务可看全库;非归属达人只读且敏感联系方式脱敏。"""
+    stmt = _apply_status_filter(_application_rows_stmt(user, mine_only, q), status)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     page = max(1, page)
     page_size = min(max(1, page_size), 200)
@@ -200,8 +211,9 @@ def list_applications(status: str | None = None, q: str | None = None,
 
 
 @router.get("/status-counts")
-def status_counts(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.scalars(select(ProductApplication)).all()
+def status_counts(q: str | None = None, mine_only: bool = False,
+                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = [row[0] for row in db.execute(_application_rows_stmt(user, mine_only, q)).all()]
     counts: dict[str, int] = {}
     for app in rows:
         sample = _sample_for_app(db, app)
@@ -212,10 +224,12 @@ def status_counts(user: User = Depends(current_user), db: Session = Depends(get_
 
 @router.get("/pending-count")
 def pending_count(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    count = db.scalar(
-        select(func.count(ProductApplication.id))
-        .where(ProductApplication.status == "pending")
-    ) or 0
+    stmt = (select(func.count(ProductApplication.id))
+            .join(Influencer, ProductApplication.influencer_id == Influencer.id)
+            .where(ProductApplication.status == "pending"))
+    if user.role != "admin":
+        stmt = stmt.where(Influencer.owner_bd_id == user.id)
+    count = db.scalar(stmt) or 0
     return {"count": count}
 
 

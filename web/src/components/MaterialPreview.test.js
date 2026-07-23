@@ -23,22 +23,24 @@ describe('MaterialPreview', () => {
       type: 'video_ai',
       url: 'https://bucket.oss/materials/video.mp4',
       preview_url: '/api/files/materials/video.mp4?e=1&s=test',
+      download_url: '/api/material-file/1?e=1&s=test&dl=1',
       inline_preview: false,
     })
 
     expect(wrapper.find('video').exists()).toBe(false)
     expect(wrapper.text()).toContain('视频文件已上传')
+    expect(wrapper.get('.file-actions a').attributes('href')).toBe('/api/material-file/1?e=1&s=test&dl=1')
 
     await wrapper.get('.file-actions button').trigger('click')
     expect(wrapper.get('video').attributes('src')).toBe('/api/files/materials/video.mp4?e=1&s=test')
   })
 
-  it('renders an image with a preview source list', () => {
+  it('renders an image directly without the extra preview gallery', () => {
     const wrapper = mountPreview({ type: 'image', url: '/signed/image.jpg' })
     const image = wrapper.getComponent({ name: 'ElImage' })
 
     expect(image.props('src')).toBe('/signed/image.jpg')
-    expect(image.props('previewSrcList')).toEqual(['/signed/image.jpg'])
+    expect(image.props('previewSrcList')).toEqual([])
   })
 
   it('shows description text under uploaded media', () => {

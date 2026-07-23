@@ -1,4 +1,4 @@
-"""产品中心:产品维护 + 五类素材 + 授权达人 + 商品信息编辑 + 产品动态 + 出单登记。"""
+"""产品中心:产品维护 + 素材 + 带货达人 + 商品信息编辑 + 产品动态 + 出单登记。"""
 from datetime import datetime
 from decimal import Decimal
 
@@ -273,6 +273,7 @@ def list_products(q: str | None = None, status: str | None = None,
     product_ids = [p.id for p in rows]
     material_counts = {}
     grant_counts = {}
+    application_counts = {}
     binding_by_product = {}
     if product_ids:
         mat_count_stmt = (select(Material.product_id, func.count(Material.id))
@@ -282,6 +283,11 @@ def list_products(q: str | None = None, status: str | None = None,
             select(AccessGrant.product_id, func.count(AccessGrant.id))
             .where(AccessGrant.product_id.in_(product_ids))
             .group_by(AccessGrant.product_id)
+        ).all())
+        application_counts = dict(db.execute(
+            select(ProductApplication.product_id, func.count(ProductApplication.id))
+            .where(ProductApplication.product_id.in_(product_ids))
+            .group_by(ProductApplication.product_id)
         ).all())
         binding_by_product = {
             row.product_id: row
@@ -294,9 +300,11 @@ def list_products(q: str | None = None, status: str | None = None,
               "product_image": storage.thumbnail_url(p.product_image, 96),
               "default_commission": float(p.default_commission) if p.default_commission is not None else None,
               "merchant_promotion_commission": (float(p.merchant_promotion_commission)
-                                                if p.merchant_promotion_commission is not None else None),
+                                                  if p.merchant_promotion_commission is not None else None),
               "status": p.status, "material_count": int(material_counts.get(p.id, 0)),
               "granted_count": int(grant_counts.get(p.id, 0)),
+              "application_count": int(application_counts.get(p.id, 0)),
+              "allow_promotion": p.allow_promotion,
               "qianchuan_status": _qianchuan_status_from_row(binding_by_product.get(p.id)),
               "created_at": p.created_at.isoformat()} for p in rows]
     return {"items": items, "total": total, "page": page, "page_size": page_size} if paged else items
@@ -418,12 +426,13 @@ def _material_dict(m: Material) -> dict:
     # 预览/下载都走"自家域名 + 素材 id + 签名"网关,不再向前端暴露裸 OSS URL。
     # 内部端保留 oss_key 供编辑时判断"是否已有文件/是否替换"(内部可信;达人端不下发)。
     has_file = bool(m.oss_key)
+    inline_preview = bool(has_file and storage.is_image(m.oss_key))
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
             "url": storage.material_file_url(m.id) if has_file else None,
             "preview_url": storage.material_file_url(m.id) if has_file else None,
             "download_url": storage.material_file_url(m.id, download=True) if has_file else None,
             "is_image": storage.is_image(m.oss_key) if has_file else False,
-            "inline_preview": True,
+            "inline_preview": inline_preview,
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
             "starred": m.starred, "is_public": m.is_public,
@@ -782,6 +791,24 @@ def _product_qianchuan_binding(db: Session, product_id: int) -> ProductQianchuan
                       .where(ProductQianchuanBinding.product_id == product_id)).first()
 
 
+def _has_promotion_relationship(db: Session, product_id: int, influencer_id: int) -> bool:
+    """千川投流绑定应跟随新的带货流程;AccessGrant 只作为历史数据兼容。"""
+    app = db.scalars(
+        select(ProductApplication)
+        .where(ProductApplication.product_id == product_id,
+               ProductApplication.influencer_id == influencer_id,
+               ProductApplication.status == "approved")
+    ).first()
+    if app:
+        return True
+    legacy_grant = db.scalars(
+        select(AccessGrant)
+        .where(AccessGrant.product_id == product_id,
+               AccessGrant.influencer_id == influencer_id)
+    ).first()
+    return bool(legacy_grant)
+
+
 def _qianchuan_coop_dict(row: QianchuanCooperationBinding, inf: Influencer | None = None) -> dict:
     return {
         "id": row.id,
@@ -823,10 +850,8 @@ def bind_qianchuan_cooperation(product_id: int, body: QianchuanCooperationIn,
     if body.bind_status not in QIANCHUAN_COOP_STATUSES:
         raise HTTPException(400, "千川合作绑定状态不支持")
     inf = _assert_owns_influencer(db, user, body.influencer_id)
-    grant = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
-                                                 AccessGrant.influencer_id == inf.id)).first()
-    if not grant:
-        raise HTTPException(400, "该达人尚未授权此产品,请先在「授权达人」开放产品")
+    if not _has_promotion_relationship(db, product_id, inf.id):
+        raise HTTPException(400, "该达人尚未进入带货流程,请先在「带货达人」添加或通过申请")
     external_id = _clean_text(body.qianchuan_cooperation_id, 64, "千川合作ID")
     if not external_id:
         raise HTTPException(400, "请填写千川合作ID;一键同步请使用「从已授权店铺同步」")
@@ -859,10 +884,8 @@ async def sync_qianchuan_cooperation(product_id: int, body: QianchuanCooperation
     if not product:
         raise HTTPException(404, "产品不存在")
     inf = _assert_owns_influencer(db, user, body.influencer_id)
-    grant = db.scalars(select(AccessGrant).where(AccessGrant.product_id == product_id,
-                                                 AccessGrant.influencer_id == inf.id)).first()
-    if not grant:
-        raise HTTPException(400, "该达人尚未授权此产品,请先在「授权达人」开放产品")
+    if not _has_promotion_relationship(db, product_id, inf.id):
+        raise HTTPException(400, "该达人尚未进入带货流程,请先在「带货达人」添加或通过申请")
     binding = _product_qianchuan_binding(db, product_id)
     if not binding or not binding.shop_auth_id:
         raise HTTPException(400, "请先完成千川店铺授权或选择已授权店铺")
@@ -1014,7 +1037,7 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "materials": [_material_dict(m) for m in materials]}
 
 
-# ---------- 授权达人 ----------
+# ---------- 历史授权兼容 ----------
 
 class GrantIn(BaseModel):
     influencer_id: int

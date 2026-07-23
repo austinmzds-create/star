@@ -1,12 +1,11 @@
 // 达人 H5 设备视图模式:手机(窄居中+底部 tab) / 电脑(宽屏+左侧导航)。
-// 业务默认按手机端展示;用户可在左上角手动切换并持久化。
+// 业务默认始终按手机端展示;左上角切换只影响当前 SPA 会话,避免旧浏览器缓存把达人端打开成电脑版。
 import { ref } from 'vue'
 
 const KEY = 'h5_device_mode'
 
 function detectDefault() {
-  const stored = localStorage.getItem(KEY)
-  if (stored === 'mobile' || stored === 'desktop') return stored
+  localStorage.removeItem(KEY)
   return 'mobile'
 }
 
@@ -16,7 +15,6 @@ export const deviceMode = ref(detectDefault())
 export function setDeviceMode(mode) {
   if (mode !== 'mobile' && mode !== 'desktop') return
   deviceMode.value = mode
-  localStorage.setItem(KEY, mode)
 }
 
 export function toggleDeviceMode() {

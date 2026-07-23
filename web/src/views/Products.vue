@@ -38,8 +38,8 @@
       <el-table-column label="素材" width="70">
         <template #default="{ row }">{{ row.material_count }}</template>
       </el-table-column>
-      <el-table-column label="授权达人" width="90">
-        <template #default="{ row }">{{ row.granted_count }}</template>
+      <el-table-column label="带货达人" width="90">
+        <template #default="{ row }">{{ row.application_count || 0 }}</template>
       </el-table-column>
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
@@ -202,8 +202,14 @@
               <div class="overview-stat">
                 <span>已发货</span><b>{{ detail.application_overview.counts?.shipped || 0 }}</b>
               </div>
+              <div class="overview-stat">
+                <span>运输中</span><b>{{ detail.application_overview.counts?.in_transit || 0 }}</b>
+              </div>
               <div class="overview-stat ok">
                 <span>已签收</span><b>{{ detail.application_overview.counts?.signed || 0 }}</b>
+              </div>
+              <div class="overview-stat danger">
+                <span>已拒绝</span><b>{{ detail.application_overview.counts?.rejected || 0 }}</b>
               </div>
               <div class="overview-stat">
                 <span>已取消</span><b>{{ detail.application_overview.counts?.cancelled || 0 }}</b>
@@ -214,7 +220,7 @@
               <div class="overview-stat">
                 <span>GMV</span><b>¥{{ Number(detail.application_overview.gmv || 0).toFixed(2) }}</b>
               </div>
-              <router-link class="overview-link" :to="{ path: '/applications', query: { q: detail.name } }">
+              <router-link class="overview-link" :to="{ path: '/applications', query: { q: detail.name, tab: 'all' } }">
                 查看带货管理
               </router-link>
             </div>
@@ -300,21 +306,37 @@
             </el-tabs>
           </el-tab-pane>
 
-          <!-- 授权达人 -->
-          <el-tab-pane label="授权达人" name="grants">
+          <!-- 带货达人 -->
+          <el-tab-pane label="带货达人" name="applications">
             <div class="mat-add">
-              <InfluencerSelect v-model="grantId" style="flex:1" />
-              <el-button type="primary" size="small" :disabled="!grantId" @click="addGrant">开放</el-button>
+              <InfluencerSelect v-model="applicationInfluencerId" style="flex:1" />
+              <el-button type="primary" size="small" :disabled="!applicationInfluencerId"
+                :loading="addingApplication" @click="addApplication">
+                添加带货
+              </el-button>
+              <router-link class="overview-link" :to="{ path: '/applications', query: { q: detail.name, tab: 'all' } }">
+                完整管理
+              </router-link>
             </div>
-            <el-table :data="grants" size="small">
-              <el-table-column prop="nickname" label="达人" />
+            <el-table :data="detail.application_overview?.items || []" size="small">
+              <el-table-column label="达人" min-width="120">
+                <template #default="{ row }">
+                  <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.nickname }}</router-link>
+                </template>
+              </el-table-column>
               <el-table-column prop="douyin_id" label="抖音号" />
-              <el-table-column label="授权时间" width="150"><template #default="{ row }">{{ ft(row.granted_at) }}</template></el-table-column>
-              <el-table-column width="70"><template #default="{ row }">
-                <el-button size="small" text type="danger" @click="removeGrant(row)">移除</el-button>
-              </template></el-table-column>
+              <el-table-column prop="owner_bd_name" label="归属商务" width="100" />
+              <el-table-column label="状态" width="90">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="applicationStatusTag(row.status)">{{ applicationStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="视频/GMV" width="150">
+                <template #default="{ row }">视频 {{ row.video_count || 0 }} / ¥{{ Number(row.gmv || 0).toFixed(2) }}</template>
+              </el-table-column>
+              <el-table-column label="更新" width="120"><template #default="{ row }">{{ ft(row.updated_at) }}</template></el-table-column>
             </el-table>
-            <el-empty v-if="!grants.length" description="尚未授权任何达人" :image-size="50" />
+            <el-empty v-if="!detail.application_overview?.items?.length" description="暂无带货达人" :image-size="50" />
           </el-tab-pane>
 
           <!-- 千川店铺绑定 -->
@@ -469,8 +491,7 @@
           </div>
           <!-- 回显:上传成功后预览,确认无误再点「添加」入库(批量模式自动入库,不回显) -->
           <div v-if="uploadForm.oss_key && !matUploading && !uploadIsBatch" class="upload-preview">
-            <el-image v-if="uploadIsImage" :src="uploadForm.url" fit="contain" class="up-img"
-              :preview-src-list="[uploadForm.url]" preview-teleported />
+            <el-image v-if="uploadIsImage" :src="uploadForm.url" fit="contain" class="up-img" />
             <video v-else-if="uploadIsVideo && uploadForm.url" :src="uploadForm.url" class="up-video" controls preload="metadata" />
             <a v-else :href="uploadForm.url" target="_blank" class="up-file">已上传:{{ uploadForm.file_name }}</a>
           </div>
@@ -556,8 +577,8 @@ const uploadFileInput = ref(null)
 const editFileInput = ref(null)
 const uploadFileInputId = 'product-material-upload-file-input'
 const editFileInputId = 'product-material-edit-file-input'
-const grants = ref([])
-const grantId = ref(null)
+const applicationInfluencerId = ref(null)
+const addingApplication = ref(false)
 const act = ref({ samples: [], videos: [] })
 const orders = ref([])
 const orderForm = reactive({ influencer_id: null, order_date: '', amount: null, note: '' })
@@ -588,6 +609,13 @@ const applicationStatusLabel = (status) => ({
   signed: '已签收',
   cancelled: '已取消',
 }[status] || status)
+const applicationStatusTag = (status) => {
+  if (status === 'pending' || status === 'approved') return 'warning'
+  if (status === 'rejected') return 'danger'
+  if (status === 'signed') return 'success'
+  if (status === 'cancelled') return 'info'
+  return 'primary'
+}
 const uploadStatusText = computed(() => {
   const prefix = matBatch.value ? `第 ${matBatch.value.index}/${matBatch.value.total} 个 · ` : ''
   if (matUploadStage.value === 'confirming') return `${prefix}已传完，正在确认...`
@@ -711,7 +739,7 @@ async function open(row, tabName = 'info') {
   detail.value = null
   dtab.value = targetTab
   mtype.value = 'video_ai'
-  grants.value = []
+  applicationInfluencerId.value = null
   act.value = { samples: [], videos: [] }
   orders.value = []
   qianchuanCoops.value = []
@@ -721,7 +749,6 @@ async function open(row, tabName = 'info') {
   const detailReq = api.get(`/api/products/${productId}`)
   const relatedReq = Promise.allSettled([
     api.get('/api/qianchuan/shop-auths'),
-    api.get(`/api/products/${productId}/grants`),
     api.get(`/api/products/${productId}/activity`),
     api.get(`/api/products/${productId}/orders`),
     api.get(`/api/products/${productId}/qianchuan-cooperations`),
@@ -744,9 +771,8 @@ async function open(row, tabName = 'info') {
 
   relatedReq.then((results) => {
     if (seq !== openSeq) return
-    const [shopAuths, grantsRes, actRes, ordersRes, coopsRes] = results
+    const [shopAuths, actRes, ordersRes, coopsRes] = results
     qianchuanShopAuths.value = shopAuths.status === 'fulfilled' ? shopAuths.value : []
-    grants.value = grantsRes.status === 'fulfilled' ? grantsRes.value : []
     act.value = actRes.status === 'fulfilled' ? actRes.value : { samples: [], videos: [] }
     orders.value = ordersRes.status === 'fulfilled' ? ordersRes.value : []
     qianchuanCoops.value = coopsRes.status === 'fulfilled' ? coopsRes.value : []
@@ -1264,23 +1290,23 @@ async function removeQianchuanCoop(row) {
   }
 }
 
-async function addGrant() {
-  if (!grantId.value) return ElMessage.warning('请选择达人')
+async function addApplication() {
+  if (!applicationInfluencerId.value) return ElMessage.warning('请选择达人')
+  addingApplication.value = true
   try {
-    await api.post(`/api/products/${detail.value.id}/grant`, { influencer_id: grantId.value })
-    ElMessage.success('已开放'); grantId.value = null
-    grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
+    await api.post('/api/product-applications', {
+      influencer_id: applicationInfluencerId.value,
+      product_id: detail.value.id,
+    }, { skipBadgeRefresh: true })
+    ElMessage.success('已添加到带货流程')
+    applicationInfluencerId.value = null
+    await refreshDetail()
+    load()
+    window.dispatchEvent(new Event('nav-badge-refresh'))
   } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '开放失败')
-  }
-}
-async function removeGrant(row) {
-  await ElMessageBox.confirm('确认取消该达人的产品授权?', '提示', { type: 'warning' })
-  try {
-    await api.delete(`/api/products/${detail.value.id}/grant/${row.influencer_id}`)
-    grants.value = await api.get(`/api/products/${detail.value.id}/grants`); load()
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '移除失败')
+    ElMessage.error(e.response?.data?.detail || '添加失败')
+  } finally {
+    addingApplication.value = false
   }
 }
 
@@ -1307,6 +1333,8 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .prod-img.broken, .head-img.broken { display: flex; align-items: center; justify-content: center;
   background: #f7f8fa; color: #b3392f; font-size: 11px; }
 .prod-name { font-weight: 500; }
+.link { color: #6b5cf6; text-decoration: none; }
+.link:hover { text-decoration: underline; }
 .commission-cell { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: #606266; line-height: 1.35; }
 .prod-head { display: flex; gap: 14px; align-items: flex-start; padding-bottom: 16px; border-bottom: 1px solid #f0f1f5; }
 .head-img { width: 64px; height: 64px; border-radius: 10px; }
@@ -1333,6 +1361,7 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .overview-stat b { display: block; margin-top: 2px; color: #303545; font-size: 15px; }
 .overview-stat.warn b { color: #b36b00; }
 .overview-stat.ok b { color: #2f9f5b; }
+.overview-stat.danger b { color: #d93030; }
 .overview-link {
   display: inline-flex;
   align-items: center;

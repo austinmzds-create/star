@@ -15,11 +15,12 @@
         <el-switch v-if="!isAdmin" v-model="mineOnly" active-text="只看我的" @change="reload" />
         <el-input v-model="search" placeholder="搜达人/抖音号/手机号/产品" clearable style="width:230px"
           @keyup.enter="reload" @clear="reload" />
+        <el-button @click="reload">查询</el-button>
         <el-button type="primary" @click="openCreate">+ 手动添加</el-button>
       </div>
     </div>
 
-    <el-table :data="rows" v-loading="loading">
+    <el-table :data="rows" v-loading="loading" row-key="id">
       <el-table-column label="达人" min-width="170">
         <template #default="{ row }">
           <router-link :to="`/influencers/${row.influencer_id}`" class="link">{{ row.influencer_nickname }}</router-link>
@@ -28,7 +29,11 @@
       </el-table-column>
       <el-table-column label="产品" min-width="180">
         <template #default="{ row }">
-          <router-link :to="{ path: '/products', query: { open: row.product_id } }" class="link">{{ row.product_name }}</router-link>
+          <div class="product-cell">
+            <el-image v-if="row.product_image" :src="row.product_image" fit="cover" class="product-thumb" />
+            <div v-else class="product-thumb placeholder" />
+            <router-link :to="{ path: '/products', query: { open: row.product_id } }" class="link">{{ row.product_name }}</router-link>
+          </div>
         </template>
       </el-table-column>
       <el-table-column prop="owner_bd_name" label="归属商务" width="100" />
@@ -40,6 +45,7 @@
           <span v-if="row.tracking_no">{{ row.courier_company || '' }} {{ row.tracking_no }}</span>
           <span v-else class="sub">暂无单号</span>
           <div v-if="lastEvent(row)" class="sub">{{ lastEvent(row).context }}</div>
+          <div v-if="lastEvent(row)?.ftime || lastEvent(row)?.time" class="sub">{{ lastEvent(row).ftime || lastEvent(row).time }}</div>
         </template>
       </el-table-column>
       <el-table-column label="业务数据" min-width="160">
@@ -55,8 +61,8 @@
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <template v-if="row.status === 'pending' && row.can_operate">
-            <el-button size="small" type="success" @click="review(row, true)">通过</el-button>
-            <el-button size="small" type="danger" plain @click="openReject(row)">拒绝</el-button>
+            <el-button size="small" type="success" :loading="operatingId === row.id" @click="review(row, true)">通过</el-button>
+            <el-button size="small" type="danger" plain :disabled="operatingId === row.id" @click="openReject(row)">拒绝</el-button>
           </template>
           <el-button v-else-if="row.status === 'approved' && row.can_operate" size="small" type="primary" @click="openShip(row)">
             填单号发货
@@ -75,7 +81,8 @@
         <el-form-item label="达人"><InfluencerSelect v-model="createForm.influencer_id" style="width:100%" /></el-form-item>
         <el-form-item label="产品">
           <el-select v-model="createForm.product_id" filterable placeholder="选择产品" style="width:100%">
-            <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id" />
+            <el-option v-for="p in products" :key="p.id" :label="p.name" :value="p.id"
+              :disabled="p.allow_promotion === false" />
           </el-select>
         </el-form-item>
         <el-form-item label="备注"><el-input v-model="createForm.note" type="textarea" :rows="2" /></el-form-item>
@@ -130,7 +137,11 @@ const TABS = [
 ]
 const STATUS_LABEL = { pending: '审核中', approved: '待发货', shipped: '已发货', in_transit: '运输中', signed: '已签收', rejected: '已拒绝', cancelled: '已取消' }
 
-const tab = ref('pending')
+const initialTab = (() => {
+  const value = String(route.query.tab || route.query.status || (route.query.q ? 'all' : 'pending'))
+  return TABS.some((item) => item.key === value) ? value : 'pending'
+})()
+const tab = ref(initialTab)
 const rows = ref([])
 const counts = ref({})
 const loading = ref(false)
@@ -152,6 +163,7 @@ const shipVisible = ref(false)
 const shipping = ref(false)
 const shipForm = reactive({ tracking_no: '', courier: '', phone: '' })
 const current = ref(null)
+const operatingId = ref(null)
 
 const fmt = (v) => (v ? v.slice(0, 10) : '—')
 const lastEvent = (row) => row.logistics_status?.last_event || row.logistics_status?.events?.[0] || null
@@ -173,7 +185,9 @@ async function load() {
       api.get('/api/product-applications', {
         params: { status, q: search.value || undefined, mine_only: mineOnly.value || undefined, page: page.value, page_size: pageSize },
       }),
-      api.get('/api/product-applications/status-counts'),
+      api.get('/api/product-applications/status-counts', {
+        params: { q: search.value || undefined, mine_only: mineOnly.value || undefined },
+      }),
     ])
     if (cur !== seq) return
     rows.value = r.items
@@ -201,6 +215,7 @@ async function doCreate() {
     createVisible.value = false
     tab.value = 'approved'
     await load()
+    refreshNavBadges()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '添加失败')
   } finally {
@@ -209,15 +224,19 @@ async function doCreate() {
 }
 
 async function review(row, approve) {
+  if (reviewing.value || operatingId.value) return
   reviewing.value = true
+  operatingId.value = row.id
   try {
     await api.post(`/api/product-applications/${row.id}/review`, { approve })
     ElMessage.success('已通过,进入待发货')
     await load()
+    refreshNavBadges()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
   } finally {
     reviewing.value = false
+    operatingId.value = null
   }
 }
 function openReject(row) {
@@ -226,6 +245,8 @@ function openReject(row) {
   rejectVisible.value = true
 }
 async function doReject() {
+  if (reviewing.value) return
+  if (!current.value?.id) return ElMessage.warning('请选择申请')
   if (!rejectReason.value.trim()) return ElMessage.warning('请填写拒绝原因')
   reviewing.value = true
   try {
@@ -234,6 +255,7 @@ async function doReject() {
     ElMessage.success('已拒绝')
     rejectVisible.value = false
     await load()
+    refreshNavBadges()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '操作失败')
   } finally {
@@ -247,6 +269,8 @@ function openShip(row) {
   shipVisible.value = true
 }
 async function doShip() {
+  if (shipping.value) return
+  if (!current.value?.id) return ElMessage.warning('请选择申请')
   if (!shipForm.tracking_no.trim()) return ElMessage.warning('请填写快递单号')
   shipping.value = true
   try {
@@ -259,6 +283,7 @@ async function doShip() {
     shipVisible.value = false
     tab.value = 'shipped'
     await load()
+    refreshNavBadges()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发货失败')
   } finally {
@@ -268,13 +293,17 @@ async function doShip() {
 
 onMounted(async () => {
   const [plist, courierList] = await Promise.all([
-    api.get('/api/products'),
+    api.get('/api/products', { params: { status: 'on' } }),
     api.get('/api/samples/couriers'),
   ])
-  products.value = plist
+  products.value = plist.filter((p) => p.status === 'on')
   couriers.value = courierList
   await load()
 })
+
+function refreshNavBadges() {
+  window.dispatchEvent(new Event('nav-badge-refresh'))
+}
 </script>
 
 <style scoped>
@@ -287,6 +316,9 @@ onMounted(async () => {
 .link:hover { text-decoration: underline; }
 .sub { color: #8a93a6; font-size: 12px; line-height: 1.5; }
 .biz { color: #303545; font-size: 13px; }
+.product-cell { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.product-thumb { width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0; }
+.product-thumb.placeholder { background: #eef0f5; }
 @media (max-width: 900px) {
   .page-toolbar { display: block; }
   .toolbar-right { justify-content: flex-start; margin-bottom: 10px; }

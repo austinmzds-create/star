@@ -1,6 +1,6 @@
 <template>
   <div class="plist">
-    <p class="hint">开放给你的产品，点进去看视频/文案素材、拍摄要求与寄样物流</p>
+    <p class="hint">全部上架产品，点进去看视频/文案素材、拍摄要求与带货状态</p>
     <button v-for="p in products" :key="p.id" type="button" class="pcard" @click="open(p.id)">
       <el-image v-if="p.product_image" :src="p.product_image" fit="cover" class="pimg" />
       <div v-else class="pimg placeholder" />
@@ -19,7 +19,7 @@
       </div>
       <span class="arr">›</span>
     </button>
-    <el-empty v-if="!products.length" description="暂无开放产品，完善资料后等待商务开通" :image-size="80" />
+    <el-empty v-if="!products.length" description="暂无上架产品" :image-size="80" />
   </div>
 </template>
 
