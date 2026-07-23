@@ -56,6 +56,13 @@ def _product_or_404(db: Session, product_id: int) -> Product:
     return product
 
 
+def _product_exists_or_404(db: Session, product_id: int) -> Product:
+    product = db.get(Product, product_id)
+    if not product:
+        raise HTTPException(404, "产品不存在")
+    return product
+
+
 def _influencer_or_404(db: Session, influencer_id: int) -> Influencer:
     inf = db.get(Influencer, influencer_id)
     if not inf:
@@ -258,11 +265,15 @@ def review_application(application_id: int, body: ReviewIn,
     if not app:
         raise HTTPException(404, "申请不存在")
     inf = _influencer_or_404(db, app.influencer_id)
-    product = _product_or_404(db, app.product_id)
+    product = _product_exists_or_404(db, app.product_id)
     _assert_can_operate(user, inf)
     if app.status != "pending":
         raise HTTPException(409, "该申请已处理")
     if body.approve:
+        if product.status != "on":
+            raise HTTPException(400, "产品已下架,不能通过带货申请")
+        if product.allow_promotion is False:
+            raise HTTPException(400, "该产品当前不允许带货")
         app.status = "approved"
         app.reject_reason = None
         apps.create_approved_sample(db, app, user)

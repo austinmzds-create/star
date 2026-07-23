@@ -114,7 +114,15 @@ def ensure_application_for_sample(db: Session, order: SampleOrder, actor: User |
             reviewed_at=order.updated_at if order.status != "pending" else None,
         )
         db.add(app)
-    app.sample_order_id = app.sample_order_id or order.id
+    new_status = application_status_from_sample(order)
+    if app.sample_order_id in (None, order.id) or app.status in {"rejected", "cancelled"} or order.status != "pending":
+        app.sample_order_id = order.id
+    if app.sample_order_id == order.id:
+        app.status = new_status
+        app.reject_reason = order.reject_reason if new_status == "rejected" else None
+        if order.status != "pending":
+            app.reviewed_by = order.approved_by
+            app.reviewed_at = order.updated_at
     app.owner_bd_id = inf.owner_bd_id
     return app
 

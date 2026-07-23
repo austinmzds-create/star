@@ -160,7 +160,7 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
         raise HTTPException(400, "该产品已有带货申请/寄样/视频/出单记录,不能删除;请改用「下架」")
     db.query(QianchuanCooperationBinding).filter(QianchuanCooperationBinding.product_id == product_id).delete()
     db.query(ProductQianchuanBinding).filter(ProductQianchuanBinding.product_id == product_id).delete()
-    db.query(Material).filter(Material.product_id == product_id).delete()
+    _delete_product_materials(db, product_id)
     db.query(AccessGrant).filter(AccessGrant.product_id == product_id).delete()
     db.delete(p)
     db.commit()
@@ -170,6 +170,40 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
 def _grant_count(db: Session, pid: int) -> int:
     return db.scalar(select(func.count()).select_from(AccessGrant)
                      .where(AccessGrant.product_id == pid)) or 0
+
+
+def _delete_product_materials(db: Session, product_id: int) -> None:
+    """硬删产品前清理素材树,避免批量删除绕过 ORM cascade 造成外键残留。"""
+    material_ids = db.scalars(select(Material.id).where(Material.product_id == product_id)).all()
+    if material_ids:
+        comment_ids = db.scalars(
+            select(MaterialComment.id).where(MaterialComment.material_id.in_(material_ids))
+        ).all()
+        if comment_ids:
+            db.query(MaterialCommentAttachment).filter(
+                MaterialCommentAttachment.comment_id.in_(comment_ids)
+            ).delete(synchronize_session=False)
+        db.query(MaterialReadState).filter(
+            MaterialReadState.material_id.in_(material_ids)
+        ).delete(synchronize_session=False)
+        db.query(MaterialDownloadLog).filter(
+            MaterialDownloadLog.material_id.in_(material_ids)
+        ).delete(synchronize_session=False)
+        db.query(MaterialComment).filter(
+            MaterialComment.material_id.in_(material_ids)
+        ).delete(synchronize_session=False)
+        db.query(Material).filter(
+            Material.id.in_(material_ids)
+        ).delete(synchronize_session=False)
+
+    post_ids = db.scalars(select(MaterialPost.id).where(MaterialPost.product_id == product_id)).all()
+    if post_ids:
+        db.query(MaterialAsset).filter(
+            MaterialAsset.post_id.in_(post_ids)
+        ).delete(synchronize_session=False)
+        db.query(MaterialPost).filter(
+            MaterialPost.id.in_(post_ids)
+        ).delete(synchronize_session=False)
 
 
 def _qianchuan_binding_dict(row: ProductQianchuanBinding | None) -> dict:

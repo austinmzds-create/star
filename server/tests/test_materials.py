@@ -16,16 +16,21 @@ from app.api.h5 import (ApplyProductIn, MaterialReadIn, apply_product,  # noqa: 
 from app.api.product_applications import (ReviewIn, list_applications,  # noqa: E402
                                           review_application)
 from app.api.products import (MaterialCommentAttachmentIn, MaterialCommentIn,  # noqa: E402
-                              MaterialEditIn, MaterialIn, MaterialPublishIn,
-                              ProductIn, add_material,
+                              MaterialAssetIn, MaterialEditIn, MaterialIn,
+                              MaterialPostIn, MaterialPublishIn, ProductIn,
+                              add_material,
                               create as create_product,
-                              create_material_comment, detail as product_detail,
-                              edit_material, list_material_comments,
-                              list_products, publish_material)
+                              create_material_comment, create_material_post,
+                              delete_product, detail as product_detail,
+                              edit_material, list_material_comments, list_products,
+                              publish_material)
 from app.api.samples import (CreateIn as SampleCreateIn,  # noqa: E402
                              create as create_sample, delete_sample)
 from app.db import Base  # noqa: E402
-from app.models import AccessGrant, Cooperation, Influencer, User  # noqa: E402
+from app.models import (AccessGrant, Cooperation, Influencer, Material,  # noqa: E402
+                        MaterialAsset, MaterialComment,
+                        MaterialCommentAttachment, MaterialPost,
+                        MaterialReadState, Product, User)
 
 
 @pytest.fixture
@@ -231,6 +236,36 @@ def test_review_application_reject_requires_reason(db, admin, bd):
     assert exc.value.status_code == 400
 
 
+def test_pending_application_can_be_rejected_after_product_off(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    app = apply_product(pid, ApplyProductIn(), inf, db)["application"]
+    db.get(Product, pid).status = "off"
+    db.commit()
+
+    review_application(app["id"], ReviewIn(approve=False, reject_reason="产品暂停"), bd, db)
+
+    rejected = list_applications(status="rejected", user=admin, db=db)["items"]
+    assert len(rejected) == 1
+    assert rejected[0]["reject_reason"] == "产品暂停"
+
+
+def test_sample_create_reopens_rejected_application(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    db.add(Cooperation(influencer_id=inf.id, round_no=1, level_snapshot="L1",
+                       commission_tier_snapshot=5, promo_mode_snapshot="merchant"))
+    app = apply_product(pid, ApplyProductIn(), inf, db)["application"]
+    review_application(app["id"], ReviewIn(approve=False, reject_reason="先拒绝"), bd, db)
+
+    sample = create_sample(SampleCreateIn(influencer_id=inf.id, product_id=pid), bd, db)
+
+    pending = list_applications(status="pending", user=admin, db=db)["items"]
+    assert len(pending) == 1
+    assert pending[0]["sample_order_id"] == sample["id"]
+    assert pending[0]["reject_reason"] is None
+
+
 def test_product_application_overview_counts_more_than_preview_limit(db, admin):
     pid = _product(db, admin)
     for i in range(25):
@@ -257,6 +292,31 @@ def test_deleting_pending_sample_cancels_application_without_fk_break(db, admin,
     cancelled = list_applications(status="cancelled", user=admin, db=db)["items"]
     assert len(cancelled) == 1
     assert cancelled[0]["sample_order_id"] is None
+
+
+def test_delete_product_cleans_material_children(db, admin, bd):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    create_material_comment(m["id"], MaterialCommentIn(
+        body="带附件评论",
+        attachments=[MaterialCommentAttachmentIn(oss_key="comments/proof.png", filename="proof.png")],
+    ), bd, db)
+    db.add(MaterialReadState(material_id=m["id"], influencer_id=_influencer(db).id))
+    create_material_post(pid, MaterialPostIn(
+        caption="内容帖",
+        assets=[MaterialAssetIn(type="image", oss_key="posts/a.png", filename="a.png")],
+    ), admin, db)
+    db.commit()
+
+    delete_product(pid, admin, db)
+
+    assert db.get(Product, pid) is None
+    assert db.query(Material).count() == 0
+    assert db.query(MaterialComment).count() == 0
+    assert db.query(MaterialCommentAttachment).count() == 0
+    assert db.query(MaterialReadState).count() == 0
+    assert db.query(MaterialPost).count() == 0
+    assert db.query(MaterialAsset).count() == 0
 
 
 def test_h5_video_output_comments_and_unread_badges(db, admin, bd):
