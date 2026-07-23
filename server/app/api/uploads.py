@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..db import get_db
 from ..deps import current_user
-from ..models import Material, MaterialCommentAttachment, User
+from ..models import Material, MaterialComment, MaterialCommentAttachment, User
 from ..services import storage
 
 router = APIRouter(prefix="/api", tags=["uploads"])
@@ -312,6 +312,9 @@ def serve_material_comment_attachment(attachment_id: int, request: Request,
         raise HTTPException(403, "链接无效或已过期")
     a = db.get(MaterialCommentAttachment, attachment_id)
     if not a or not a.oss_key:
+        raise HTTPException(404, "文件不存在")
+    comment = db.get(MaterialComment, a.comment_id)
+    if not comment or comment.is_deleted:
         raise HTTPException(404, "文件不存在")
     if dl and storage.oss_signing_enabled():
         return RedirectResponse(storage.signed_get_url(a.oss_key), status_code=302,

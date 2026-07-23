@@ -466,6 +466,7 @@ def _file_type_from_key(key: str) -> str:
 
 def _comment_attachment_dict(a: MaterialCommentAttachment) -> dict:
     url = storage.material_comment_attachment_url(a.id)
+    inline_preview = bool(a.oss_key and storage.is_image(a.oss_key))
     return {
         "id": a.id,
         "filename": a.filename,
@@ -474,7 +475,7 @@ def _comment_attachment_dict(a: MaterialCommentAttachment) -> dict:
         "url": url,
         "preview_url": url,
         "download_url": storage.material_comment_attachment_url(a.id, download=True),
-        "inline_preview": True,
+        "inline_preview": inline_preview,
     }
 
 
@@ -614,7 +615,7 @@ class MaterialPostIn(BaseModel):
     caption: str
     downloadable: bool = True
     status: str = "published"
-    assets: list[MaterialAssetIn] = []
+    assets: list[MaterialAssetIn] = Field(default_factory=list)
 
 
 def _apply_assets(post: MaterialPost, assets: list[MaterialAssetIn]) -> None:
@@ -964,7 +965,7 @@ def _product_application_overview(db: Session, product_id: int) -> dict:
               "shipped": 0, "in_transit": 0, "signed": 0}
     items = []
     for app, inf, owner in rows:
-        sample = app_service.latest_sample(db, inf.id, product_id)
+        sample = app_service.sample_for_application(db, app)
         status = app_service.display_status(app, sample)
         counts["total"] += 1
         counts[status] = counts.get(status, 0) + 1

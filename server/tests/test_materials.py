@@ -22,7 +22,7 @@ from app.api.products import (MaterialCommentAttachmentIn, MaterialCommentIn,  #
                               add_material,
                               create as create_product,
                               create_material_comment, create_material_post,
-                              delete_product, detail as product_detail,
+                              delete_material_comment, delete_product, detail as product_detail,
                               edit_material, list_material_comments, list_products,
                               publish_material)
 from app.api.samples import (CreateIn as SampleCreateIn,  # noqa: E402
@@ -31,7 +31,7 @@ from app.db import Base  # noqa: E402
 from app.models import (AccessGrant, Cooperation, Influencer, Material,  # noqa: E402
                         MaterialAsset, MaterialComment,
                         MaterialCommentAttachment, MaterialPost,
-                        MaterialReadState, Product, User)
+                        MaterialReadState, Product, SampleOrder, User)
 
 
 @pytest.fixture
@@ -144,13 +144,40 @@ def test_bd_can_comment_on_video_output_with_attachments(db, admin, bd):
         body="开头需要补产品露出",
         attachments=[MaterialCommentAttachmentIn(
             oss_key="comments/proof.png", filename="proof.png",
-            file_type="image", content_type="image/png")],
+            file_type="image", content_type="image/png"),
+            MaterialCommentAttachmentIn(
+                oss_key="comments/review.pdf", filename="review.pdf",
+                file_type="pdf", content_type="application/pdf")],
     ), bd, db)
 
     assert c["body"] == "开头需要补产品露出"
     assert c["attachments"][0]["url"].startswith("/api/material-comment-attachments/")
+    assert c["attachments"][0]["inline_preview"] is True
+    assert c["attachments"][1]["inline_preview"] is False
     listed = list_material_comments(m["id"], bd, db)
     assert len(listed) == 1 and listed[0]["author_role"] == "bd"
+
+
+def test_deleted_comment_attachment_gateway_returns_404(db, admin, bd):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    c = create_material_comment(m["id"], MaterialCommentIn(
+        body="附件之后会删除",
+        attachments=[MaterialCommentAttachmentIn(oss_key="comments/proof.png", filename="proof.png")],
+    ), bd, db)
+    attachment_id = c["attachments"][0]["id"]
+    from app.api.uploads import serve_material_comment_attachment
+    from app.services import storage
+    import re
+    url = storage.material_comment_attachment_url(attachment_id)
+    e = re.search(r"e=(\d+)", url).group(1)
+    s = re.search(r"s=([0-9a-f]+)", url).group(1)
+
+    delete_material_comment(m["id"], c["id"], bd, db)
+
+    with pytest.raises(HTTPException) as exc:
+        serve_material_comment_attachment(attachment_id, request=None, db=db, e=e, s=s)
+    assert exc.value.status_code == 404
 
 
 def test_comment_rejects_empty_payload(db, admin, bd):
@@ -254,6 +281,23 @@ def test_review_application_approve_creates_to_ship_sample(db, admin, bd):
     assert listed[0]["status"] == "approved" and listed[0]["sample_order_id"]
 
 
+def test_application_overview_prefers_bound_sample_over_newer_pending_sample(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    app = apply_product(pid, ApplyProductIn(), inf, db)["application"]
+    review_application(app["id"], ReviewIn(approve=True), bd, db)
+    bound_id = list_applications(status="approved", user=admin, db=db)["items"][0]["sample_order_id"]
+    bound = db.get(SampleOrder, bound_id)
+    bound.status = "signed"
+    db.commit()
+
+    create_sample(SampleCreateIn(influencer_id=inf.id, product_id=pid), bd, db)
+
+    overview = product_detail(pid, admin, db)["application_overview"]
+    assert overview["items"][0]["status"] == "signed"
+    assert my_products(inf, db)[0]["cooperation_status"] == "signed"
+
+
 def test_review_application_reject_requires_reason(db, admin, bd):
     pid = _product(db, admin)
     inf = _influencer(db, owner=bd)
@@ -261,6 +305,25 @@ def test_review_application_reject_requires_reason(db, admin, bd):
     with pytest.raises(HTTPException) as exc:
         review_application(app["id"], ReviewIn(approve=False), bd, db)
     assert exc.value.status_code == 400
+
+
+def test_review_application_reject_syncs_linked_sample(db, admin, bd):
+    """旧寄样入口生成的待审单被带货管理拒绝时,寄样单也必须闭环变成已拒绝。"""
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    db.add(Cooperation(influencer_id=inf.id, round_no=1, level_snapshot="L1",
+                       commission_tier_snapshot=5, promo_mode_snapshot="merchant"))
+    db.commit()
+    sample = create_sample(SampleCreateIn(influencer_id=inf.id, product_id=pid), bd, db)
+
+    review_application(sample["application_id"], ReviewIn(approve=False, reject_reason="不适合该产品"), bd, db)
+
+    order = db.get(SampleOrder, sample["id"])
+    assert order.status == "rejected"
+    assert order.reject_reason == "不适合该产品"
+    detail = asyncio.run(my_materials(pid, inf, db))
+    assert detail["application"]["status"] == "rejected"
+    assert detail["sample"]["status"] == "rejected"
 
 
 def test_pending_application_can_be_rejected_after_product_off(db, admin, bd):

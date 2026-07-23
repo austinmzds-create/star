@@ -70,6 +70,15 @@ def latest_sample(db: Session, influencer_id: int, product_id: int) -> SampleOrd
     ).first()
 
 
+def sample_for_application(db: Session, app: ProductApplication) -> SampleOrder | None:
+    """优先取申请档案绑定的寄样单,缺失时再兼容历史同达人同产品最新寄样。"""
+    if app.sample_order_id:
+        order = db.get(SampleOrder, app.sample_order_id)
+        if order:
+            return order
+    return latest_sample(db, app.influencer_id, app.product_id)
+
+
 def ensure_access_grant(db: Session, influencer_id: int, product_id: int, granted_by: int) -> None:
     existing = db.scalars(
         select(AccessGrant)

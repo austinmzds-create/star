@@ -474,23 +474,20 @@
           <div class="upload-file-box">
             <span class="file-pick-wrap">
               <el-button size="small" type="primary" :loading="matUploading" :disabled="matUploading">
-                {{ matUploading ? '上传中...' : (uploadIsBatch ? '选择视频(可多选)' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传')) }}
+                {{ matUploading ? '上传中...' : (uploadForm.oss_key ? '重新上传文件' : '选择文件上传') }}
               </el-button>
               <input v-if="!matUploading" :id="uploadFileInputId" ref="uploadFileInput" class="file-overlay-input"
-                type="file" :accept="acceptOf(uploadForm.type)" :multiple="uploadIsBatch"
+                type="file" :accept="acceptOf(uploadForm.type)"
                 title="选择文件上传" @change="handleUploadFileChange" />
             </span>
             <span v-if="matUploading" class="muted upload-progress">{{ uploadStatusText }}</span>
-            <template v-if="uploadForm.oss_key && !matUploading && !uploadIsBatch">
+            <template v-if="uploadForm.oss_key && !matUploading">
               <span class="muted file-name">{{ uploadForm.file_name || '已上传文件' }}</span>
               <el-button size="small" text type="danger" @click="clearUploadFile">移除</el-button>
             </template>
           </div>
-          <div v-if="uploadIsBatch" class="muted" style="font-size:12px;margin-top:4px">
-            可一次选多个视频,上传后每个自动生成一条 AI 视频(无需填文案)
-          </div>
-          <!-- 回显:上传成功后预览,确认无误再点「添加」入库(批量模式自动入库,不回显) -->
-          <div v-if="uploadForm.oss_key && !matUploading && !uploadIsBatch" class="upload-preview">
+          <!-- 回显:上传成功后预览,确认无误再点「添加」入库。 -->
+          <div v-if="uploadForm.oss_key && !matUploading" class="upload-preview">
             <el-image v-if="uploadIsImage" :src="uploadForm.url" fit="contain" class="up-img" />
             <video v-else-if="uploadIsVideo && uploadForm.url" :src="uploadForm.url" class="up-video" controls preload="metadata" />
             <a v-else :href="uploadForm.url" target="_blank" class="up-file">已上传:{{ uploadForm.file_name }}</a>
@@ -502,14 +499,14 @@
         <el-form-item v-if="uploadForm.type === 'pdf'" label="报告ID">
           <el-input v-model="uploadForm.report_id" placeholder="可选" />
         </el-form-item>
-        <el-form-item v-if="!uploadIsBatch" :label="uploadForm.type === 'copy' ? '文案' : '说明文案'">
+        <el-form-item :label="uploadForm.type === 'copy' ? '文案' : '说明文案'">
           <el-input v-model="uploadForm.parsed_text" type="textarea" :rows="4"
             :placeholder="uploadForm.type === 'copy' ? '可选,填写文案内容' : '可选,描述这个素材给达人看的用途、亮点或拍摄参考'" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="uploadVisible = false">关闭</el-button>
-        <el-button v-if="!uploadIsBatch" type="primary" :loading="materialSaving" :disabled="matUploading" @click="addMaterial">添加</el-button>
+        <el-button type="primary" :loading="materialSaving" :disabled="matUploading" @click="addMaterial">添加</el-button>
       </template>
     </el-dialog>
   </div>
@@ -528,10 +525,10 @@ import { uploadMaterialFile } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
 import { SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
-// 图片类型下线(用不到);质检报告改为兼收 PDF/图片。达人成片商务可见可评论,仅管理员可维护。
+// 质检报告兼收 PDF/图片。达人成片商务可见可评论,仅管理员可维护。
 const MAT_TYPES = [
   { v: 'video_ai', l: 'AI视频' }, { v: 'video_hot', l: '爆款参考' },
-  { v: 'video_output', l: '达人成片', adminOnly: true },
+  { v: 'video_output', l: '达人成片', adminOnly: true }, { v: 'image', l: '图片' },
   { v: 'pdf', l: '质检报告' }, { v: 'copy', l: '文案' },
 ]
 const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -571,7 +568,6 @@ const mtype = ref('video_ai')
 const matUploading = ref(false)
 const matProgress = ref(0)
 const matUploadStage = ref('')
-const matBatch = ref(null)   // 批量上传进度 {index, total};非批量为 null
 const materialSaving = ref(false)
 const uploadFileInput = ref(null)
 const editFileInput = ref(null)
@@ -617,13 +613,12 @@ const applicationStatusTag = (status) => {
   return 'primary'
 }
 const uploadStatusText = computed(() => {
-  const prefix = matBatch.value ? `第 ${matBatch.value.index}/${matBatch.value.total} 个 · ` : ''
-  if (matUploadStage.value === 'confirming') return `${prefix}已传完，正在确认...`
-  if (matUploadStage.value === 'oss') return `${prefix}OSS直传中 ${matProgress.value}%`
-  if (matUploadStage.value === 'fallback') return `${prefix}直传不可用，正在切换兜底...`
-  if (matUploadStage.value === 'backend') return `${prefix}后端上传中 ${matProgress.value}%`
-  if (matUploadStage.value === 'backend_confirming') return `${prefix}已传完，正在保存...`
-  return `${prefix}上传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'confirming') return '已传完，正在确认...'
+  if (matUploadStage.value === 'oss') return `OSS直传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'fallback') return '直传不可用，正在切换兜底...'
+  if (matUploadStage.value === 'backend') return `后端上传中 ${matProgress.value}%`
+  if (matUploadStage.value === 'backend_confirming') return '已传完，正在保存...'
+  return `上传中 ${matProgress.value}%`
 })
 const canSyncQianchuanCoop = computed(() => Boolean(
   qcCoopForm.influencer_id && qianchuan.can_sync_cooperation && qianchuan.qianchuan_product_id,
@@ -801,8 +796,6 @@ const IMG_EXT_RE = /\.(png|jpe?g|webp|gif|bmp)$/i
 const uploadIsImage = computed(() =>
   uploadForm.type === 'image' || (uploadForm.type === 'pdf' && IMG_EXT_RE.test(uploadForm.file_name || uploadForm.oss_key || '')))
 const uploadIsVideo = computed(() => ['video_ai', 'video_hot', 'video_output'].includes(uploadForm.type))
-// AI视频:批量上传,每个视频自动生成一条,不需要文案
-const uploadIsBatch = computed(() => uploadForm.type === 'video_ai')
 
 function openUpload() {
   const initialType = uploadMatTypes.value.some((t) => t.v === mtype.value) ? mtype.value : uploadMatTypes.value[0]?.v || 'video_ai'
@@ -1028,52 +1021,8 @@ async function handleUploadFileChange(event) {
   const files = Array.from(event.target.files || [])
   event.target.value = ''
   if (!files.length) return
-  if (uploadIsBatch.value) {
-    // AI视频批量:每个视频上传后直接建一条(标题=文件名,无需文案),不回显
-    await batchUploadAiVideos(files)
-    return
-  }
-  // 单文件:只上传 + 回显,用户核对(可再填说明文案)后点「添加」入库
+  // 只上传 + 回显,用户核对(可再填说明文案)后点「添加」入库。
   await uploadSelectedFile(files[0], uploadForm, { syncTitle: true })
-}
-
-async function batchUploadAiVideos(files) {
-  if (matUploading.value) return
-  const productId = detail.value?.id
-  if (!productId) return
-  matUploading.value = true
-  let ok = 0
-  const failed = []
-  try {
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      matBatch.value = { index: i + 1, total: files.length }
-      matUploadStage.value = 'uploading'
-      matProgress.value = 0
-      try {
-        const uploaded = await uploadMaterialFile(api, f, (percent, stage) => {
-          matProgress.value = percent
-          matUploadStage.value = stage || 'uploading'
-        }, { direct: true, allowBackendFallback: false })
-        await api.post(`/api/products/${productId}/materials`,
-          { type: 'video_ai', title: f.name, oss_key: uploaded.key }, { skipBadgeRefresh: true })
-        ok += 1
-      } catch (e) {
-        failed.push(`${f.name}: ${e.response?.data?.detail || e.message || '上传失败'}`)
-      }
-    }
-  } finally {
-    matUploading.value = false
-    matUploadStage.value = ''
-    matBatch.value = null
-  }
-  if (ok && failed.length) ElMessage.warning(`已上传 ${ok} 条,失败 ${failed.length} 条:${failed[0]}`)
-  else if (ok) ElMessage.success(`已上传 ${ok} 条 AI 视频`)
-  else ElMessage.error(failed[0] || '上传失败,请检查网络或存储配置')
-  uploadVisible.value = false
-  mtype.value = 'video_ai'
-  await refreshDetail()   // 重新拉取素材列表
-  load()
 }
 
 async function addMaterial(options = {}) {

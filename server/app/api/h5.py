@@ -278,7 +278,7 @@ def my_products(inf: Influencer = Depends(current_influencer), db: Session = Dep
     out = []
     for p in rows:
         app = apps_by_product.get(p.id)
-        sample = app_service.latest_sample(db, inf.id, p.id) if app else None
+        sample = app_service.sample_for_application(db, app) if app else None
         status = app_service.display_status(app, sample) if app else None
         out.append({"id": p.id, "name": p.name, "price_text": p.price_text,
                     "default_commission": float(p.default_commission) if p.default_commission is not None else None,
@@ -332,6 +332,7 @@ def _application_payload(app: ProductApplication | None, sample: SampleOrder | N
 
 def _comment_attachment_dict(a) -> dict:
     url = storage.material_comment_attachment_url(a.id)
+    inline_preview = bool(a.oss_key and storage.is_image(a.oss_key))
     return {
         "id": a.id,
         "filename": a.filename,
@@ -340,7 +341,7 @@ def _comment_attachment_dict(a) -> dict:
         "url": url,
         "preview_url": url,
         "download_url": storage.material_comment_attachment_url(a.id, download=True),
-        "inline_preview": True,
+        "inline_preview": inline_preview,
     }
 
 
@@ -365,20 +366,25 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
         .where(ProductApplication.influencer_id == inf.id,
                ProductApplication.product_id == product_id)
     ).first()
-    # 该达人在本产品下的最新寄样(含物流轨迹),让"资料 + 快递"一屏聚合
-    coop_ids = db.scalars(select(Cooperation.id)
-                          .where(Cooperation.influencer_id == inf.id)).all() or [0]
-    sample_stmt = (select(SampleOrder)
-                   .where(SampleOrder.product_id == product_id,
-                          SampleOrder.cooperation_id.in_(coop_ids))
-                   .order_by(SampleOrder.created_at.desc()))
+    # 该达人在本产品下的寄样(含物流轨迹),让"资料 + 快递"一屏聚合。
+    # 新流程优先读 ProductApplication 绑定单;无申请时兼容历史寄样入口。
+    sample_stmt = None
+    o = app_service.sample_for_application(db, application) if application else None
     if application:
-        sample_stmt = select(SampleOrder).where(SampleOrder.id == application.sample_order_id) if application.sample_order_id else None
-    sample_rows = db.execute(sample_stmt).all() if sample_stmt is not None else []
-    for row in sample_rows:
-        await refresh_if_needed(db, row[0])
-    deduped_samples = dedupe_sample_rows(sample_rows)
-    o = deduped_samples[0][0] if deduped_samples else None
+        if o:
+            await refresh_if_needed(db, o)
+    else:
+        coop_ids = db.scalars(select(Cooperation.id)
+                              .where(Cooperation.influencer_id == inf.id)).all() or [0]
+        sample_stmt = (select(SampleOrder)
+                       .where(SampleOrder.product_id == product_id,
+                              SampleOrder.cooperation_id.in_(coop_ids))
+                       .order_by(SampleOrder.created_at.desc()))
+        sample_rows = db.execute(sample_stmt).all()
+        for row in sample_rows:
+            await refresh_if_needed(db, row[0])
+        deduped_samples = dedupe_sample_rows(sample_rows)
+        o = deduped_samples[0][0] if deduped_samples else None
     sample = _sample_payload(o)
     # 达人端:达人成片(video_output)默认不展示,仅管理员公开(is_public)的才作为参考露出
     materials = db.scalars(

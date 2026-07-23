@@ -79,11 +79,7 @@ def _assert_can_operate(user: User, inf: Influencer) -> None:
 
 
 def _sample_for_app(db: Session, app: ProductApplication) -> SampleOrder | None:
-    if app.sample_order_id:
-        order = db.get(SampleOrder, app.sample_order_id)
-        if order:
-            return order
-    return apps.latest_sample(db, app.influencer_id, app.product_id)
+    return apps.sample_for_application(db, app)
 
 
 def _stats_for(db: Session, influencer_id: int, product_id: int) -> dict:
@@ -300,6 +296,11 @@ def review_application(application_id: int, body: ReviewIn,
             raise HTTPException(400, "拒绝时必须填写原因")
         app.status = "rejected"
         app.reject_reason = reason[:255]
+        sample = _sample_for_app(db, app)
+        if sample and sample.status in {"pending", "approved"}:
+            sample.status = "rejected"
+            sample.reject_reason = app.reject_reason
+            sample.approved_by = user.id
         apps.log_application_event(db, app, "product_application_rejected", actor=user,
                                    summary=f"{user.display_name} 拒绝带货申请:{product.name}",
                                    detail={"reject_reason": app.reject_reason})
