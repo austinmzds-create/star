@@ -3,25 +3,29 @@ from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
 from ..models import (AccessGrant, Cooperation, Influencer, Material,
-                      MaterialAsset, MaterialPost, OrderRecord, Product,
-                      ProductQianchuanBinding, QianchuanCooperationBinding,
-                      QianchuanShopAuth, SampleOrder, User, VideoTask)
+                      MaterialAsset, MaterialComment,
+                      MaterialCommentAttachment, MaterialDownloadLog,
+                      MaterialPost, MaterialReadState, OrderRecord, Product,
+                      ProductApplication, ProductQianchuanBinding,
+                      QianchuanCooperationBinding, QianchuanShopAuth,
+                      SampleOrder, User, VideoTask)
 from ..services import crypto, storage
 from ..services import qianchuan as qianchuan_service
+from ..services import product_applications as app_service
 from ..services.oplog import log_op
 from ..services.sample_orders import dedupe_sample_rows
 
 router = APIRouter(prefix="/api/products", tags=["products"])
 
 MATERIAL_TYPES = {"video_ai", "video_hot", "video_output", "image", "pdf", "copy"}
-# 达人成片:仅管理员可维护/查看,默认不对达人公开(需手动"公开")
+# 达人成片:商务/管理员均可查看和评论;上传、编辑、删除、公开仍只允许管理员维护。
 ADMIN_ONLY_MATERIAL_TYPES = {"video_output"}
 QIANCHUAN_BINDING_STATUSES = {"draft", "configured", "disabled"}
 QIANCHUAN_COOP_STATUSES = {"bound", "pending", "failed", "disabled"}
@@ -151,8 +155,9 @@ def delete_product(product_id: int, user: User = Depends(current_user), db: Sess
         raise HTTPException(404, "产品不存在")
     if (db.scalar(select(SampleOrder.id).where(SampleOrder.product_id == product_id).limit(1))
             or db.scalar(select(VideoTask.id).where(VideoTask.product_id == product_id).limit(1))
-            or db.scalar(select(OrderRecord.id).where(OrderRecord.product_id == product_id).limit(1))):
-        raise HTTPException(400, "该产品已有寄样/视频/出单记录,不能删除;请改用「下架」")
+            or db.scalar(select(OrderRecord.id).where(OrderRecord.product_id == product_id).limit(1))
+            or db.scalar(select(ProductApplication.id).where(ProductApplication.product_id == product_id).limit(1))):
+        raise HTTPException(400, "该产品已有带货申请/寄样/视频/出单记录,不能删除;请改用「下架」")
     db.query(QianchuanCooperationBinding).filter(QianchuanCooperationBinding.product_id == product_id).delete()
     db.query(ProductQianchuanBinding).filter(ProductQianchuanBinding.product_id == product_id).delete()
     db.query(Material).filter(Material.product_id == product_id).delete()
@@ -238,9 +243,6 @@ def list_products(q: str | None = None, status: str | None = None,
     if product_ids:
         mat_count_stmt = (select(Material.product_id, func.count(Material.id))
                           .where(Material.product_id.in_(product_ids)))
-        if user.role != "admin":
-            # 与详情一致:商务看不到达人成片,列表计数也不计入,避免"计数比可见素材多"
-            mat_count_stmt = mat_count_stmt.where(Material.type.notin_(ADMIN_ONLY_MATERIAL_TYPES))
         material_counts = dict(db.execute(mat_count_stmt.group_by(Material.product_id)).all())
         grant_counts = dict(db.execute(
             select(AccessGrant.product_id, func.count(AccessGrant.id))
@@ -351,6 +353,8 @@ def delete_material(material_id: int, user: User = Depends(current_user), db: Se
     if m:
         if m.type in ADMIN_ONLY_MATERIAL_TYPES and user.role != "admin":
             raise HTTPException(403, "达人成片仅管理员可维护")
+        db.query(MaterialReadState).filter(MaterialReadState.material_id == material_id).delete()
+        db.query(MaterialDownloadLog).filter(MaterialDownloadLog.material_id == material_id).delete()
         db.delete(m)
         db.commit()
     return {"ok": True}
@@ -389,7 +393,147 @@ def _material_dict(m: Material) -> dict:
             "source_link": m.source_link, "parsed_text": m.parsed_text,
             "report_id": m.report_id, "downloadable": m.downloadable,
             "starred": m.starred, "is_public": m.is_public,
+            "comments": [_material_comment_dict(c) for c in getattr(m, "comments", []) if not c.is_deleted]
+            if m.type == "video_output" else [],
+            "comment_count": len([c for c in getattr(m, "comments", []) if not c.is_deleted])
+            if m.type == "video_output" else 0,
             "created_at": m.created_at.isoformat()}
+
+
+def _safe_uploaded_key(key: str | None) -> str | None:
+    if not key:
+        return None
+    key = key.strip()
+    parts = key.split("/")
+    if not key or key.startswith("/") or ".." in parts or not storage.extension_allowed(key):
+        raise HTTPException(400, "附件文件不合法")
+    return key
+
+
+def _file_type_from_key(key: str) -> str:
+    ct = storage.content_type(key)
+    if ct.startswith("image/"):
+        return "image"
+    if ct.startswith("video/"):
+        return "video"
+    if ct == "application/pdf":
+        return "pdf"
+    return "file"
+
+
+def _comment_attachment_dict(a: MaterialCommentAttachment) -> dict:
+    url = storage.material_comment_attachment_url(a.id)
+    return {
+        "id": a.id,
+        "filename": a.filename,
+        "file_type": a.file_type,
+        "content_type": a.content_type,
+        "url": url,
+        "preview_url": url,
+        "download_url": storage.material_comment_attachment_url(a.id, download=True),
+        "inline_preview": True,
+    }
+
+
+def _material_comment_dict(c: MaterialComment) -> dict:
+    return {
+        "id": c.id,
+        "material_id": c.material_id,
+        "body": c.body,
+        "author_name": c.author_name,
+        "author_role": c.author_role,
+        "created_at": c.created_at.isoformat(),
+        "attachments": [_comment_attachment_dict(a) for a in c.attachments],
+    }
+
+
+class MaterialCommentAttachmentIn(BaseModel):
+    oss_key: str
+    filename: str | None = None
+    file_type: str | None = None
+    content_type: str | None = None
+
+
+class MaterialCommentIn(BaseModel):
+    body: str | None = None
+    attachments: list[MaterialCommentAttachmentIn] = Field(default_factory=list)
+
+
+def _video_output_material(db: Session, material_id: int) -> Material:
+    m = db.get(Material, material_id)
+    if not m:
+        raise HTTPException(404, "素材不存在")
+    if m.type != "video_output":
+        raise HTTPException(400, "仅达人成片支持评论")
+    return m
+
+
+@router.get("/materials/{material_id}/comments")
+def list_material_comments(material_id: int, user: User = Depends(current_user),
+                           db: Session = Depends(get_db)):
+    _video_output_material(db, material_id)
+    comments = db.scalars(
+        select(MaterialComment)
+        .where(MaterialComment.material_id == material_id,
+               MaterialComment.is_deleted.is_(False))
+        .order_by(MaterialComment.created_at.asc(), MaterialComment.id.asc())
+    ).all()
+    return [_material_comment_dict(c) for c in comments]
+
+
+@router.post("/materials/{material_id}/comments")
+def create_material_comment(material_id: int, body: MaterialCommentIn,
+                            user: User = Depends(current_user),
+                            db: Session = Depends(get_db)):
+    m = _video_output_material(db, material_id)
+    text = (body.body or "").strip()
+    attachments = body.attachments or []
+    if len(text) > 2000:
+        raise HTTPException(400, "评论不能超过2000字")
+    if len(attachments) > 9:
+        raise HTTPException(400, "单条评论最多上传9个附件")
+    if not text and not attachments:
+        raise HTTPException(400, "请填写评论或上传附件")
+
+    comment = MaterialComment(
+        material_id=m.id,
+        product_id=m.product_id,
+        body=text or None,
+        author_user_id=user.id,
+        author_name=user.display_name,
+        author_role=user.role or "bd",
+    )
+    db.add(comment)
+    for i, item in enumerate(attachments):
+        key = _safe_uploaded_key(item.oss_key)
+        filename = (item.filename or "").strip()[:255] or key.rsplit("/", 1)[-1]
+        file_type = item.file_type if item.file_type in {"image", "video", "pdf", "file"} else _file_type_from_key(key)
+        content_type = (item.content_type or storage.content_type(key)).strip()[:128]
+        comment.attachments.append(MaterialCommentAttachment(
+            oss_key=key,
+            filename=filename,
+            file_type=file_type,
+            content_type=content_type,
+            sort_order=i,
+        ))
+    db.commit()
+    db.refresh(comment)
+    return _material_comment_dict(comment)
+
+
+@router.delete("/materials/{material_id}/comments/{comment_id}")
+def delete_material_comment(material_id: int, comment_id: int,
+                            user: User = Depends(current_user),
+                            db: Session = Depends(get_db)):
+    _video_output_material(db, material_id)
+    c = db.get(MaterialComment, comment_id)
+    if not c or c.material_id != material_id or c.is_deleted:
+        raise HTTPException(404, "评论不存在")
+    if user.role != "admin" and c.author_user_id != user.id:
+        raise HTTPException(403, "只能删除自己的评论")
+    c.is_deleted = True
+    db.commit()
+    return {"ok": True}
 
 
 MATERIAL_POST_CATEGORIES = {"video", "image", "doc", "copy"}
@@ -751,6 +895,63 @@ def delete_qianchuan_cooperation(product_id: int, binding_id: int,
     return {"ok": True}
 
 
+def _product_application_overview(db: Session, product_id: int) -> dict:
+    rows = db.execute(
+        select(ProductApplication, Influencer, User)
+        .join(Influencer, ProductApplication.influencer_id == Influencer.id)
+        .outerjoin(User, Influencer.owner_bd_id == User.id)
+        .where(ProductApplication.product_id == product_id)
+        .order_by(ProductApplication.updated_at.desc(), ProductApplication.id.desc())
+    ).all()
+    counts = {"total": 0, "pending": 0, "approved": 0, "rejected": 0, "cancelled": 0,
+              "shipped": 0, "in_transit": 0, "signed": 0}
+    items = []
+    for app, inf, owner in rows:
+        sample = app_service.latest_sample(db, inf.id, product_id)
+        status = app_service.display_status(app, sample)
+        counts["total"] += 1
+        counts[status] = counts.get(status, 0) + 1
+        if len(items) >= 20:
+            continue
+        coop_ids = db.scalars(
+            select(Cooperation.id).where(Cooperation.influencer_id == inf.id)
+        ).all()
+        video_count = 0
+        if coop_ids:
+            video_count = db.scalar(
+                select(func.count(VideoTask.id))
+                .where(VideoTask.product_id == product_id,
+                       VideoTask.cooperation_id.in_(coop_ids))
+            ) or 0
+        gmv = db.scalar(
+            select(func.coalesce(func.sum(OrderRecord.amount), 0))
+            .where(OrderRecord.influencer_id == inf.id,
+                   OrderRecord.product_id == product_id)
+        ) or 0
+        items.append({
+            "id": app.id,
+            "influencer_id": inf.id,
+            "nickname": inf.nickname,
+            "douyin_id": inf.douyin_id,
+            "owner_bd_name": owner.display_name if owner else None,
+            "status": status,
+            "application_status": app.status,
+            "sample_status": sample.status if sample else None,
+            "tracking_no": sample.tracking_no if sample else None,
+            "video_count": int(video_count),
+            "gmv": float(gmv),
+            "updated_at": app.updated_at.isoformat(),
+        })
+    total_gmv = db.scalar(
+        select(func.coalesce(func.sum(OrderRecord.amount), 0))
+        .where(OrderRecord.product_id == product_id)
+    ) or 0
+    total_videos = db.scalar(
+        select(func.count(VideoTask.id)).where(VideoTask.product_id == product_id)
+    ) or 0
+    return {"counts": counts, "items": items, "gmv": float(total_gmv), "video_count": int(total_videos)}
+
+
 @router.get("/{product_id}")
 def detail(product_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
     p = db.get(Product, product_id)
@@ -759,9 +960,6 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
     mat_stmt = (select(Material)
                 .where(Material.product_id == product_id)
                 .order_by(Material.created_at.desc(), Material.id.desc()))
-    if user.role != "admin":
-        # 达人成片仅管理员可见,商务连内部详情都拿不到
-        mat_stmt = mat_stmt.where(Material.type.notin_(ADMIN_ONLY_MATERIAL_TYPES))
     materials = db.scalars(mat_stmt).all()
     binding = db.scalars(select(ProductQianchuanBinding)
                          .where(ProductQianchuanBinding.product_id == product_id)).first()
@@ -778,6 +976,7 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "sample_remark": p.sample_remark, "promo_remark": p.promo_remark,
             "auto_audit_type": p.auto_audit_type, "allow_promotion": p.allow_promotion,
             "qianchuan_binding": _qianchuan_binding_dict(binding),
+            "application_overview": _product_application_overview(db, product_id),
             "materials": [_material_dict(m) for m in materials]}
 
 

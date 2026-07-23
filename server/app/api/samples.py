@@ -12,6 +12,7 @@ from ..models import (Cooperation, Influencer, Product, RejectReason,
                       SampleOrder, User)
 from ..services.logistics import COURIERS, get_provider
 from ..services.oplog import log_op
+from ..services import product_applications as app_service
 from ..services.sample_orders import (OPEN_SAMPLE_STATUSES, dedupe_sample_rows,
                                       status_bucket, status_filter_values)
 from ..services.tracking import refresh_order_tracking
@@ -131,10 +132,12 @@ def create(body: CreateIn, user: User = Depends(current_user), db: Session = Dep
     order = SampleOrder(cooperation_id=coop.id, product_id=body.product_id,
                         address_snapshot=address)
     db.add(order)
+    db.flush()
+    app = app_service.ensure_application_for_sample(db, order, user)
     log_op(db, influencer_id=inf.id, product_id=product.id, event_type="sample_created",
            actor=user, summary=f"{user.display_name} 创建寄样单:{product.name}")
     db.commit()
-    return {"id": order.id}
+    return {"id": order.id, "application_id": app.id if app else None}
 
 
 class SampleEditIn(BaseModel):
@@ -160,6 +163,17 @@ def delete_sample(order_id: int, user: User = Depends(current_user), db: Session
     order = _load_owned_order(db, user, order_id)
     if order.status not in ("pending", "rejected"):
         raise HTTPException(400, "该寄样单已进入发货流程,不能删除")
+    inf_id = _order_influencer_id(db, order)
+    if inf_id:
+        app = app_service.application_for(db, inf_id, order.product_id)
+        if app and app.sample_order_id == order.id:
+            app.sample_order_id = None
+            if order.status == "pending":
+                app.status = "cancelled"
+                app.reject_reason = None
+            app_service.log_application_event(
+                db, app, "sample_deleted", actor=user,
+                summary=f"{user.display_name} 删除寄样单")
     db.delete(order)
     db.commit()
     return {"ok": True}
@@ -189,7 +203,14 @@ def audit(order_id: int, body: AuditIn,
         raise HTTPException(409, "该寄样单已被处理")
     inf_id = _order_influencer_id(db, order)
     if inf_id:
+        app = app_service.ensure_application_for_sample(db, order, user)
+        if app:
+            app.status = "approved" if body.approve else "rejected"
+            app.reviewed_by = user.id
+            app.reviewed_at = datetime.now()
+            app.reject_reason = reject_reason
         if body.approve:
+            app_service.ensure_access_grant(db, inf_id, order.product_id, user.id)
             log_op(db, influencer_id=inf_id, product_id=order.product_id,
                    event_type="sample_approved", actor=user,
                    summary=f"{user.display_name} 通过寄样审批")
@@ -232,6 +253,7 @@ async def ship(order_id: int, body: ShipIn,
     order.tracking_no = tracking_no
     order.courier_company = courier
     order.status = "shipped"
+    app_service.ensure_application_for_sample(db, order, user)
     inf_id = _order_influencer_id(db, order)
     if inf_id:
         log_op(db, influencer_id=inf_id, product_id=order.product_id,

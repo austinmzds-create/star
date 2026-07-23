@@ -6,12 +6,14 @@ from sqlalchemy import select
 
 from .api import (admin_config, auth, block_records, connection_requests,
                   dashboard, followups, h5, influencers, preferences,
-                  products, qianchuan, samples, uploads, videos)
+                  product_applications, products, qianchuan, samples, uploads,
+                  videos)
 from .config import settings
 from .db import Base, SessionLocal, engine, ensure_columns
 from .models import RejectReason, User
 from .security import hash_password
 from .services import account_passwords, levels
+from .services import product_applications as product_application_service
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -27,7 +29,7 @@ app.add_middleware(
 )
 
 for r in (auth.router, influencers.router, samples.router, samples.webhook_router,
-          products.router, qianchuan.router, dashboard.router, h5.router, admin_config.router,
+          products.router, product_applications.router, qianchuan.router, dashboard.router, h5.router, admin_config.router,
           preferences.router,
           followups.router, uploads.router,
           block_records.router, block_records.h5_router,
@@ -73,6 +75,7 @@ def startup():
         if not db.scalars(select(RejectReason)).first():
             for text in SEED_REASONS:
                 db.add(RejectReason(text=text, scene="sample"))
+        product_application_service.backfill_from_samples(db)
         db.commit()
 
 

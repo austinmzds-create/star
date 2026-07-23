@@ -189,6 +189,41 @@
             <div class="tab-toolbar">
               <el-button size="small" type="primary" @click="openUpload()">+ 上传素材</el-button>
             </div>
+            <div v-if="detail.application_overview" class="application-overview">
+              <div class="overview-stat">
+                <span>带货达人</span><b>{{ detail.application_overview.counts?.total || 0 }}</b>
+              </div>
+              <div class="overview-stat warn">
+                <span>审核中</span><b>{{ detail.application_overview.counts?.pending || 0 }}</b>
+              </div>
+              <div class="overview-stat">
+                <span>待发货</span><b>{{ detail.application_overview.counts?.approved || 0 }}</b>
+              </div>
+              <div class="overview-stat">
+                <span>已发货</span><b>{{ detail.application_overview.counts?.shipped || 0 }}</b>
+              </div>
+              <div class="overview-stat ok">
+                <span>已签收</span><b>{{ detail.application_overview.counts?.signed || 0 }}</b>
+              </div>
+              <div class="overview-stat">
+                <span>已取消</span><b>{{ detail.application_overview.counts?.cancelled || 0 }}</b>
+              </div>
+              <div class="overview-stat">
+                <span>视频</span><b>{{ detail.application_overview.video_count || 0 }}</b>
+              </div>
+              <div class="overview-stat">
+                <span>GMV</span><b>¥{{ Number(detail.application_overview.gmv || 0).toFixed(2) }}</b>
+              </div>
+              <router-link class="overview-link" :to="{ path: '/applications', query: { q: detail.name } }">
+                查看带货管理
+              </router-link>
+            </div>
+            <div v-if="detail.application_overview?.items?.length" class="application-chips">
+              <span v-for="item in detail.application_overview.items.slice(0, 8)" :key="item.id" class="app-chip">
+                {{ item.nickname }}
+                <em>{{ applicationStatusLabel(item.status) }}</em>
+              </span>
+            </div>
             <el-tabs v-model="mtype" tab-position="left" class="mat-tabs">
               <el-tab-pane v-for="t in visibleMatTypes" :key="t.v" :label="`${t.l} ${countOf(t.v)}`" :name="t.v">
                 <!-- 列表 -->
@@ -204,11 +239,61 @@
                         :type="m.is_public ? 'warning' : 'success'" @click="togglePublish(m)">
                         {{ m.is_public ? '取消公开' : '公开' }}
                       </el-button>
-                      <el-button size="small" text type="primary" @click="openEditMat(m)">编辑</el-button>
-                      <el-button size="small" text type="danger" @click="delMaterial(m)">删除</el-button>
+                      <el-button v-if="canMaintainMaterial(m)" size="small" text type="primary" @click="openEditMat(m)">编辑</el-button>
+                      <el-button v-if="canMaintainMaterial(m)" size="small" text type="danger" @click="delMaterial(m)">删除</el-button>
                     </div>
                   </div>
                   <MaterialPreview :material="m" />
+                  <div v-if="m.type === 'video_output'" class="video-comment-panel">
+                    <div class="comment-head">
+                      <span>评论 {{ m.comment_count || (m.comments || []).length || 0 }}</span>
+                      <span class="muted">商务/管理员反馈会同步给达人端</span>
+                    </div>
+                    <div v-if="(m.comments || []).length" class="comment-list">
+                      <div v-for="c in m.comments" :key="c.id" class="comment-item">
+                        <div class="comment-meta">
+                          <span class="comment-author">{{ c.author_name || '内部人员' }}</span>
+                          <el-tag size="small" effect="plain">{{ c.author_role === 'admin' ? '管理员' : '商务' }}</el-tag>
+                          <span class="muted">{{ ft(c.created_at) }}</span>
+                        </div>
+                        <div v-if="c.body" class="comment-body">{{ c.body }}</div>
+                        <div v-if="c.attachments?.length" class="comment-attachments">
+                          <a v-for="a in c.attachments" :key="a.id" :href="a.download_url || a.url"
+                            target="_blank" rel="noopener" class="comment-file">
+                            {{ fileTypeLabel(a.file_type) }} {{ a.filename || '附件' }}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-else class="muted empty-comment">暂无评论</div>
+                    <div class="comment-compose">
+                      <el-input v-model="commentForm(m).body" type="textarea" :rows="3"
+                        maxlength="2000" show-word-limit placeholder="写给达人的修改意见、交付反馈或补充说明" />
+                      <div class="comment-compose-actions">
+                        <span class="file-pick-wrap">
+                          <el-button size="small" :loading="commentForm(m).uploading" :disabled="commentForm(m).uploading">
+                            上传附件
+                          </el-button>
+                          <input v-if="!commentForm(m).uploading" class="file-overlay-input" type="file" multiple
+                            accept="image/*,video/*,application/pdf" title="选择评论附件"
+                            @change="handleCommentFileChange($event, m)" />
+                        </span>
+                        <span v-if="commentForm(m).uploading" class="muted upload-progress">
+                          {{ commentForm(m).stage === 'confirming' ? '正在确认...' : `上传中 ${commentForm(m).progress}%` }}
+                        </span>
+                        <el-button size="small" type="primary" :loading="commentForm(m).saving"
+                          :disabled="commentForm(m).uploading" @click="submitMaterialComment(m)">
+                          提交评论
+                        </el-button>
+                      </div>
+                      <div v-if="commentForm(m).attachments.length" class="comment-draft-files">
+                        <el-tag v-for="(a, idx) in commentForm(m).attachments" :key="`${a.oss_key}-${idx}`"
+                          closable @close="removeCommentAttachment(m, idx)">
+                          {{ a.filename }}
+                        </el-tag>
+                      </div>
+                    </div>
+                  </div>
                 </div>
                 <el-empty v-if="!materialsOf(t.v).length" :description="`暂无${t.l}`" :image-size="50" />
               </el-tab-pane>
@@ -360,7 +445,7 @@
       <el-form label-width="64px">
         <el-form-item label="类型">
           <el-select v-model="uploadForm.type" style="width:100%" @change="onUploadTypeChange">
-            <el-option v-for="t in visibleMatTypes" :key="t.v" :label="t.l" :value="t.v" />
+            <el-option v-for="t in uploadMatTypes" :key="t.v" :label="t.l" :value="t.v" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="uploadForm.type !== 'copy'" label="文件">
@@ -422,7 +507,7 @@ import { uploadMaterialFile } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
 import { SAMPLE_STATUS, VIDEO_STATUS, tag } from '../utils/status'
 
-// 图片类型下线(用不到);质检报告改为兼收 PDF/图片。达人成片仅管理员可见可传。
+// 图片类型下线(用不到);质检报告改为兼收 PDF/图片。达人成片商务可见可评论,仅管理员可维护。
 const MAT_TYPES = [
   { v: 'video_ai', l: 'AI视频' }, { v: 'video_hot', l: '爆款参考' },
   { v: 'video_output', l: '达人成片', adminOnly: true },
@@ -430,8 +515,9 @@ const MAT_TYPES = [
 ]
 const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isAdmin = user.role === 'admin'
-// 达人成片仅管理员可见;其余类型所有内部用户可见
-const visibleMatTypes = computed(() => MAT_TYPES.filter((t) => isAdmin || !t.adminOnly))
+// 达人成片所有内部用户可看可评论;上传、编辑、删除、公开仍按 adminOnly 收口。
+const visibleMatTypes = computed(() => MAT_TYPES)
+const uploadMatTypes = computed(() => MAT_TYPES.filter((t) => isAdmin || !t.adminOnly))
 const AUDIT_TYPES = [
   { label: '不需审核', value: 'none' }, { label: '必须审核', value: 'must' },
   { label: '18:30自动通过', value: 'auto1830' },
@@ -486,11 +572,22 @@ const qianchuanShopAuths = ref([])
 const bindingQcCoop = ref(false)
 const syncingQcCoop = ref(false)
 const qcCoopForm = reactive({ influencer_id: null, qianchuan_cooperation_id: '', remark: '' })
+const commentDrafts = reactive({})
 
 const sampleTag = (s) => tag(SAMPLE_STATUS, s)
 const videoTag = (s) => tag(VIDEO_STATUS, s)
 const qianchuanTag = (s) => QIANCHUAN_STATUS[s] || QIANCHUAN_STATUS.unconfigured
 const pct = (value) => (value != null ? `${value}%` : '—')
+const fileTypeLabel = (type) => ({ image: '图片', video: '视频', pdf: 'PDF', file: '附件' }[type] || '附件')
+const applicationStatusLabel = (status) => ({
+  pending: '审核中',
+  approved: '待发货',
+  rejected: '已拒绝',
+  shipped: '已发货',
+  in_transit: '运输中',
+  signed: '已签收',
+  cancelled: '已取消',
+}[status] || status)
 const uploadStatusText = computed(() => {
   const prefix = matBatch.value ? `第 ${matBatch.value.index}/${matBatch.value.total} 个 · ` : ''
   if (matUploadStage.value === 'confirming') return `${prefix}已传完，正在确认...`
@@ -512,6 +609,7 @@ const qianchuanSyncText = computed(() => {
 })
 const materialsOf = (t) => (detail.value?.materials || []).filter((m) => m.type === t)
 const countOf = (t) => materialsOf(t).length
+const canMaintainMaterial = (m) => isAdmin || m?.type !== 'video_output'
 const acceptOf = (type) => {
   if (type === 'image') return 'image/*'
   if (type === 'pdf') return 'application/pdf,image/*'   // 质检报告:PDF 或图片皆可
@@ -681,7 +779,8 @@ const uploadIsVideo = computed(() => ['video_ai', 'video_hot', 'video_output'].i
 const uploadIsBatch = computed(() => uploadForm.type === 'video_ai')
 
 function openUpload() {
-  Object.assign(uploadForm, { ...UPLOAD_FORM_BLANK, type: mtype.value || 'video_ai' })
+  const initialType = uploadMatTypes.value.some((t) => t.v === mtype.value) ? mtype.value : uploadMatTypes.value[0]?.v || 'video_ai'
+  Object.assign(uploadForm, { ...UPLOAD_FORM_BLANK, type: initialType })
   uploadVisible.value = true
 }
 
@@ -812,6 +911,90 @@ async function uploadSelectedFile(file, target, { syncTitle = false } = {}) {
   } finally {
     matUploading.value = false
     matUploadStage.value = ''
+  }
+}
+
+function commentForm(m) {
+  const key = String(m?.id || '')
+  if (!commentDrafts[key]) {
+    commentDrafts[key] = {
+      body: '',
+      attachments: [],
+      uploading: false,
+      saving: false,
+      progress: 0,
+      stage: '',
+    }
+  }
+  return commentDrafts[key]
+}
+
+function fileTypeFromFile(file) {
+  const type = (file.type || '').toLowerCase()
+  const name = (file.name || '').toLowerCase()
+  if (type.startsWith('image/') || /\.(png|jpe?g|webp|gif|bmp)$/.test(name)) return 'image'
+  if (type.startsWith('video/') || /\.(mp4|mov|m4v|webm)$/.test(name)) return 'video'
+  if (type === 'application/pdf' || /\.pdf$/.test(name)) return 'pdf'
+  return 'file'
+}
+
+async function handleCommentFileChange(event, m) {
+  const files = Array.from(event.target.files || [])
+  event.target.value = ''
+  if (!files.length) return
+  const form = commentForm(m)
+  if (form.uploading) return
+  if (form.attachments.length + files.length > 9) {
+    return ElMessage.warning('单条评论最多上传9个附件')
+  }
+  form.uploading = true
+  form.progress = 0
+  form.stage = 'uploading'
+  try {
+    for (const file of files) {
+      const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
+        form.progress = percent
+        form.stage = stage || 'uploading'
+      }, { prefix: 'comments', direct: true, allowBackendFallback: false })
+      form.attachments.push({
+        oss_key: uploaded.key,
+        filename: file.name || '附件',
+        file_type: fileTypeFromFile(file),
+        content_type: file.type || '',
+      })
+    }
+    ElMessage.success('附件已上传')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message || '附件上传失败')
+  } finally {
+    form.uploading = false
+    form.stage = ''
+  }
+}
+
+function removeCommentAttachment(m, idx) {
+  commentForm(m).attachments.splice(idx, 1)
+}
+
+async function submitMaterialComment(m) {
+  const form = commentForm(m)
+  if (form.saving || form.uploading) return
+  const body = cleanText(form.body)
+  if (!body && !form.attachments.length) return ElMessage.warning('请填写评论或上传附件')
+  form.saving = true
+  try {
+    const created = await api.post(`/api/products/materials/${m.id}/comments`, {
+      body: body || undefined,
+      attachments: form.attachments.map((a) => ({ ...a })),
+    }, { skipBadgeRefresh: true })
+    const comments = [...(m.comments || []), created]
+    updateMaterialLocal(m.id, { comments, comment_count: comments.length })
+    Object.assign(form, { body: '', attachments: [], progress: 0, stage: '' })
+    ElMessage.success('评论已提交')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '评论提交失败')
+  } finally {
+    form.saving = false
   }
 }
 
@@ -1132,6 +1315,46 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .head-name { font-weight: 600; font-size: 15px; }
 .mat-tabs { min-height: 220px; }
 .mat-add { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; }
+.application-overview {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.overview-stat {
+  min-width: 78px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8f9fc;
+  border: 1px solid #eef0f5;
+}
+.overview-stat span { display: block; color: #8a93a6; font-size: 12px; }
+.overview-stat b { display: block; margin-top: 2px; color: #303545; font-size: 15px; }
+.overview-stat.warn b { color: #b36b00; }
+.overview-stat.ok b { color: #2f9f5b; }
+.overview-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid #e2ddff;
+  color: #6254e8;
+  text-decoration: none;
+  font-size: 13px;
+}
+.application-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.app-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f7f8fb;
+  color: #303545;
+  font-size: 12px;
+}
+.app-chip em { color: #8a93a6; font-style: normal; }
 .upload-progress { font-size: 12px; }
 /* 透明 <input type=file> 直接盖在按钮上:点击落在原生 input 本体,
    不走 label[for]/JS.click() 间接触发——微信/企业微信等 webview 里最稳。 */
@@ -1155,6 +1378,42 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .material-file-name { max-width: 360px; }
 .material-card { padding: 12px; margin-bottom: 12px; border: 1px solid #eceef3; border-radius: 10px; }
 .material-card-head { display: flex; align-items: center; gap: 10px; }
+.video-comment-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed #e5e7ef;
+}
+.comment-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.comment-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.comment-item { padding: 10px; border-radius: 8px; background: #f8f9fc; border: 1px solid #eef0f5; }
+.comment-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.comment-author { font-weight: 600; color: #303545; }
+.comment-body { margin-top: 6px; white-space: pre-wrap; line-height: 1.6; color: #4f566b; font-size: 13px; }
+.comment-attachments, .comment-draft-files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.comment-file {
+  max-width: 220px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #fff;
+  border: 1px solid #e5e7ef;
+  color: #6254e8;
+  font-size: 12px;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-comment { margin: 4px 0 10px; font-size: 12px; }
+.comment-compose { display: flex; flex-direction: column; gap: 8px; }
+.comment-compose-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .mat-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #f4f5f8; }
 .mat-ops { margin-left: auto; display: flex; gap: 10px; }
 .qianchuan-head {

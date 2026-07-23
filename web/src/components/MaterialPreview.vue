@@ -26,11 +26,11 @@
       <el-button size="small" text type="primary" @click="retryImage">重新加载</el-button>
       <a :href="material.url" target="_blank" rel="noopener">打开原图</a>
     </div>
-    <div v-else-if="material.type === 'pdf' && shouldRenderPreview && previewUrl" class="pdf-preview">
+    <div v-else-if="material.type === 'pdf' && !isImageLike && shouldRenderPreview && previewUrl" class="pdf-preview">
       <iframe :src="previewUrl" title="质检报告预览" />
       <a :href="material.url" target="_blank" rel="noopener">新窗口打开报告</a>
     </div>
-    <div v-else-if="material.type === 'pdf' && material.url" class="file-preview-card">
+    <div v-else-if="material.type === 'pdf' && !isImageLike && material.url" class="file-preview-card">
       <span>报告文件已上传</span>
       <div class="file-actions">
         <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>

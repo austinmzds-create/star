@@ -6,6 +6,12 @@
         <el-menu-item index="/workbench">工作台</el-menu-item>
         <el-menu-item index="/influencers">达人库</el-menu-item>
         <el-menu-item index="/products">产品中心</el-menu-item>
+        <el-menu-item index="/applications">
+          <span class="menu-entry">
+            <span>带货管理</span>
+            <el-badge v-if="applicationCount" :value="applicationCount" class="menu-badge" />
+          </span>
+        </el-menu-item>
         <el-menu-item index="/samples">
           <span class="menu-entry">
             <span>寄样管理</span>
@@ -55,6 +61,7 @@ const user = JSON.parse(localStorage.getItem('user') || '{}')
 const isAdmin = computed(() => user.role === 'admin')
 const followupCount = ref(0)
 const connectionCount = ref(0)
+const applicationCount = ref(0)
 const todos = ref({})
 let badgeTimer = null
 let badgeDebounce = null
@@ -80,9 +87,10 @@ async function refreshBadges() {
   }
   refreshingBadges = true
   try {
-    const [workbenchRes, connectionRes] = await Promise.allSettled([
+    const [workbenchRes, connectionRes, applicationRes] = await Promise.allSettled([
       api.get('/api/dashboard/workbench'),
       isAdmin.value ? api.get('/api/connection-requests/pending-count') : Promise.resolve({ count: 0 }),
+      api.get('/api/product-applications/pending-count'),
     ])
     if (workbenchRes.status === 'fulfilled') {
       todos.value = workbenchRes.value.todos || {}
@@ -90,6 +98,9 @@ async function refreshBadges() {
     }
     if (isAdmin.value && connectionRes.status === 'fulfilled') {
       connectionCount.value = Number(connectionRes.value.count || 0)
+    }
+    if (applicationRes.status === 'fulfilled') {
+      applicationCount.value = Number(applicationRes.value.count || 0)
     }
   } catch (e) { /* ignore */ }
   refreshingBadges = false

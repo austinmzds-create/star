@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..db import get_db
 from ..deps import current_user
-from ..models import Material, User
+from ..models import Material, MaterialCommentAttachment, User
 from ..services import storage
 
 router = APIRouter(prefix="/api", tags=["uploads"])
@@ -300,6 +300,23 @@ def serve_material_file(material_id: int, request: Request,
         return RedirectResponse(storage.signed_get_url(m.oss_key), status_code=302,
                                 headers={"Cache-Control": "private, max-age=600"})
     return _serve_key_content(m.oss_key, request)
+
+
+@router.get("/material-comment-attachments/{attachment_id}")
+def serve_material_comment_attachment(attachment_id: int, request: Request,
+                                      db: Session = Depends(get_db),
+                                      e: str | None = None, s: str | None = None,
+                                      dl: int = 0):
+    """成片评论附件网关:按附件 id + 签名取文件,不向达人端暴露 OSS key。"""
+    if not storage.verify_local(f"mat_comment_att:{attachment_id}", e, s):
+        raise HTTPException(403, "链接无效或已过期")
+    a = db.get(MaterialCommentAttachment, attachment_id)
+    if not a or not a.oss_key:
+        raise HTTPException(404, "文件不存在")
+    if dl and storage.oss_signing_enabled():
+        return RedirectResponse(storage.signed_get_url(a.oss_key), status_code=302,
+                                headers={"Cache-Control": "private, max-age=600"})
+    return _serve_key_content(a.oss_key, request)
 
 
 @router.get("/thumbs/{size}/{key:path}")

@@ -19,6 +19,7 @@ const routes = [
       { path: 'followups', component: () => import('./views/Followups.vue') },
       { path: 'videos', component: () => import('./views/Videos.vue') },
       { path: 'products', component: () => import('./views/Products.vue') },
+      { path: 'applications', component: () => import('./views/ProductApplications.vue') },
       { path: 'block-records', component: () => import('./views/BlockRecords.vue') },
       { path: 'connections', component: () => import('./views/ConnectionRequests.vue'), meta: { adminOnly: true } },
       { path: 'dashboard', component: () => import('./views/Dashboard.vue'), meta: { adminOnly: true } },

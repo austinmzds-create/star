@@ -13,8 +13,8 @@ from ..deps import current_user, owns_or_admin
 from ..models import (AccessGrant, BlockRecord, ConnectionRequest, Cooperation,
                       FollowUpTask, Influencer, LevelChangeLog,
                       MaterialDownloadLog, OperationLog, OrderRecord, Product,
-                      Promotion, QianchuanCooperationBinding, SampleOrder, User,
-                      VideoTask)
+                      ProductApplication, Promotion,
+                      QianchuanCooperationBinding, SampleOrder, User, VideoTask)
 from ..services import levels, storage
 from ..services.identity import normalize_douyin, normalize_phone
 from ..services.oplog import log_op
@@ -802,8 +802,10 @@ def delete_influencer(influencer_id: int, user: User = Depends(current_user),
                           .where(VideoTask.cooperation_id.in_(coop_ids)).limit(1))
     has_order = db.scalar(select(OrderRecord.id)
                           .where(OrderRecord.influencer_id == inf.id).limit(1))
-    if has_sample or has_video or has_order:
-        raise HTTPException(400, "该达人已有寄样/视频/出单记录,不能删除;请改用「停用」")
+    has_application = db.scalar(select(ProductApplication.id)
+                                .where(ProductApplication.influencer_id == inf.id).limit(1))
+    if has_sample or has_video or has_order or has_application:
+        raise HTTPException(400, "该达人已有带货申请/寄样/视频/出单记录,不能删除;请改用「停用」")
     # 解绑共享知识(卡审库保留内容,仅去掉达人关联)
     db.query(BlockRecord).filter(BlockRecord.influencer_id == inf.id) \
         .update({BlockRecord.influencer_id: None})

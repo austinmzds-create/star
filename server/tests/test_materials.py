@@ -1,4 +1,4 @@
-"""素材优化回归:达人成片仅管理员可维护/可见 + 公开闸门;质检报告兼收图片(类型仍为 pdf)。"""
+"""素材优化回归:达人成片维护权限、评论、达人端公开闸门;质检报告兼收图片。"""
 import asyncio
 import os
 import sys
@@ -11,10 +11,19 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api.h5 import my_materials  # noqa: E402
-from app.api.products import (MaterialEditIn, MaterialIn, MaterialPublishIn, ProductIn,  # noqa: E402
-                              add_material, create as create_product, detail as product_detail,
-                              edit_material, list_products, publish_material)
+from app.api.h5 import (ApplyProductIn, MaterialReadIn, apply_product,  # noqa: E402
+                        mark_material_read, my_materials, my_products)
+from app.api.product_applications import (ReviewIn, list_applications,  # noqa: E402
+                                          review_application)
+from app.api.products import (MaterialCommentAttachmentIn, MaterialCommentIn,  # noqa: E402
+                              MaterialEditIn, MaterialIn, MaterialPublishIn,
+                              ProductIn, add_material,
+                              create as create_product,
+                              create_material_comment, detail as product_detail,
+                              edit_material, list_material_comments,
+                              list_products, publish_material)
+from app.api.samples import (CreateIn as SampleCreateIn,  # noqa: E402
+                             create as create_sample, delete_sample)
 from app.db import Base  # noqa: E402
 from app.models import AccessGrant, Cooperation, Influencer, User  # noqa: E402
 
@@ -95,26 +104,51 @@ def test_edit_video_output_requires_admin(db, admin, bd):
 
 
 def test_material_count_role_consistent(db, admin, bd):
-    """列表计数与详情可见性一致:商务看到的计数不含达人成片。"""
+    """列表计数与详情可见性一致:商务可见达人成片,但不能维护。"""
     pid = _product(db, admin)
     add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
     add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/b.mp4"), admin, db)
     admin_row = next(x for x in list_products(user=admin, db=db) if x["id"] == pid)
     bd_row = next(x for x in list_products(user=bd, db=db) if x["id"] == pid)
     assert admin_row["material_count"] == 2
-    assert bd_row["material_count"] == 1   # 不含达人成片
+    assert bd_row["material_count"] == 2
 
 
-# ---------- 内部详情:商务看不到达人成片,管理员看得到 ----------
+# ---------- 内部详情:商务看得到达人成片,但只能评论 ----------
 
-def test_detail_hides_video_output_from_bd(db, admin, bd):
+def test_detail_shows_video_output_to_bd(db, admin, bd):
     pid = _product(db, admin)
     add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
     add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/b.mp4"), admin, db)
     admin_types = {m["type"] for m in product_detail(pid, admin, db)["materials"]}
     bd_types = {m["type"] for m in product_detail(pid, bd, db)["materials"]}
     assert "video_output" in admin_types
-    assert "video_output" not in bd_types and "video_ai" in bd_types
+    assert "video_output" in bd_types and "video_ai" in bd_types
+
+
+def test_bd_can_comment_on_video_output_with_attachments(db, admin, bd):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+
+    c = create_material_comment(m["id"], MaterialCommentIn(
+        body="开头需要补产品露出",
+        attachments=[MaterialCommentAttachmentIn(
+            oss_key="comments/proof.png", filename="proof.png",
+            file_type="image", content_type="image/png")],
+    ), bd, db)
+
+    assert c["body"] == "开头需要补产品露出"
+    assert c["attachments"][0]["url"].startswith("/api/material-comment-attachments/")
+    listed = list_material_comments(m["id"], bd, db)
+    assert len(listed) == 1 and listed[0]["author_role"] == "bd"
+
+
+def test_comment_rejects_empty_payload(db, admin, bd):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    with pytest.raises(HTTPException) as e:
+        create_material_comment(m["id"], MaterialCommentIn(body="  ", attachments=[]), bd, db)
+    assert e.value.status_code == 400
 
 
 # ---------- 达人端:未公开成片不展示/不可下载,公开后展示 ----------
@@ -126,6 +160,14 @@ def _grant_influencer(db, pid, granted_by):
     db.add(Cooperation(influencer_id=inf.id, round_no=1, level_snapshot="L1",
                        commission_tier_snapshot=5, promo_mode_snapshot="merchant"))
     db.add(AccessGrant(influencer_id=inf.id, product_id=pid, granted_by=granted_by))
+    db.commit()
+    return inf
+
+
+def _influencer(db, owner=None, phone="15000000000", douyin_id="d"):
+    inf = Influencer(nickname="达人", douyin_id=douyin_id, phone=phone, source="h5",
+                     owner_bd_id=getattr(owner, "id", None))
+    db.add(inf)
     db.commit()
     return inf
 
@@ -143,6 +185,102 @@ def test_h5_hides_unpublished_output_shows_after_publish(db, admin):
     publish_material(m["id"], MaterialPublishIn(is_public=True), admin, db)
     res2 = asyncio.run(my_materials(pid, inf, db))
     assert "video_output" in {x["type"] for x in res2["materials"]}
+
+
+def test_h5_lists_all_on_products_without_grant(db, admin):
+    pid = _product(db, admin)
+    inf = _influencer(db)
+    rows = my_products(inf, db)
+    assert [p["id"] for p in rows] == [pid]
+    assert rows[0]["cooperation_status"] is None
+
+
+def test_h5_apply_product_creates_pending_application(db, admin):
+    pid = _product(db, admin)
+    inf = _influencer(db)
+
+    res = apply_product(pid, ApplyProductIn(), inf, db)
+
+    assert res["application"]["status"] == "pending"
+    detail = asyncio.run(my_materials(pid, inf, db))
+    assert detail["application"]["status"] == "pending"
+    listed = list_applications(status="pending", user=admin, db=db)["items"]
+    assert len(listed) == 1 and listed[0]["influencer_id"] == inf.id
+
+
+def test_review_application_approve_creates_to_ship_sample(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    app = apply_product(pid, ApplyProductIn(note="想带这个品"), inf, db)["application"]
+
+    review_application(app["id"], ReviewIn(approve=True), bd, db)
+
+    detail = asyncio.run(my_materials(pid, inf, db))
+    assert detail["application"]["status"] == "approved"
+    assert detail["sample"]["status"] == "approved"
+    listed = list_applications(status="approved", user=admin, db=db)["items"]
+    assert listed[0]["status"] == "approved" and listed[0]["sample_order_id"]
+
+
+def test_review_application_reject_requires_reason(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    app = apply_product(pid, ApplyProductIn(), inf, db)["application"]
+    with pytest.raises(HTTPException) as exc:
+        review_application(app["id"], ReviewIn(approve=False), bd, db)
+    assert exc.value.status_code == 400
+
+
+def test_product_application_overview_counts_more_than_preview_limit(db, admin):
+    pid = _product(db, admin)
+    for i in range(25):
+        inf = _influencer(db, phone=f"1500000{i:04d}", douyin_id=f"d{i}")
+        apply_product(pid, ApplyProductIn(), inf, db)
+
+    overview = product_detail(pid, admin, db)["application_overview"]
+
+    assert overview["counts"]["total"] == 25
+    assert overview["counts"]["pending"] == 25
+    assert len(overview["items"]) == 20
+
+
+def test_deleting_pending_sample_cancels_application_without_fk_break(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    db.add(Cooperation(influencer_id=inf.id, round_no=1, level_snapshot="L1",
+                       commission_tier_snapshot=5, promo_mode_snapshot="merchant"))
+    db.commit()
+    sample = create_sample(SampleCreateIn(influencer_id=inf.id, product_id=pid), bd, db)
+
+    delete_sample(sample["id"], bd, db)
+
+    cancelled = list_applications(status="cancelled", user=admin, db=db)["items"]
+    assert len(cancelled) == 1
+    assert cancelled[0]["sample_order_id"] is None
+
+
+def test_h5_video_output_comments_and_unread_badges(db, admin, bd):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_output", oss_key="video_output/a.mp4"), admin, db)
+    create_material_comment(m["id"], MaterialCommentIn(body="这里要补一版字幕"), bd, db)
+    inf = _grant_influencer(db, pid, admin.id)
+    publish_material(m["id"], MaterialPublishIn(is_public=True), admin, db)
+
+    products = my_products(inf, db)
+    assert products[0]["unread_badge"] == 2
+
+    res = asyncio.run(my_materials(pid, inf, db))
+    mat = next(x for x in res["materials"] if x["type"] == "video_output")
+    assert mat["comments"][0]["body"] == "这里要补一版字幕"
+    assert mat["unread_total"] == 2       # 新成片 + 1 条新评论
+    assert res["unread_badges"]["video_output"] == 2
+
+    mark_material_read(m["id"], MaterialReadIn(scope="all"), inf, db)
+    res2 = asyncio.run(my_materials(pid, inf, db))
+    mat2 = next(x for x in res2["materials"] if x["type"] == "video_output")
+    assert mat2["unread_total"] == 0
+    assert res2["unread_badges"]["video_output"] == 0
+    assert my_products(inf, db)[0]["unread_badge"] == 0
 
 
 # ---------- 做法B:id 文件网关(域名+id+签名,后端反查 key) ----------

@@ -297,6 +297,15 @@ def material_file_url(material_id: int, download: bool = False, expires: int = 8
     return f"/api/material-file/{material_id}{query}"
 
 
+def material_comment_attachment_url(attachment_id: int, download: bool = False,
+                                    expires: int = 86400) -> str:
+    """成片评论附件地址:同样只暴露 id + 签名,避免达人端拿到 OSS key。"""
+    ref = f"mat_comment_att:{attachment_id}"
+    exp = _stable_exp(expires)
+    query = f"?e={exp}&s={_sign_local(ref, exp)}" + ("&dl=1" if download else "")
+    return f"/api/material-comment-attachments/{attachment_id}{query}"
+
+
 def inline_preview_enabled() -> bool:
     """是否可以把 OSS URL 直接放进 video/iframe。
 

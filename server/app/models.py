@@ -277,6 +277,64 @@ class Material(Base, TimestampMixin):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
 
     product: Mapped[Product] = relationship(back_populates="materials")
+    comments: Mapped[list["MaterialComment"]] = relationship(
+        back_populates="material",
+        cascade="all, delete-orphan",
+        order_by="MaterialComment.created_at")
+
+
+class MaterialComment(Base, TimestampMixin):
+    """达人成片评论:内部人员对某条成片的多轮反馈。
+
+    评论正文和附件都落库;达人端只读展示,未读数由 MaterialReadState 计算。
+    """
+    __tablename__ = "material_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"), index=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    body: Mapped[str | None] = mapped_column(Text)
+    author_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    author_name: Mapped[str | None] = mapped_column(String(64))
+    author_role: Mapped[str] = mapped_column(String(16), default="bd")
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    material: Mapped[Material] = relationship(back_populates="comments")
+    attachments: Mapped[list["MaterialCommentAttachment"]] = relationship(
+        back_populates="comment",
+        cascade="all, delete-orphan",
+        order_by="MaterialCommentAttachment.sort_order")
+
+
+class MaterialCommentAttachment(Base):
+    """成片评论附件:可挂图片、视频、PDF 等文件。"""
+    __tablename__ = "material_comment_attachments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    comment_id: Mapped[int] = mapped_column(ForeignKey("material_comments.id"), index=True)
+    oss_key: Mapped[str] = mapped_column(String(512))
+    filename: Mapped[str | None] = mapped_column(String(255))
+    file_type: Mapped[str] = mapped_column(String(16), default="file")
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+    comment: Mapped[MaterialComment] = relationship(back_populates="attachments")
+
+
+class MaterialReadState(Base, TimestampMixin):
+    """达人对成片素材/评论的已读状态。
+
+    按达人和素材维度记录,不预创建;达人打开成片区后才写入或更新。
+    """
+    __tablename__ = "material_read_states"
+    __table_args__ = (UniqueConstraint("material_id", "influencer_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    material_id: Mapped[int] = mapped_column(ForeignKey("materials.id"), index=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    last_seen_material_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_seen_comments_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class MaterialPost(Base):
@@ -329,6 +387,32 @@ class AccessGrant(Base):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
     granted_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     granted_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
+class ProductApplication(Base, TimestampMixin):
+    """达人 × 产品 带货申请/合作关系。
+
+    产品是否可见不再由 AccessGrant 决定;达人可看所有上架产品。这里记录的是
+    "申请/审核/寄样发货/后续带货"这条业务主线,同一达人同一产品保留一条当前档案,
+    历史动作写 OperationLog。
+    """
+    __tablename__ = "product_applications"
+    __table_args__ = (UniqueConstraint("influencer_id", "product_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    influencer_id: Mapped[int] = mapped_column(ForeignKey("influencers.id"), index=True)
+    source: Mapped[str] = mapped_column(String(24), default="influencer_apply")  # influencer_apply / staff_assign
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending / approved / rejected / cancelled
+    reject_reason: Mapped[str | None] = mapped_column(String(255))
+    note: Mapped[str | None] = mapped_column(Text)
+    sample_order_id: Mapped[int | None] = mapped_column(ForeignKey("sample_orders.id"), index=True)
+    owner_bd_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    created_by_influencer_id: Mapped[int | None] = mapped_column(ForeignKey("influencers.id"))
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    applied_at: Mapped[datetime] = mapped_column(DateTime, default=now, index=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class MaterialDownloadLog(Base):

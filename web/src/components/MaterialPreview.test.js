@@ -70,6 +70,13 @@ describe('MaterialPreview', () => {
     expect(wrapper.get('a').attributes('href')).toBe('/signed/report.pdf')
   })
 
+  it('renders image quality reports as a single image without the PDF scroller', () => {
+    const wrapper = mountPreview({ type: 'pdf', is_image: true, url: '/signed/report.png' })
+
+    expect(wrapper.getComponent({ name: 'ElImage' }).props('src')).toBe('/signed/report.png')
+    expect(wrapper.find('iframe').exists()).toBe(false)
+  })
+
   it('does not auto-load force-download OSS PDFs before preview is requested', async () => {
     const wrapper = mountPreview({
       type: 'pdf',

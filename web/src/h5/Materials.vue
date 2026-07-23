@@ -24,6 +24,17 @@
       </div>
     </div>
 
+    <div v-if="d.application" class="application-card">
+      <div>
+        <div class="app-title">带货状态</div>
+        <div class="app-status" :class="d.application.status">{{ d.application.status_label }}</div>
+        <div v-if="d.application.reject_reason" class="app-reason">原因:{{ d.application.reject_reason }}</div>
+      </div>
+      <el-button v-if="d.application.can_apply" type="primary" size="small" :loading="applying" @click="applyProduct">
+        申请带货
+      </el-button>
+    </div>
+
     <div class="detail-shell">
       <div class="side-tabs" role="tablist">
         <button
@@ -36,6 +47,7 @@
         >
           <span class="tab-label">{{ tab.label }}</span>
           <span class="tab-count">{{ countOf(tab) }}</span>
+          <span v-if="unreadOf(tab)" class="tab-badge">{{ unreadOf(tab) }}</span>
         </button>
       </div>
 
@@ -92,8 +104,29 @@
               <div class="mat-head">
                 <el-tag size="small">{{ TYPE_LABEL[m.type] || m.type }}</el-tag>
                 <span v-if="m.title" class="mtitle">{{ m.title }}</span>
+                <span v-if="m.unread_total" class="mat-badge">{{ m.unread_total }}</span>
               </div>
               <MaterialPreview :material="m" />
+              <div v-if="m.type === 'video_output'" class="video-comments">
+                <div class="comments-title">评论 {{ m.comment_count || (m.comments || []).length || 0 }}</div>
+                <div v-if="(m.comments || []).length" class="comments-list">
+                  <div v-for="c in m.comments" :key="c.id" class="comment-item">
+                    <div class="comment-meta">
+                      <span class="comment-author">{{ c.author_name || '内部人员' }}</span>
+                      <span>{{ roleLabel(c.author_role) }}</span>
+                      <span>{{ ft(c.created_at) }}</span>
+                    </div>
+                    <div v-if="c.body" class="comment-body">{{ c.body }}</div>
+                    <div v-if="c.attachments?.length" class="comment-files">
+                      <a v-for="a in c.attachments" :key="a.id" :href="a.download_url || a.url"
+                        target="_blank" rel="noopener">
+                        {{ fileTypeLabel(a.file_type) }} {{ a.filename || '附件' }}
+                      </a>
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="muted no-comments">暂无评论</div>
+              </div>
               <div v-if="m.downloadable && m.url" class="mat-actions">
                 <el-button size="small" type="primary" plain @click="download(m)">下载素材</el-button>
               </div>
@@ -113,6 +146,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import MaterialPreview from '../components/MaterialPreview.vue'
+import { formatTime as ft } from '../utils/time'
+import { h5store } from './store'
 
 const TYPE_LABEL = {
   video_ai: 'AI视频',
@@ -144,6 +179,8 @@ const curId = ref(Number(route.params.id))
 const activeTab = ref('detail')
 const expandLogi = ref(false)
 const refreshing = ref(false)
+const markingRead = ref(false)
+const applying = ref(false)
 
 const matsOf = (types) => (d.value?.materials || []).filter((m) => types.includes(m.type))
 const detailItems = computed(() => [
@@ -182,6 +219,14 @@ function countOf(tab) {
   return matsOf(tab.types).length
 }
 
+function unreadOf(tab) {
+  if (tab.key !== 'video_output') return 0
+  return d.value?.unread_badges?.video_output || matsOf(['video_output']).reduce((sum, m) => sum + Number(m.unread_total || 0), 0)
+}
+
+const roleLabel = (role) => (role === 'admin' ? '管理员' : '商务')
+const fileTypeLabel = (type) => ({ image: '图片', video: '视频', pdf: 'PDF', file: '附件' }[type] || '附件')
+
 function goProduct(id) {
   if (id !== Number(route.params.id)) router.push(`/h5/products/${id}`)
 }
@@ -206,15 +251,69 @@ async function refreshLogi() {
   }
 }
 
+async function applyProduct() {
+  if (applying.value) return
+  applying.value = true
+  try {
+    const r = await api.post(`/api/h5/products/${route.params.id}/apply`, {}, { skipBadgeRefresh: true })
+    d.value.application = r.application
+    const pid = Number(route.params.id)
+    const updateProduct = (p) => {
+      if (!p) return
+      p.application_status = r.application.application_status
+      p.cooperation_status = r.application.status
+      p.reject_reason = r.application.reject_reason
+    }
+    updateProduct(productList.value.find((p) => p.id === pid))
+    updateProduct(h5store.products.find((p) => p.id === pid))
+    ElMessage.success('已提交申请')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '申请失败')
+  } finally {
+    applying.value = false
+  }
+}
+
 async function loadDetail() {
   expandLogi.value = false
   activeTab.value = 'detail'
   d.value = await api.get(`/api/h5/products/${route.params.id}/materials`)
 }
 
+async function markVideoOutputRead() {
+  if (markingRead.value || activeTab.value !== 'video_output') return
+  const mats = matsOf(['video_output']).filter((m) => Number(m.unread_total || 0) > 0)
+  if (!mats.length) return
+  markingRead.value = true
+  try {
+    await Promise.all(mats.map((m) => api.post(`/api/h5/materials/${m.id}/read`, { scope: 'all' }, { skipBadgeRefresh: true })))
+    mats.forEach((m) => {
+      m.is_new = false
+      m.unread_comment_count = 0
+      m.unread_total = 0
+    })
+    if (d.value?.unread_badges) d.value.unread_badges.video_output = 0
+    const pid = Number(route.params.id)
+    const productTargets = [productList.value.find((p) => p.id === pid), h5store.products.find((p) => p.id === pid)]
+    productTargets.filter(Boolean).forEach((p) => {
+      p.unread_badge = 0
+      p.unread_video_count = 0
+      p.unread_comment_count = 0
+    })
+  } catch {
+    // 已读失败不影响浏览,下次进入仍会提示
+  } finally {
+    markingRead.value = false
+  }
+}
+
 watch(() => route.params.id, (id) => {
   curId.value = Number(id)
   loadDetail()
+})
+
+watch(activeTab, () => {
+  if (activeTab.value === 'video_output') setTimeout(markVideoOutputRead, 300)
 })
 
 onMounted(async () => {
@@ -244,6 +343,25 @@ onMounted(async () => {
 .phname { font-weight: 700; font-size: 16px; color: #202431; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phmeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .phmeta .price { color: #f56c6c; font-weight: 700; }
+.application-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -2px 0 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e8ebf2;
+}
+.app-title { font-size: 12px; color: #8a93a6; }
+.app-status { margin-top: 3px; font-size: 14px; font-weight: 700; color: #606a7c; }
+.app-status.pending, .app-status.approved { color: #b36b00; }
+.app-status.shipped, .app-status.in_transit { color: #337ecc; }
+.app-status.signed { color: #2f9f5b; }
+.app-status.rejected { color: #d93030; }
+.app-status.cancelled { color: #8a93a6; }
+.app-reason { margin-top: 4px; color: #d93030; font-size: 12px; line-height: 1.45; }
 .detail-shell { display: grid; grid-template-columns: 86px minmax(0, 1fr); gap: 10px; align-items: start; }
 .side-tabs {
   position: sticky;
@@ -253,6 +371,7 @@ onMounted(async () => {
   gap: 7px;
 }
 .side-tab {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -288,6 +407,25 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .side-tab.active .tab-count { background: #6b5cf6; color: #fff; }
+.tab-badge, .mat-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 700;
+}
+.tab-badge {
+  position: absolute;
+  top: -6px;
+  right: -5px;
+}
 .tab-panel { min-width: 0; }
 .panel-list, .material-list { display: flex; flex-direction: column; gap: 10px; }
 .panel-block, .material-card {
@@ -301,7 +439,34 @@ onMounted(async () => {
 .muted { color: #8a93a6; }
 .mat-head { display: flex; align-items: center; gap: 8px; }
 .mtitle { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mat-badge { margin-left: auto; flex-shrink: 0; }
 .mat-actions { margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.video-comments {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e5e7ef;
+}
+.comments-title { font-size: 13px; font-weight: 700; color: #202431; margin-bottom: 8px; }
+.comments-list { display: flex; flex-direction: column; gap: 8px; }
+.comment-item { padding: 9px; border-radius: 8px; background: #f8f9fc; border: 1px solid #eef0f5; }
+.comment-meta { display: flex; gap: 6px; flex-wrap: wrap; color: #8a93a6; font-size: 11px; }
+.comment-author { color: #303545; font-weight: 700; }
+.comment-body { margin-top: 6px; white-space: pre-wrap; line-height: 1.6; color: #4f566b; font-size: 13px; }
+.comment-files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.comment-files a {
+  max-width: 100%;
+  padding: 4px 8px;
+  border: 1px solid #e5e7ef;
+  border-radius: 6px;
+  background: #fff;
+  color: #6254e8;
+  text-decoration: none;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.no-comments { font-size: 12px; }
 .samp-head { display: flex; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .reject { margin-top: 8px; font-size: 12px; color: #f56c6c; }
 .logi {
@@ -322,7 +487,26 @@ onMounted(async () => {
 .logi-actions { margin-top: 6px; display: flex; gap: 8px; }
 @media (max-width: 380px) {
   .h5-wrap { padding-left: 10px; padding-right: 10px; }
-  .detail-shell { grid-template-columns: 78px minmax(0, 1fr); gap: 8px; }
-  .side-tab { padding-left: 6px; padding-right: 6px; }
+}
+@media (max-width: 520px) {
+  .detail-shell { display: block; }
+  .side-tabs {
+    position: static;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: 8px;
+    padding: 2px 2px 10px;
+    margin-bottom: 10px;
+    scrollbar-width: none;
+  }
+  .side-tabs::-webkit-scrollbar { display: none; }
+  .side-tab {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 78px;
+    justify-content: center;
+    text-align: center;
+  }
+  .tab-count { margin-left: 4px; }
 }
 </style>
