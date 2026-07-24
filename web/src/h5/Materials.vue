@@ -122,6 +122,12 @@
                 <span v-if="m.unread_total" class="mat-badge">{{ m.unread_total }}</span>
               </div>
               <MaterialPreview :material="m" />
+              <div v-if="m.need_fix" class="audit-feedback">
+                <div v-if="m.reject_reason" class="audit-reason">整改要求：{{ m.reject_reason }}</div>
+                <ul v-if="m.time_comments?.length" class="audit-points">
+                  <li v-for="(tc, i) in m.time_comments" :key="i">{{ tc }}</li>
+                </ul>
+              </div>
               <div v-if="m.type === 'video_output'" class="video-comments">
                 <div class="comments-title">评论 {{ m.comment_count || (m.comments || []).length || 0 }}</div>
                 <div v-if="(m.comments || []).length" class="comments-list">
@@ -639,6 +645,16 @@ onMounted(async () => {
 .upload-progress, .file-name { font-size: 12px; }
 .file-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .submit-video { width: 100%; max-height: 240px; border-radius: 8px; background: #111; }
+.h5-video-dialog { max-width: 420px; }
+.audit-feedback {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #fff9f0;
+  border: 1px solid #ffe4b8;
+}
+.audit-reason { color: #e6572b; font-size: 13px; font-weight: 700; }
+.audit-points { margin: 6px 0 0; padding-left: 18px; color: #9a5a2b; font-size: 12px; line-height: 1.6; }
 @media (max-width: 380px) {
   .h5-wrap { padding-left: 10px; padding-right: 10px; }
 }

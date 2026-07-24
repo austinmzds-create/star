@@ -28,6 +28,7 @@ from app.api.products import (MaterialCommentAttachmentIn, MaterialCommentIn,  #
                               publish_material)
 from app.api.samples import (CreateIn as SampleCreateIn,  # noqa: E402
                              create as create_sample, delete_sample)
+from app.api.videos import AuditVideoIn, audit_video  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.models import (AccessGrant, Cooperation, Influencer, Material,  # noqa: E402
                         MaterialAsset, MaterialComment,
@@ -321,6 +322,18 @@ def test_h5_submit_video_creates_task_private_material_and_feedback(db, admin, b
     assert owner_mat["source_link"] == "https://v.douyin.com/submitted"
     assert owner_mat["parsed_text"] == "第一版成片,请帮忙看开头"
     assert mat.id not in [m["id"] for m in asyncio.run(my_materials(pid, other, db))["materials"]]
+
+    audit_video(task.id, AuditVideoIn(
+        approve=False,
+        blocked=True,
+        reject_reason="开头产品露出不足",
+        time_comments=["00:05 产品露出提前"],
+    ), bd, db)
+    owner_detail = asyncio.run(my_materials(pid, inf, db))
+    owner_mat = next(m for m in owner_detail["materials"] if m["id"] == mat.id)
+    assert owner_mat["need_fix"] is True
+    assert owner_mat["reject_reason"] == "开头产品露出不足"
+    assert owner_mat["time_comments"] == ["00:05 产品露出提前"]
 
     create_material_comment(mat.id, MaterialCommentIn(body="00:05 产品露出再提前一点"), bd, db)
     videos = my_videos(inf, db)

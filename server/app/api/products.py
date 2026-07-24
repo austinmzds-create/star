@@ -429,11 +429,15 @@ def _material_dict(m: Material, db: Session | None = None) -> dict:
     inline_preview = bool(has_file and storage.is_image(m.oss_key))
     inf = db.get(Influencer, m.influencer_id) if db and m.influencer_id else None
     task = db.get(VideoTask, m.video_task_id) if db and m.video_task_id else None
+    reason, time_comments = _video_task_feedback(task)
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
             "influencer_id": m.influencer_id,
             "influencer_nickname": inf.nickname if inf else None,
             "video_task_id": m.video_task_id,
             "video_status": task.status if task else None,
+            "need_fix": bool(task and task.status in {"rejected", "blocked"}),
+            "reject_reason": reason,
+            "time_comments": time_comments,
             "submit_note": task.submit_note if task else None,
             "url": storage.material_file_url(m.id) if has_file else None,
             "preview_url": storage.material_file_url(m.id) if has_file else None,
@@ -496,6 +500,19 @@ def _material_comment_dict(c: MaterialComment) -> dict:
         "created_at": c.created_at.isoformat(),
         "attachments": [_comment_attachment_dict(a) for a in c.attachments],
     }
+
+
+def _video_task_feedback(task: VideoTask | None) -> tuple[str | None, list]:
+    if not task:
+        return None, []
+    ar = task.audit_result or {}
+    reason = None
+    if task.status in {"rejected", "blocked"}:
+        for rec in reversed(ar.get("records") or []):
+            if rec.get("reason"):
+                reason = rec["reason"]
+                break
+    return reason, list(ar.get("time_comments") or [])
 
 
 class MaterialCommentAttachmentIn(BaseModel):

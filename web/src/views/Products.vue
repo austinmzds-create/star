@@ -261,6 +261,12 @@
                   <div v-if="m.submit_note && m.type === 'video_output'" class="submit-note">
                     达人备注：{{ m.submit_note }}
                   </div>
+                  <div v-if="m.need_fix" class="audit-feedback">
+                    <div v-if="m.reject_reason" class="audit-reason">整改要求：{{ m.reject_reason }}</div>
+                    <ul v-if="m.time_comments?.length" class="audit-points">
+                      <li v-for="(tc, i) in m.time_comments" :key="i">{{ tc }}</li>
+                    </ul>
+                  </div>
                   <div v-if="m.type === 'video_output'" class="video-comment-panel">
                     <div class="comment-head">
                       <span>评论 {{ m.comment_count || (m.comments || []).length || 0 }}</span>
@@ -1383,6 +1389,15 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
   line-height: 1.55;
   white-space: pre-wrap;
 }
+.audit-feedback {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #fff9f0;
+  border: 1px solid #ffe4b8;
+}
+.audit-reason { color: #e6572b; font-size: 13px; font-weight: 700; }
+.audit-points { margin: 6px 0 0; padding-left: 18px; color: #9a5a2b; font-size: 12px; line-height: 1.6; }
 .video-comment-panel {
   margin-top: 12px;
   padding-top: 12px;

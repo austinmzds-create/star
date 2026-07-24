@@ -495,11 +495,15 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
         unread_badges["video_output"] += unread["unread_total"] if m.type == "video_output" else 0
         inline_preview = bool(m.oss_key and storage.is_image(m.oss_key))
         task = db.get(VideoTask, m.video_task_id) if m.video_task_id else None
+        reason, time_comments = _video_feedback(task) if task else (None, [])
         item = {"id": m.id, "type": m.type, "title": m.title,
                 "influencer_id": m.influencer_id,
                 "mine": m.influencer_id == inf.id,
                 "video_task_id": m.video_task_id,
                 "video_status": task.status if task else None,
+                "need_fix": bool(task and task.status in ("rejected", "blocked")),
+                "reject_reason": reason,
+                "time_comments": time_comments,
                 "submit_note": task.submit_note if task else None,
                 "url": storage.material_file_url(m.id) if m.oss_key else None,
                 "preview_url": storage.material_file_url(m.id) if m.oss_key else None,
