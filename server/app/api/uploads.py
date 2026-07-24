@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
 from ..db import get_db
-from ..deps import current_user
-from ..models import Material, MaterialComment, MaterialCommentAttachment, User
+from ..deps import current_upload_actor
+from ..models import Influencer, Material, MaterialComment, MaterialCommentAttachment, User
 from ..services import storage
 
 router = APIRouter(prefix="/api", tags=["uploads"])
@@ -31,7 +31,8 @@ class DirectUploadIn(BaseModel):
 
 
 @router.post("/upload/direct-ticket")
-def direct_upload_ticket(body: DirectUploadIn, user: User = Depends(current_user)):
+def direct_upload_ticket(body: DirectUploadIn,
+                         actor: User | Influencer = Depends(current_upload_actor)):
     """前端直传 OSS 的临时目标。
 
     配了 AK → 返回签名 PUT URL(signed=True),浏览器凭签名直传,bucket 可为私有;
@@ -97,7 +98,8 @@ def _assert_uploadable_key(key: str) -> None:
 
 
 @router.post("/upload/multipart/init")
-def multipart_init(body: MultipartInitIn, user: User = Depends(current_user)):
+def multipart_init(body: MultipartInitIn,
+                   actor: User | Influencer = Depends(current_upload_actor)):
     """初始化分片:后端调 OSS 拿 upload_id,并为每个分片签发直传 URL。
     大流量的分片本体由浏览器凭签名 URL 并行直传,不经 ECS。"""
     if not storage.use_signed_upload():
@@ -111,7 +113,8 @@ def multipart_init(body: MultipartInitIn, user: User = Depends(current_user)):
 
 
 @router.post("/upload/multipart/complete")
-def multipart_complete(body: MultipartCompleteIn, user: User = Depends(current_user)):
+def multipart_complete(body: MultipartCompleteIn,
+                       actor: User | Influencer = Depends(current_upload_actor)):
     if not storage.use_signed_upload():
         raise HTTPException(400, "未启用签名直传")
     _assert_uploadable_key(body.key)
@@ -128,7 +131,8 @@ def multipart_complete(body: MultipartCompleteIn, user: User = Depends(current_u
 
 
 @router.post("/upload/multipart/abort")
-def multipart_abort(body: MultipartAbortIn, user: User = Depends(current_user)):
+def multipart_abort(body: MultipartAbortIn,
+                    actor: User | Influencer = Depends(current_upload_actor)):
     if not storage.use_signed_upload():
         raise HTTPException(400, "未启用签名直传")
     _assert_uploadable_key(body.key)
@@ -138,7 +142,7 @@ def multipart_abort(body: MultipartAbortIn, user: User = Depends(current_user)):
 
 @router.post("/upload")
 async def upload(file: UploadFile, prefix: str = "materials",
-                 user: User = Depends(current_user)):
+                 actor: User | Influencer = Depends(current_upload_actor)):
     # 读入内容并落库:OSS 用 put_object(bytes) 一次写全(此前分块流式写会写出 0 字节文件,
     # 导致 OSS 对象为空、缩略图 502);OSS 的阻塞上传放线程池,不卡事件循环。
     if not storage.extension_allowed(file.filename or ""):

@@ -324,7 +324,7 @@ def _normalized_material_data(data: dict, material_type: str) -> dict:
     for key in ("title", "oss_key", "source_link", "parsed_text", "report_id"):
         if isinstance(data.get(key), str):
             data[key] = data[key].strip() or None
-    if material_type != "video_hot":
+    if material_type not in {"video_hot", "video_output"}:
         data["source_link"] = None
     if material_type != "pdf":
         data["report_id"] = None
@@ -356,7 +356,7 @@ def add_material(product_id: int, body: MaterialIn,
     db.commit()
     db.refresh(m)
     # TODO: source_link 非空时后台任务:下载视频→转存OSS→解析文案回填 parsed_text
-    return _material_dict(m)
+    return _material_dict(m, db)
 
 
 class MaterialEditIn(BaseModel):
@@ -422,12 +422,19 @@ def publish_material(material_id: int, body: MaterialPublishIn,
     return {"ok": True, "is_public": m.is_public}
 
 
-def _material_dict(m: Material) -> dict:
+def _material_dict(m: Material, db: Session | None = None) -> dict:
     # 预览/下载都走"自家域名 + 素材 id + 签名"网关,不再向前端暴露裸 OSS URL。
     # 内部端保留 oss_key 供编辑时判断"是否已有文件/是否替换"(内部可信;达人端不下发)。
     has_file = bool(m.oss_key)
     inline_preview = bool(has_file and storage.is_image(m.oss_key))
+    inf = db.get(Influencer, m.influencer_id) if db and m.influencer_id else None
+    task = db.get(VideoTask, m.video_task_id) if db and m.video_task_id else None
     return {"id": m.id, "type": m.type, "title": m.title, "oss_key": m.oss_key,
+            "influencer_id": m.influencer_id,
+            "influencer_nickname": inf.nickname if inf else None,
+            "video_task_id": m.video_task_id,
+            "video_status": task.status if task else None,
+            "submit_note": task.submit_note if task else None,
             "url": storage.material_file_url(m.id) if has_file else None,
             "preview_url": storage.material_file_url(m.id) if has_file else None,
             "download_url": storage.material_file_url(m.id, download=True) if has_file else None,
@@ -1035,7 +1042,7 @@ def detail(product_id: int, user: User = Depends(current_user), db: Session = De
             "auto_audit_type": p.auto_audit_type, "allow_promotion": p.allow_promotion,
             "qianchuan_binding": _qianchuan_binding_dict(binding),
             "application_overview": _product_application_overview(db, product_id),
-            "materials": [_material_dict(m) for m in materials]}
+            "materials": [_material_dict(m, db) for m in materials]}
 
 
 # ---------- 历史授权兼容 ----------

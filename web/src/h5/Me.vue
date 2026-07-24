@@ -29,19 +29,40 @@
           <div v-else class="vimg placeholder" />
           <div class="vinfo">
             <div class="vname">{{ v.product_name }}</div>
-            <div class="vsub muted">{{ fmt(v.created_at) }}</div>
+            <div class="vsub muted">
+              {{ fmt(v.created_at) }}
+              <span v-if="v.unread_comment_count" class="comment-dot">{{ v.unread_comment_count }}新反馈</span>
+            </div>
           </div>
           <el-tag size="small" :type="videoTagType(v.status)">{{ v.status_label }}</el-tag>
         </div>
+        <div v-if="v.submit_note" class="vnote">备注：{{ v.submit_note }}</div>
         <!-- 卡审/未通过：原因 + 时间点问题，达人照此整改 -->
         <div v-if="v.need_fix" class="vfix">
           <div v-if="v.reject_reason" class="vreason">整改要求：{{ v.reject_reason }}</div>
           <ul v-if="v.time_comments.length" class="vtc">
             <li v-for="(tc, i) in v.time_comments" :key="i">{{ tc }}</li>
           </ul>
-          <el-link v-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" class="vlink">查看视频</el-link>
+          <div class="video-links">
+            <el-link v-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" class="vlink">查看分享链接</el-link>
+            <el-link v-if="v.uploaded_url" :href="v.uploaded_url" target="_blank" type="primary" class="vlink">查看上传视频</el-link>
+          </div>
         </div>
-        <el-link v-else-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" class="vlink">查看视频</el-link>
+        <div v-else class="video-links">
+          <el-link v-if="v.dy_url" :href="v.dy_url" target="_blank" type="primary" class="vlink">查看分享链接</el-link>
+          <el-link v-if="v.uploaded_url" :href="v.uploaded_url" target="_blank" type="primary" class="vlink">查看上传视频</el-link>
+        </div>
+        <div v-if="v.comments?.length" class="feedback-list">
+          <div v-for="c in v.comments" :key="c.id" class="feedback-item">
+            <div class="feedback-meta">{{ c.author_name || '内部人员' }} · {{ fmt(c.created_at) }}</div>
+            <div v-if="c.body" class="feedback-body">{{ c.body }}</div>
+            <div v-if="c.attachments?.length" class="feedback-files">
+              <a v-for="a in c.attachments" :key="a.id" :href="a.download_url || a.url" target="_blank" rel="noopener">
+                {{ a.filename || '附件' }}
+              </a>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -167,10 +188,19 @@ onMounted(() => { if (!h5store.loaded) loadH5() })
 .vinfo { min-width: 0; flex: 1; }
 .vname { font-weight: 600; color: #2b3143; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vsub { font-size: 12px; }
+.comment-dot { margin-left: 6px; color: #f56c6c; font-weight: 700; }
+.vnote { margin-top: 8px; font-size: 12px; color: #606a7c; line-height: 1.5; white-space: pre-wrap; }
 .vfix { margin-top: 8px; }
 .vreason { font-size: 13px; color: #e6572b; font-weight: 600; }
 .vtc { margin: 6px 0 0; padding-left: 18px; color: #9a5a2b; font-size: 12px; line-height: 1.6; }
-.vlink { margin-top: 6px; }
+.video-links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+.vlink { margin-top: 0; }
+.feedback-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.feedback-item { padding: 8px; border-radius: 8px; background: #f8f9fc; border: 1px solid #eef0f5; }
+.feedback-meta { color: #8a93a6; font-size: 11px; }
+.feedback-body { margin-top: 4px; color: #4f566b; white-space: pre-wrap; font-size: 12px; line-height: 1.5; }
+.feedback-files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.feedback-files a { color: #6254e8; font-size: 12px; text-decoration: none; }
 /* 物流 */
 .logi { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 6px 10px; background: #f6f8fc;
   border-radius: 8px; font-size: 12px; color: #5a6072; }

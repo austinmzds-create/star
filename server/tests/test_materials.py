@@ -11,8 +11,9 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api.h5 import (ApplyProductIn, MaterialReadIn, apply_product,  # noqa: E402
-                        mark_material_read, my_materials, my_products)
+from app.api.h5 import (ApplyProductIn, MaterialReadIn, SubmitVideoIn,  # noqa: E402
+                        apply_product, mark_material_read, my_materials,
+                        my_products, my_videos, submit_product_video)
 from app.api.product_applications import (ReviewIn, list_applications,  # noqa: E402
                                           pending_count, review_application,
                                           status_counts)
@@ -31,7 +32,8 @@ from app.db import Base  # noqa: E402
 from app.models import (AccessGrant, Cooperation, Influencer, Material,  # noqa: E402
                         MaterialAsset, MaterialComment,
                         MaterialCommentAttachment, MaterialPost,
-                        MaterialReadState, Product, SampleOrder, User)
+                        MaterialReadState, Product, SampleOrder, User,
+                        VideoTask)
 
 
 @pytest.fixture
@@ -279,6 +281,52 @@ def test_review_application_approve_creates_to_ship_sample(db, admin, bd):
     assert detail["sample"]["status"] == "approved"
     listed = list_applications(status="approved", user=admin, db=db)["items"]
     assert listed[0]["status"] == "approved" and listed[0]["sample_order_id"]
+
+
+def test_h5_submit_video_requires_approved_application(db, admin):
+    pid = _product(db, admin)
+    inf = _influencer(db)
+
+    with pytest.raises(HTTPException) as exc:
+        submit_product_video(pid, SubmitVideoIn(dy_url="https://v.douyin.com/test"), inf, db)
+
+    assert exc.value.status_code == 400
+
+
+def test_h5_submit_video_creates_task_private_material_and_feedback(db, admin, bd):
+    pid = _product(db, admin)
+    inf = _influencer(db, owner=bd)
+    other = _influencer(db, phone="15000000002", douyin_id="other")
+    app = apply_product(pid, ApplyProductIn(), inf, db)["application"]
+    review_application(app["id"], ReviewIn(approve=True), bd, db)
+
+    res = submit_product_video(pid, SubmitVideoIn(
+        dy_url="https://v.douyin.com/submitted",
+        oss_key="video_outputs/a.mp4",
+        note="第一版成片,请帮忙看开头",
+    ), inf, db)
+
+    task = db.get(VideoTask, res["video_task_id"])
+    mat = db.get(Material, res["material_id"])
+    assert task.status == "submitted"
+    assert task.submit_note == "第一版成片,请帮忙看开头"
+    assert mat.type == "video_output"
+    assert mat.influencer_id == inf.id
+    assert mat.video_task_id == task.id
+    assert mat.is_public is False
+
+    owner_detail = asyncio.run(my_materials(pid, inf, db))
+    owner_mat = next(m for m in owner_detail["materials"] if m["id"] == mat.id)
+    assert owner_mat["mine"] is True
+    assert owner_mat["source_link"] == "https://v.douyin.com/submitted"
+    assert owner_mat["parsed_text"] == "第一版成片,请帮忙看开头"
+    assert mat.id not in [m["id"] for m in asyncio.run(my_materials(pid, other, db))["materials"]]
+
+    create_material_comment(mat.id, MaterialCommentIn(body="00:05 产品露出再提前一点"), bd, db)
+    videos = my_videos(inf, db)
+    assert videos[0]["material_id"] == mat.id
+    assert videos[0]["unread_comment_count"] == 1
+    assert videos[0]["comments"][0]["body"] == "00:05 产品露出再提前一点"
 
 
 def test_application_overview_prefers_bound_sample_over_newer_pending_sample(db, admin, bd):

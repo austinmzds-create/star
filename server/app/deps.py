@@ -55,3 +55,23 @@ def current_influencer(authorization: str = Header(""), db: Session = Depends(ge
     if inf.archived:
         raise HTTPException(401, "达人已停用")
     return inf
+
+
+def current_upload_actor(authorization: str = Header(""), db: Session = Depends(get_db)) -> User | Influencer:
+    """上传票据可由内部端或达人端申请;真正业务入库仍由各自接口二次校验。"""
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        data = _serializer.loads(token, max_age=TOKEN_MAX_AGE)
+    except BadSignature:
+        raise HTTPException(401, "登录已过期,请重新登录")
+    if data.get("kind") == "staff":
+        user = db.get(User, data.get("id"))
+        if not user or not user.is_active:
+            raise HTTPException(401, "账号不存在或已停用")
+        return user
+    if data.get("kind") == "influencer":
+        inf = db.get(Influencer, data.get("id"))
+        if not inf or inf.archived:
+            raise HTTPException(401, "达人不存在或已停用")
+        return inf
+    raise HTTPException(401, "无效凭证")

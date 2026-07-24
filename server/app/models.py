@@ -264,6 +264,8 @@ class Material(Base, TimestampMixin):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"), index=True)
+    influencer_id: Mapped[int | None] = mapped_column(ForeignKey("influencers.id"), index=True)
+    video_task_id: Mapped[int | None] = mapped_column(ForeignKey("video_tasks.id"), index=True)
     type: Mapped[str] = mapped_column(String(16))
     # video_ai AI生成视频 / video_hot 爆款参考 / video_output 达人成片 / image 图片 / pdf 质检报告 / copy 文案
     title: Mapped[str | None] = mapped_column(String(255))
@@ -273,7 +275,8 @@ class Material(Base, TimestampMixin):
     report_id: Mapped[str | None] = mapped_column(String(64))        # 质检报告ID(挂视频下方用)
     downloadable: Mapped[bool] = mapped_column(Boolean, default=True)
     starred: Mapped[bool] = mapped_column(Boolean, default=False)
-    # 是否对达人端公开。主要用于 video_output(达人成片):默认私有(仅内部),管理员点"公开"后才对外展示
+    # 是否对达人端公开。主要用于 video_output(达人成片):达人自己的成片始终仅本人可见;
+    # 管理员点"公开"后才作为公共参考露给其他达人。
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
 
     product: Mapped[Product] = relationship(back_populates="materials")
@@ -435,6 +438,7 @@ class VideoTask(Base, TimestampMixin):
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     dy_url: Mapped[str | None] = mapped_column(String(512))
     saved_oss_key: Mapped[str | None] = mapped_column(String(512))   # 转存(防链接失效/投流留证)
+    submit_note: Mapped[str | None] = mapped_column(Text)             # 达人/内部登记视频时的备注
     status: Mapped[str] = mapped_column(String(16), default="submitted", index=True)
     # submitted / approved / rejected / blocked卡审
     audit_result: Mapped[dict | None] = mapped_column(JSON)          # 时间点评论等(P1)

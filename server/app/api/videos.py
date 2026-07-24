@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..deps import current_user, owns_or_admin
-from ..models import (Cooperation, Influencer, Product, Promotion, User,
-                      VideoTask)
+from ..models import (Cooperation, Influencer, Material, MaterialDownloadLog,
+                      MaterialReadState, Product, Promotion, User, VideoTask)
 from ..services import storage
 from ..services.oplog import influencer_id_for_coop, log_op
 
@@ -64,6 +64,8 @@ class CreateVideoIn(BaseModel):
     influencer_id: int | None = None   # 传达人则自动解析其最新合作轮次(前端首选)
     cooperation_id: int | None = None  # 或直接指定合作轮次(兼容)
     dy_url: str | None = None
+    oss_key: str | None = None
+    submit_note: str | None = None
 
 
 @router.post("")
@@ -85,7 +87,10 @@ def create_video(body: CreateVideoIn,
     inf = db.get(Influencer, coop.influencer_id)
     if user.role != "admin" and (not inf or inf.owner_bd_id != user.id):
         raise HTTPException(403, "只能给自己名下的达人登记视频")
-    task = VideoTask(cooperation_id=coop.id, product_id=body.product_id, dy_url=body.dy_url)
+    task = VideoTask(cooperation_id=coop.id, product_id=body.product_id,
+                     dy_url=(body.dy_url or None),
+                     saved_oss_key=(body.oss_key or None),
+                     submit_note=(body.submit_note or None))
     # TODO: 后台任务下载抖音原视频转存 OSS,回填 saved_oss_key(防链接失效/投流留证);此处不实现下载。
     db.add(task)
     prod = db.get(Product, body.product_id)
@@ -104,6 +109,15 @@ def delete_video(task_id: int, user: User = Depends(current_user), db: Session =
     if any(p.auth_status in PROMO_PROTECTED_STATES for p in promos):
         raise HTTPException(400, "该视频存在授权/投流记录,请先在投流中处理后再删除")
     inf_id = influencer_id_for_coop(db, task.cooperation_id)
+    linked_materials = db.scalars(select(Material).where(Material.video_task_id == task.id)).all()
+    linked_material_ids = [m.id for m in linked_materials]
+    if linked_material_ids:
+        db.query(MaterialReadState).filter(MaterialReadState.material_id.in_(linked_material_ids)).delete(
+            synchronize_session=False)
+        db.query(MaterialDownloadLog).filter(MaterialDownloadLog.material_id.in_(linked_material_ids)).delete(
+            synchronize_session=False)
+    for m in linked_materials:
+        db.delete(m)
     for p in promos:
         db.delete(p)
     db.delete(task)
@@ -137,12 +151,26 @@ def list_videos(status: str | None = None, q: str | None = None,
     page_size = min(max(1, page_size), 200)
     rows = db.execute(stmt.order_by(VideoTask.created_at.desc())
                       .offset((page - 1) * page_size).limit(page_size)).all()
+    task_ids = [task.id for task, *_ in rows]
+    materials_by_task = {}
+    if task_ids:
+        materials_by_task = {
+            m.video_task_id: m
+            for m in db.scalars(
+                select(Material).where(Material.video_task_id.in_(task_ids))
+            ).all()
+            if m.video_task_id
+        }
     items = [{
         "id": task.id, "status": task.status, "blocked": task.blocked,
         "influencer_id": inf.id, "influencer_nickname": inf.nickname,
         "product_id": prod.id, "product_name": prod.name,
         "round_no": coop.round_no,
         "dy_url": task.dy_url,
+        "uploaded_url": storage.material_file_url(materials_by_task[task.id].id)
+        if task.id in materials_by_task and materials_by_task[task.id].oss_key else None,
+        "material_id": materials_by_task[task.id].id if task.id in materials_by_task else None,
+        "submit_note": task.submit_note,
         "audit_result": task.audit_result,
         "created_at": task.created_at.isoformat(),
     } for task, coop, inf, prod in rows]

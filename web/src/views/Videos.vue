@@ -37,12 +37,14 @@
           </template>
         </el-table-column>
         <el-table-column prop="round_no" label="轮次" width="70" />
-        <el-table-column label="抖音链接">
+        <el-table-column label="视频">
           <template #default="{ row }">
-            <el-link v-if="row.dy_url" :href="row.dy_url" target="_blank" type="primary">
-              查看视频
-            </el-link>
-            <span v-else style="color: #909399">-</span>
+            <div class="video-cell">
+              <el-link v-if="row.dy_url" :href="row.dy_url" target="_blank" type="primary">分享链接</el-link>
+              <el-link v-if="row.uploaded_url" :href="row.uploaded_url" target="_blank" type="primary">上传视频</el-link>
+              <span v-if="!row.dy_url && !row.uploaded_url" style="color: #909399">-</span>
+              <span v-if="row.submit_note" class="muted video-note">{{ row.submit_note }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="90">
@@ -61,6 +63,9 @@
             </template>
             <el-button v-if="row.status === 'approved'" size="small" type="primary"
               @click="startPromotion(row)">发起投流</el-button>
+            <router-link v-if="row.material_id" :to="{ path: '/products', query: { open: row.product_id, dtab: 'materials', mtype: 'video_output' } }" class="action-link">
+              评论
+            </router-link>
             <el-button size="small" link type="danger" @click="removeVideo(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -465,4 +470,8 @@ onMounted(async () => {
 .pc-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .link { color: #6b5cf6; text-decoration: none; }
 .link:hover { text-decoration: underline; }
+.action-link { color: #6b5cf6; font-size: 12px; text-decoration: none; margin: 0 4px; }
+.action-link:hover { text-decoration: underline; }
+.video-cell { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+.video-note { max-width: 220px; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>

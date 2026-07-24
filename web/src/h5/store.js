@@ -38,6 +38,10 @@ export async function refreshVideos() {
   h5store.videos = await api.get('/api/h5/videos')
 }
 
+export async function refreshProducts() {
+  h5store.products = await api.get('/api/h5/products')
+}
+
 export function clearH5() {
   h5store.me = null
   h5store.products = []

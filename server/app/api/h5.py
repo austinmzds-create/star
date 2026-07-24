@@ -190,17 +190,59 @@ def my_videos(inf: Influencer = Depends(current_influencer), db: Session = Depen
         .where(VideoTask.cooperation_id.in_(coop_ids))
         .order_by(VideoTask.created_at.desc())
     ).all()
+    task_ids = [v.id for v, _ in rows]
+    materials_by_task = {}
+    comments_by_material = {}
+    states_by_material = {}
+    if task_ids:
+        mats = db.scalars(
+            select(Material)
+            .where(Material.video_task_id.in_(task_ids),
+                   Material.influencer_id == inf.id)
+        ).all()
+        materials_by_task = {m.video_task_id: m for m in mats if m.video_task_id}
+        material_ids = [m.id for m in mats]
+        if material_ids:
+            comments = db.scalars(
+                select(MaterialComment)
+                .where(MaterialComment.material_id.in_(material_ids),
+                       MaterialComment.is_deleted.is_(False))
+                .order_by(MaterialComment.created_at.asc(), MaterialComment.id.asc())
+            ).all()
+            for c in comments:
+                comments_by_material.setdefault(c.material_id, []).append(c)
+            states = db.scalars(
+                select(MaterialReadState)
+                .where(MaterialReadState.material_id.in_(material_ids),
+                       MaterialReadState.influencer_id == inf.id)
+            ).all()
+            states_by_material = {s.material_id: s for s in states}
     out = []
     for v, prod in rows:
         reason, time_comments = _video_feedback(v)
+        mat = materials_by_task.get(v.id)
+        comments = comments_by_material.get(mat.id, []) if mat else []
+        state = states_by_material.get(mat.id) if mat else None
+        seen_at = state.last_seen_comments_at if state else None
+        unread_comment_count = len([
+            c for c in comments
+            if seen_at is None or c.created_at > seen_at
+        ])
         out.append({
             "id": v.id, "product_name": prod.name,
             "product_image": storage.thumbnail_url(prod.product_image, 160),
-            "dy_url": v.dy_url, "status": v.status,
+            "product_id": prod.id,
+            "dy_url": v.dy_url,
+            "uploaded_url": storage.material_file_url(mat.id) if mat and mat.oss_key else None,
+            "material_id": mat.id if mat else None,
+            "submit_note": v.submit_note,
+            "status": v.status,
             "status_label": VIDEO_STATUS_LABEL.get(v.status, v.status),
             "blocked": v.blocked,
             "need_fix": v.status in ("rejected", "blocked"),
             "reject_reason": reason, "time_comments": time_comments,
+            "comments": [_material_comment_dict(c) for c in comments],
+            "unread_comment_count": unread_comment_count,
             "created_at": v.created_at.isoformat(),
         })
     return out
@@ -243,7 +285,7 @@ def my_products(inf: Influencer = Depends(current_influencer), db: Session = Dep
             select(Material)
             .where(Material.product_id.in_(product_ids),
                    Material.type == "video_output",
-                   Material.is_public.is_(True))
+                   or_(Material.is_public.is_(True), Material.influencer_id == inf.id))
         ).all()
         video_ids = [m.id for m in video_mats]
         states_by_material = {}
@@ -390,7 +432,9 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
     materials = db.scalars(
         select(Material)
         .where(Material.product_id == product_id,
-               or_(Material.type != "video_output", Material.is_public.is_(True)))
+               or_(Material.type != "video_output",
+                   Material.is_public.is_(True),
+                   Material.influencer_id == inf.id))
         .order_by(Material.created_at.desc(), Material.id.desc())
     ).all()
     posts = db.scalars(
@@ -450,7 +494,13 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
         unread = _unread_for(m)
         unread_badges["video_output"] += unread["unread_total"] if m.type == "video_output" else 0
         inline_preview = bool(m.oss_key and storage.is_image(m.oss_key))
+        task = db.get(VideoTask, m.video_task_id) if m.video_task_id else None
         item = {"id": m.id, "type": m.type, "title": m.title,
+                "influencer_id": m.influencer_id,
+                "mine": m.influencer_id == inf.id,
+                "video_task_id": m.video_task_id,
+                "video_status": task.status if task else None,
+                "submit_note": task.submit_note if task else None,
                 "url": storage.material_file_url(m.id) if m.oss_key else None,
                 "preview_url": storage.material_file_url(m.id) if m.oss_key else None,
                 "download_url": storage.material_file_url(m.id, download=True) if m.oss_key else None,
@@ -547,6 +597,72 @@ def apply_product(product_id: int, body: ApplyProductIn,
     return {"ok": True, "application": _application_payload(app, None, product)}
 
 
+class SubmitVideoIn(BaseModel):
+    dy_url: str | None = None
+    oss_key: str | None = None
+    note: str | None = None
+
+
+def _safe_video_key(key: str | None) -> str | None:
+    if not key:
+        return None
+    key = key.strip()
+    parts = key.split("/")
+    if not key or key.startswith("/") or ".." in parts or not storage.extension_allowed(key):
+        raise HTTPException(400, "成片文件不合法")
+    if not storage.content_type(key).startswith("video/"):
+        raise HTTPException(400, "成片文件仅支持视频")
+    return key
+
+
+@router.post("/products/{product_id}/videos")
+def submit_product_video(product_id: int, body: SubmitVideoIn,
+                         inf: Influencer = Depends(current_influencer),
+                         db: Session = Depends(get_db)):
+    """达人提交自己的成片:分享链接/上传视频二选一或同时提交,备注落库并进入视频审核。"""
+    product = _product_visible_or_404(db, product_id)
+    app = app_service.application_for(db, inf.id, product_id)
+    if not app or app.status != "approved":
+        raise HTTPException(400, "申请通过后才能提交成片")
+    dy_url = (body.dy_url or "").strip()[:512] or None
+    oss_key = _safe_video_key(body.oss_key)
+    note = (body.note or "").strip()[:1000] or None
+    if not dy_url and not oss_key:
+        raise HTTPException(400, "请上传视频或填写视频分享链接")
+
+    coop = app_service.ensure_cooperation(db, inf)
+    task = VideoTask(
+        cooperation_id=coop.id,
+        product_id=product.id,
+        dy_url=dy_url,
+        saved_oss_key=oss_key,
+        submit_note=note,
+    )
+    db.add(task)
+    db.flush()
+    material = Material(
+        product_id=product.id,
+        influencer_id=inf.id,
+        video_task_id=task.id,
+        type="video_output",
+        title=f"{inf.nickname or '达人'}提交成片",
+        oss_key=oss_key,
+        source_link=dy_url,
+        parsed_text=note,
+        downloadable=True,
+        is_public=False,
+    )
+    db.add(material)
+    log_op(db, influencer_id=inf.id, product_id=product.id,
+           event_type="video_submitted", actor=inf,
+           summary=f"{inf.nickname} 提交成片:{product.name}",
+           detail={"dy_url": dy_url, "has_file": bool(oss_key), "note": note})
+    db.commit()
+    db.refresh(task)
+    db.refresh(material)
+    return {"ok": True, "video_task_id": task.id, "material_id": material.id}
+
+
 class MaterialReadIn(BaseModel):
     scope: str = "all"  # all / material / comments
 
@@ -557,7 +673,7 @@ def mark_material_read(material_id: int, body: MaterialReadIn,
                        db: Session = Depends(get_db)):
     """达人打开达人成片后标记已读,用于 H5 红色数字角标。"""
     m = db.get(Material, material_id)
-    if not m or (m.type == "video_output" and not m.is_public):
+    if not m or (m.type == "video_output" and not m.is_public and m.influencer_id != inf.id):
         raise HTTPException(404, "素材不存在")
     _product_visible_or_404(db, m.product_id)
     if body.scope not in {"all", "material", "comments"}:
@@ -587,7 +703,7 @@ def log_download(material_id: int, inf: Influencer = Depends(current_influencer)
     if not m or not m.downloadable or not m.oss_key:
         raise HTTPException(403, "素材不可下载")
     # 达人成片未公开时,达人不得凭 id 直接下载
-    if m.type == "video_output" and not m.is_public:
+    if m.type == "video_output" and not m.is_public and m.influencer_id != inf.id:
         raise HTTPException(403, "素材不可下载")
     _product_visible_or_404(db, m.product_id)
     db.add(MaterialDownloadLog(material_id=material_id, influencer_id=inf.id))

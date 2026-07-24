@@ -118,7 +118,9 @@
           <el-input v-model="matEdit.parsed_text" type="textarea" :rows="4"
             :placeholder="matEdit.type === 'copy' ? '文案内容' : '描述这个素材的用途、亮点或拍摄参考'" />
         </el-form-item>
-        <el-form-item v-if="matEdit.type === 'video_hot'" label="爆款链接"><el-input v-model="matEdit.source_link" /></el-form-item>
+        <el-form-item v-if="['video_hot', 'video_output'].includes(matEdit.type)" :label="matEdit.type === 'video_output' ? '分享链接' : '爆款链接'">
+          <el-input v-model="matEdit.source_link" />
+        </el-form-item>
         <el-form-item v-if="matEdit.type === 'pdf'" label="报告ID"><el-input v-model="matEdit.report_id" /></el-form-item>
         <el-form-item label="允许下载"><el-switch v-model="matEdit.downloadable" /></el-form-item>
       </el-form>
@@ -239,6 +241,12 @@
                     <el-tag v-if="m.type === 'video_output'" size="small" :type="m.is_public ? 'success' : 'info'">
                       {{ m.is_public ? '已公开' : '未公开' }}
                     </el-tag>
+                    <el-tag v-if="m.influencer_nickname" size="small" type="success" effect="plain">
+                      {{ m.influencer_nickname }}提交
+                    </el-tag>
+                    <el-tag v-if="m.video_status" size="small" :type="videoTag(m.video_status).type">
+                      {{ videoTag(m.video_status).label }}
+                    </el-tag>
                     <span v-if="m.title" class="muted material-file-name">{{ m.title }}</span>
                     <div class="mat-ops">
                       <el-button v-if="m.type === 'video_output' && isAdmin" size="small" text
@@ -250,6 +258,9 @@
                     </div>
                   </div>
                   <MaterialPreview :material="m" />
+                  <div v-if="m.submit_note && m.type === 'video_output'" class="submit-note">
+                    达人备注：{{ m.submit_note }}
+                  </div>
                   <div v-if="m.type === 'video_output'" class="video-comment-panel">
                     <div class="comment-head">
                       <span>评论 {{ m.comment_count || (m.comments || []).length || 0 }}</span>
@@ -1268,7 +1279,12 @@ onMounted(async () => {
   window.addEventListener('message', onQianchuanMessage)
   // 从寄样/视频/达人详情"点产品名"深链进来:自动打开该产品抽屉
   if (route.query.open) {
-    try { await open({ id: Number(route.query.open) }) } catch (e) { /* 产品可能已删除 */ }
+    try {
+      await open({ id: Number(route.query.open) }, route.query.dtab || 'info')
+      if (route.query.mtype && MAT_TYPES.some((t) => t.v === route.query.mtype)) {
+        mtype.value = route.query.mtype
+      }
+    } catch (e) { /* 产品可能已删除 */ }
   }
 })
 onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
@@ -1356,6 +1372,17 @@ onBeforeUnmount(() => window.removeEventListener('message', onQianchuanMessage))
 .material-file-name { max-width: 360px; }
 .material-card { padding: 12px; margin-bottom: 12px; border: 1px solid #eceef3; border-radius: 10px; }
 .material-card-head { display: flex; align-items: center; gap: 10px; }
+.submit-note {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f8f9fc;
+  border: 1px solid #eef0f5;
+  color: #4f566b;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
 .video-comment-panel {
   margin-top: 12px;
   padding-top: 12px;

@@ -99,10 +99,25 @@
         </template>
 
         <template v-else>
+          <section v-if="activeTab === 'video_output'" class="submit-card">
+            <div>
+              <div class="submit-title">我的成片</div>
+              <div class="submit-sub">
+                {{ canSubmitVideo ? '完成拍摄后可上传视频或填写分享链接，提交后进入审核。' : '申请通过后可提交自己的成片。' }}
+              </div>
+            </div>
+            <el-button type="primary" size="small" :disabled="!canSubmitVideo" @click="openVideoSubmit">
+              提交成片
+            </el-button>
+          </section>
           <div v-if="activeMaterials.length" class="material-list">
             <section v-for="m in activeMaterials" :key="m.id" class="material-card">
               <div class="mat-head">
                 <el-tag size="small">{{ TYPE_LABEL[m.type] || m.type }}</el-tag>
+                <el-tag v-if="m.mine" size="small" type="success" effect="plain">我的提交</el-tag>
+                <el-tag v-if="m.video_status" size="small" :type="videoStatusTag(m.video_status)">
+                  {{ VIDEO_STATUS_LABEL[m.video_status] || m.video_status }}
+                </el-tag>
                 <span v-if="m.title" class="mtitle">{{ m.title }}</span>
                 <span v-if="m.unread_total" class="mat-badge">{{ m.unread_total }}</span>
               </div>
@@ -136,18 +151,48 @@
         </template>
       </div>
     </div>
+
+    <el-dialog v-model="videoSubmitVisible" title="提交成片" width="92%" class="h5-video-dialog">
+      <div class="video-submit-form">
+        <div class="file-line">
+          <span class="file-pick-wrap">
+            <el-button size="small" type="primary" :loading="videoUploading" :disabled="videoUploading">
+              {{ videoUploading ? '上传中...' : (videoForm.oss_key ? '重新上传视频' : '上传视频') }}
+            </el-button>
+            <input v-if="!videoUploading" class="file-overlay-input" type="file" accept="video/*"
+              title="选择视频上传" @change="handleVideoFileChange" />
+          </span>
+          <span v-if="videoUploading" class="muted upload-progress">{{ videoUploadText }}</span>
+          <span v-else-if="videoForm.file_name" class="muted file-name">{{ videoForm.file_name }}</span>
+          <el-button v-if="videoForm.oss_key && !videoUploading" size="small" text type="danger" @click="clearVideoFile">
+            移除
+          </el-button>
+        </div>
+        <video v-if="videoForm.url && !videoUploading" :src="videoForm.url" class="submit-video" controls preload="metadata" />
+        <el-input v-model="videoForm.dy_url" placeholder="视频分享链接(可选)" />
+        <el-input v-model="videoForm.note" type="textarea" :rows="3" maxlength="1000" show-word-limit
+          placeholder="备注(可选，例如本条视频的拍摄说明、需要商务注意的点)" />
+      </div>
+      <template #footer>
+        <el-button @click="videoSubmitVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="videoSubmitting" :disabled="videoUploading" @click="submitVideo">
+          提交审核
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { Van } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '../api'
 import MaterialPreview from '../components/MaterialPreview.vue'
+import { uploadMaterialFile } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
-import { h5store } from './store'
+import { h5store, refreshProducts, refreshVideos } from './store'
 
 const TYPE_LABEL = {
   video_ai: 'AI视频',
@@ -169,6 +214,8 @@ const tabs = [
 ]
 const STATUS = { pending: '待审批', approved: '待发货', shipped: '已发货', in_transit: '运输中', signed: '已签收', rejected: '已拒绝' }
 const STATUS_TYPE = { pending: 'info', approved: 'warning', shipped: 'primary', in_transit: 'primary', signed: 'success', rejected: 'danger' }
+const VIDEO_STATUS_LABEL = { submitted: '审核中', approved: '已通过', rejected: '未通过', blocked: '卡审' }
+const VIDEO_STATUS_TYPE = { submitted: 'info', approved: 'success', rejected: 'danger', blocked: 'warning' }
 const COURIERS = { yuantong: '圆通', zhongtong: '中通', shentong: '申通', yunda: '韵达', shunfeng: '顺丰', jtexpress: '极兔', ems: 'EMS', youzhengguonei: '邮政', jd: '京东', huitongkuaidi: '百世' }
 
 const route = useRoute()
@@ -181,6 +228,12 @@ const expandLogi = ref(false)
 const refreshing = ref(false)
 const markingRead = ref(false)
 const applying = ref(false)
+const videoSubmitVisible = ref(false)
+const videoSubmitting = ref(false)
+const videoUploading = ref(false)
+const videoProgress = ref(0)
+const videoUploadStage = ref('')
+const videoForm = reactive({ dy_url: '', oss_key: '', file_name: '', url: '', note: '' })
 
 const matsOf = (types) => (d.value?.materials || []).filter((m) => types.includes(m.type))
 const detailItems = computed(() => [
@@ -195,6 +248,7 @@ const activeMaterials = computed(() => (
   activeTabConfig.value.types ? matsOf(activeTabConfig.value.types) : []
 ))
 const activeTabLabel = computed(() => activeTabConfig.value.label)
+const canSubmitVideo = computed(() => d.value?.application?.application_status === 'approved')
 const sampStatus = computed(() => {
   const s = d.value?.sample
   if (s?.status === 'shipped' && s.logistics_status?.status) return s.logistics_status.status
@@ -203,6 +257,12 @@ const sampStatus = computed(() => {
 const sampleLabel = computed(() => STATUS[sampStatus.value] || sampStatus.value)
 const sampleTagType = (st) => STATUS_TYPE[st] || 'info'
 const courierName = (c) => COURIERS[c] || c || ''
+const videoStatusTag = (status) => VIDEO_STATUS_TYPE[status] || 'info'
+const videoUploadText = computed(() => {
+  if (videoUploadStage.value === 'confirming') return '已传完，正在确认...'
+  if (videoUploadStage.value === 'oss') return `OSS直传中 ${videoProgress.value}%`
+  return `上传中 ${videoProgress.value}%`
+})
 const events = computed(() => d.value?.sample?.logistics_status?.events || [])
 const lastEvent = computed(() => d.value?.sample?.logistics_status?.last_event || events.value[0] || null)
 const logisticsIncomplete = computed(() => Boolean(d.value?.sample?.tracking_no && !lastEvent.value))
@@ -271,6 +331,72 @@ async function applyProduct() {
     ElMessage.error(e.response?.data?.detail || '申请失败')
   } finally {
     applying.value = false
+  }
+}
+
+function resetVideoForm() {
+  Object.assign(videoForm, { dy_url: '', oss_key: '', file_name: '', url: '', note: '' })
+  videoProgress.value = 0
+  videoUploadStage.value = ''
+}
+
+function openVideoSubmit() {
+  if (!canSubmitVideo.value) return
+  resetVideoForm()
+  videoSubmitVisible.value = true
+}
+
+function clearVideoFile() {
+  videoForm.oss_key = ''
+  videoForm.file_name = ''
+  videoForm.url = ''
+}
+
+async function handleVideoFileChange(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  videoUploading.value = true
+  videoProgress.value = 0
+  videoUploadStage.value = 'uploading'
+  try {
+    const uploaded = await uploadMaterialFile(api, file, (percent, stage) => {
+      videoProgress.value = percent
+      videoUploadStage.value = stage || 'uploading'
+    }, { prefix: 'video_outputs', direct: true, allowBackendFallback: false })
+    videoForm.oss_key = uploaded.key
+    videoForm.url = uploaded.url
+    videoForm.file_name = file.name || '已上传视频'
+    ElMessage.success('视频已上传')
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || e.message || '上传失败')
+  } finally {
+    videoUploading.value = false
+    videoUploadStage.value = ''
+  }
+}
+
+async function submitVideo() {
+  if (videoSubmitting.value || videoUploading.value) return
+  const dyUrl = (videoForm.dy_url || '').trim()
+  const note = (videoForm.note || '').trim()
+  if (!dyUrl && !videoForm.oss_key) return ElMessage.warning('请上传视频或填写视频分享链接')
+  videoSubmitting.value = true
+  try {
+    await api.post(`/api/h5/products/${route.params.id}/videos`, {
+      dy_url: dyUrl || undefined,
+      oss_key: videoForm.oss_key || undefined,
+      note: note || undefined,
+    }, { skipBadgeRefresh: true })
+    ElMessage.success('成片已提交，等待审核')
+    videoSubmitVisible.value = false
+    activeTab.value = 'video_output'
+    await Promise.all([loadDetail({ resetTab: false }), refreshVideos(), refreshProducts()])
+    setTimeout(markVideoOutputRead, 300)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '提交失败')
+  } finally {
+    videoSubmitting.value = false
   }
 }
 
@@ -428,6 +554,19 @@ onMounted(async () => {
 }
 .tab-panel { min-width: 0; }
 .panel-list, .material-list { display: flex; flex-direction: column; gap: 10px; }
+.submit-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid #e8ebf2;
+  border-radius: 10px;
+  background: #fff;
+}
+.submit-title { font-weight: 700; color: #202431; font-size: 14px; }
+.submit-sub { margin-top: 3px; color: #8a93a6; font-size: 12px; line-height: 1.45; }
 .panel-block, .material-card {
   padding: 12px;
   border: 1px solid #e8ebf2;
@@ -485,6 +624,21 @@ onMounted(async () => {
 .logi-empty { margin-top: 8px; font-size: 12px; color: #e6a23c; }
 .logi-tl { margin-top: 8px; padding-left: 4px; }
 .logi-actions { margin-top: 6px; display: flex; gap: 8px; }
+.video-submit-form { display: flex; flex-direction: column; gap: 10px; }
+.file-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.file-pick-wrap { position: relative; display: inline-flex; }
+.file-overlay-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 0;
+}
+.upload-progress, .file-name { font-size: 12px; }
+.file-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.submit-video { width: 100%; max-height: 240px; border-radius: 8px; background: #111; }
 @media (max-width: 380px) {
   .h5-wrap { padding-left: 10px; padding-right: 10px; }
 }
