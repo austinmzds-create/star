@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+dev.db
+server/.env
+server/_uploads/
+node_modules/
+web/dist/
+.DS_Store
+
+# 本地演示截图(含真实达人隐私,不入库;竞品样例截图 sample-*.png 仍保留)
+docs/images/app-*.png
+docs/images/v04-*.png

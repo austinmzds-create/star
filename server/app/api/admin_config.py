@@ -1,0 +1,175 @@
+"""配置中心(管理员):等级权益(版本化)、催拍天数、拒绝理由库、商务账号。"""
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from ..db import get_db
+from ..deps import current_admin
+from ..models import LevelBenefitConfig, RejectReason, SystemConfig, User
+from ..security import assign_default_password_if_missing, set_default_password_for_phone
+from ..services import levels
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+@router.get("/level-configs")
+def level_configs(admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    out = []
+    for level in ("L1", "L2", "L3"):
+        cfg = levels.effective_config(db, level)
+        if cfg:
+            out.append({"level": level, "version": cfg.version,
+                        "commission_tier": float(cfg.commission_tier),
+                        "max_sample_products": cfg.max_sample_products,
+                        "video_audit_required": cfg.video_audit_required,
+                        "effective_at": cfg.effective_at.isoformat()})
+    return out
+
+
+class LevelConfigIn(BaseModel):
+    commission_tier: float | None = None
+    max_sample_products: int | None = None
+    video_audit_required: bool | None = None
+
+
+@router.put("/level-configs/{level}")
+def update_level_config(level: str, body: LevelConfigIn,
+                        admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    """插入新版本 —— 只影响之后新产生的业务记录(快照语义)"""
+    from decimal import Decimal
+    if level not in ("L1", "L2", "L3"):
+        raise HTTPException(400, "无效等级")
+    fields = body.model_dump()
+    if fields.get("commission_tier") is not None:
+        fields["commission_tier"] = Decimal(str(fields["commission_tier"]))
+    row = levels.update_config(db, level, admin.id, **fields)
+    return {"level": level, "version": row.version}
+
+
+class SysConfigIn(BaseModel):
+    value: dict
+
+
+@router.put("/system-configs/{key}")
+def set_system_config(key: str, body: SysConfigIn,
+                      admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    """如 follow_up_days: {\"days\": 7}(签收催拍天数,已拍板默认1周可动态调)"""
+    db.merge(SystemConfig(key=key, value=body.value, updated_by=admin.id))
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/system-configs/{key}")
+def get_system_config(key: str, admin: User = Depends(current_admin),
+                      db: Session = Depends(get_db)):
+    row = db.get(SystemConfig, key)
+    return {"key": key, "value": row.value if row else None}
+
+
+class ReasonIn(BaseModel):
+    text: str
+    scene: str = "sample"
+
+
+@router.post("/reject-reasons")
+def add_reason(body: ReasonIn, admin: User = Depends(current_admin),
+               db: Session = Depends(get_db)):
+    r = RejectReason(**body.model_dump())
+    db.add(r)
+    db.commit()
+    return {"id": r.id}
+
+
+class BdIn(BaseModel):
+    phone: str
+    display_name: str
+
+
+def _normalize_bd(body: BdIn) -> tuple[str, str]:
+    phone = (body.phone or "").strip()
+    display_name = (body.display_name or "").strip()
+    if len(phone) != 11 or not phone.startswith("1"):
+        raise HTTPException(400, "手机号格式不正确")
+    if not display_name:
+        raise HTTPException(400, "姓名不能为空")
+    return phone, display_name
+
+
+@router.post("/bd-users")
+def create_bd(body: BdIn, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    """手机号直接添加商务(该手机号登录即得商务身份)"""
+    phone, display_name = _normalize_bd(body)
+    existing = db.scalars(select(User).where(User.phone == phone)).first()
+    if existing:
+        raise HTTPException(400, "该手机号已是内部账号")
+    # 若该手机号已注册为达人,提示(达人与商务是不同身份)
+    u = User(phone=phone, display_name=display_name, role="bd")
+    assign_default_password_if_missing(u)
+    db.add(u)
+    db.commit()
+    return {"id": u.id}
+
+
+class BdToggleIn(BaseModel):
+    is_active: bool | None = None
+    phone: str | None = None
+    display_name: str | None = None
+
+
+@router.patch("/bd-users/{user_id}")
+def update_bd(user_id: int, body: BdToggleIn,
+              admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if not u or u.role != "bd":
+        raise HTTPException(404, "商务不存在")
+    changed = False
+    if body.display_name is not None:
+        name = body.display_name.strip()
+        if not name:
+            raise HTTPException(400, "姓名不能为空")
+        u.display_name = name
+        changed = True
+    if body.phone is not None:
+        phone = body.phone.strip()
+        if len(phone) != 11 or not phone.startswith("1"):
+            raise HTTPException(400, "手机号格式不正确")
+        existing = db.scalars(select(User).where(User.phone == phone, User.id != user_id)).first()
+        if existing:
+            raise HTTPException(400, "该手机号已是内部账号")
+        phone_changed = phone != u.phone
+        u.phone = phone
+        if phone_changed:
+            set_default_password_for_phone(u)
+        else:
+            assign_default_password_if_missing(u)
+        changed = True
+    if body.is_active is not None:
+        u.is_active = body.is_active
+        changed = True
+    if not changed:
+        raise HTTPException(400, "没有可更新的字段")
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/bd-users/{user_id}")
+def delete_bd(user_id: int, admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    u = db.get(User, user_id)
+    if not u or u.role != "bd":
+        raise HTTPException(404, "商务不存在")
+    db.delete(u)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(400, "该商务已有达人归属或历史操作记录,不能删除;请改用禁用")
+    return {"ok": True}
+
+
+@router.get("/bd-users")
+def list_bd(admin: User = Depends(current_admin), db: Session = Depends(get_db)):
+    rows = db.scalars(select(User).where(User.role == "bd").order_by(User.id)).all()
+    return [{"id": u.id, "phone": u.phone, "display_name": u.display_name,
+             "is_active": u.is_active} for u in rows]
