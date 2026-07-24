@@ -323,6 +323,7 @@ def my_products(inf: Influencer = Depends(current_influencer), db: Session = Dep
         sample = app_service.sample_for_application(db, app) if app else None
         status = app_service.display_status(app, sample) if app else None
         out.append({"id": p.id, "name": p.name, "price_text": p.price_text,
+                    "link": p.link,
                     "default_commission": float(p.default_commission) if p.default_commission is not None else None,
                     "merchant_promotion_commission": (float(p.merchant_promotion_commission)
                                                        if p.merchant_promotion_commission is not None else None),
@@ -519,6 +520,7 @@ async def my_materials(product_id: int, inf: Influencer = Depends(current_influe
 
     return {"id": p.id, "name": p.name,
             "product_image": storage.thumbnail_url(p.product_image, 160),
+            "link": p.link,
             "price_text": p.price_text,
             "default_commission": float(p.default_commission) if p.default_commission is not None else None,
             "merchant_promotion_commission": (float(p.merchant_promotion_commission)

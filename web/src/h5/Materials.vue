@@ -24,6 +24,23 @@
       </div>
     </div>
 
+    <div v-if="d.link" class="shop-link-card">
+      <div class="shop-link-main">
+        <div class="shop-link-title">抖店链接</div>
+        <div class="shop-link-value">{{ d.link }}</div>
+      </div>
+      <div class="shop-link-actions">
+        <el-button size="small" type="primary" plain :disabled="!shopHref" @click="openShopLink">
+          <el-icon><LinkIcon /></el-icon>
+          打开
+        </el-button>
+        <el-button size="small" plain @click="copyShopLink">
+          <el-icon><CopyDocument /></el-icon>
+          复制
+        </el-button>
+      </div>
+    </div>
+
     <div v-if="d.application" class="application-card">
       <div>
         <div class="app-title">带货状态</div>
@@ -190,7 +207,7 @@
 </template>
 
 <script setup>
-import { Van } from '@element-plus/icons-vue'
+import { CopyDocument, Link as LinkIcon, Van } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -255,6 +272,7 @@ const activeMaterials = computed(() => (
 ))
 const activeTabLabel = computed(() => activeTabConfig.value.label)
 const canSubmitVideo = computed(() => d.value?.application?.application_status === 'approved')
+const shopHref = computed(() => toSafeHttpUrl(d.value?.link))
 const sampStatus = computed(() => {
   const s = d.value?.sample
   if (s?.status === 'shipped' && s.logistics_status?.status) return s.logistics_status.status
@@ -292,6 +310,41 @@ function unreadOf(tab) {
 
 const roleLabel = (role) => (role === 'admin' ? '管理员' : '商务')
 const fileTypeLabel = (type) => ({ image: '图片', video: '视频', pdf: 'PDF', file: '附件' }[type] || '附件')
+
+function toSafeHttpUrl(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  const withScheme = /^https?:\/\//i.test(text)
+  if (!withScheme && !/^[\w.-]+\.[a-z]{2,}([/:?#]|$)/i.test(text)) return ''
+  try {
+    const url = new URL(withScheme ? text : `https://${text}`)
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : ''
+  } catch {
+    return ''
+  }
+}
+
+function openShopLink() {
+  if (!shopHref.value) return ElMessage.warning('抖店链接格式不正确,请复制后手动打开')
+  window.open(shopHref.value, '_blank', 'noopener')
+}
+
+async function copyShopLink() {
+  const text = String(d.value?.link || '').trim()
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('抖店链接已复制')
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+    ElMessage.success('抖店链接已复制')
+  }
+}
 
 function goProduct(id) {
   if (id !== Number(route.params.id)) router.push(`/h5/products/${id}`)
@@ -475,6 +528,29 @@ onMounted(async () => {
 .phname { font-weight: 700; font-size: 16px; color: #202431; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .phmeta { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
 .phmeta .price { color: #f56c6c; font-weight: 700; }
+.shop-link-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: -2px 0 12px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #e8ebf2;
+}
+.shop-link-main { min-width: 0; flex: 1; }
+.shop-link-title { font-size: 12px; color: #8a93a6; }
+.shop-link-value {
+  margin-top: 3px;
+  color: #1f2637;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shop-link-actions { display: flex; gap: 6px; flex-shrink: 0; }
 .application-card {
   display: flex;
   align-items: center;

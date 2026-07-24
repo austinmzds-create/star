@@ -235,6 +235,17 @@ def test_h5_lists_all_on_products_without_grant(db, admin):
     assert rows[0]["cooperation_status"] is None
 
 
+def test_h5_product_payload_includes_shop_link(db, admin):
+    pid = create_product(ProductIn(name="产品", link="https://haohuo.jinritemai.com/views/product/item"), admin, db)["id"]
+    inf = _influencer(db)
+
+    rows = my_products(inf, db)
+    detail = asyncio.run(my_materials(pid, inf, db))
+
+    assert rows[0]["link"] == "https://haohuo.jinritemai.com/views/product/item"
+    assert detail["link"] == "https://haohuo.jinritemai.com/views/product/item"
+
+
 def test_h5_apply_product_creates_pending_application(db, admin):
     pid = _product(db, admin)
     inf = _influencer(db)
