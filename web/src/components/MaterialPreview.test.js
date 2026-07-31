@@ -106,4 +106,19 @@ describe('MaterialPreview', () => {
     expect(wrapper.get('a').attributes('href')).toBe('https://example.com/hot')
     expect(wrapper.text()).toContain('打开原链接')
   })
+
+  it('extracts the actual Douyin URL from pasted share text', () => {
+    const shareText = '7.99 09/18 s@r.EU :7pm zgo:/ 孩子牙齿健康要格外重视！ https://v.douyin.com/ljd-zYocjqA/ 复制此链接，打开Dou音搜索，直接观看视频！'
+    const wrapper = mountPreview({ type: 'video_hot', source_link: shareText })
+
+    expect(wrapper.get('a').attributes('href')).toBe('https://v.douyin.com/ljd-zYocjqA/')
+    expect(wrapper.text()).toContain('打开原链接')
+  })
+
+  it('does not navigate inside the app when source text has no usable URL', () => {
+    const wrapper = mountPreview({ type: 'video_hot', source_link: '只有一段没有链接的说明' })
+
+    expect(wrapper.find('a.source-card').exists()).toBe(false)
+    expect(wrapper.get('button.source-card').text()).toBe('复制原始链接文案')
+  })
 })

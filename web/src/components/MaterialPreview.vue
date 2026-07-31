@@ -41,14 +41,22 @@
       <el-button size="small" @click="copy(material.parsed_text)">复制文案</el-button>
     </div>
     <a
-      v-else-if="material.source_link"
-      :href="material.source_link"
+      v-else-if="externalSourceHref"
+      :href="externalSourceHref"
       target="_blank"
       rel="noopener"
       class="source-card"
     >
       打开原链接
     </a>
+    <button
+      v-else-if="material.source_link"
+      type="button"
+      class="source-card source-card-button"
+      @click="copy(material.source_link)"
+    >
+      复制原始链接文案
+    </button>
     <a v-else-if="material.url" :href="material.url" target="_blank" rel="noopener">
       打开文件
     </a>
@@ -87,6 +95,7 @@ const retryToken = ref(0)
 const imageFailed = ref(false)
 const previewUrl = computed(() => props.material.preview_url || props.material.url)
 const shouldRenderPreview = computed(() => props.material.inline_preview !== false || manualPreview.value)
+const externalSourceHref = computed(() => extractExternalUrl(props.material.source_link))
 const imageUrl = computed(() => {
   if (!props.material.url || retryToken.value === 0) return props.material.url
   const joiner = props.material.url.includes('?') ? '&' : '?'
@@ -106,6 +115,26 @@ function showPreview() {
 function retryImage() {
   imageFailed.value = false
   retryToken.value += 1
+}
+
+function extractExternalUrl(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return ''
+  const direct = toHttpUrl(text)
+  if (direct) return direct
+  const match = text.match(/https?:\/\/[^\s"'<>，。！？、；；）)\]}]+/i)
+  return toHttpUrl(match?.[0] || '')
+}
+
+function toHttpUrl(raw) {
+  const text = String(raw || '').trim().replace(/[，。！？、；；）)\]}]+$/u, '')
+  if (!text) return ''
+  try {
+    const url = new URL(text)
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : ''
+  } catch {
+    return ''
+  }
 }
 
 async function copy(text) {
@@ -137,6 +166,13 @@ async function copy(text) {
 }
 .pdf-preview a, .source-card {
   display: inline-block; margin-top: 8px; color: #6254e8; text-decoration: none;
+}
+.source-card-button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
 }
 .file-preview-card {
   display: flex; justify-content: space-between; align-items: center; gap: 12px;
