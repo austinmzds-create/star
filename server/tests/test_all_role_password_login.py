@@ -38,13 +38,13 @@ def db():
 
 def test_new_phone_accounts_receive_default_passwords(db):
     user = User(phone="13900001234", display_name="商务")
-    influencer = Influencer(phone="15095037973", nickname="达人")
+    influencer = Influencer(phone="15095037973", douyin_id="douyin_abc", nickname="达人")
 
     db.add_all([user, influencer])
     db.commit()
 
     assert verify_password("001234", user.password_hash)
-    assert verify_password("037973", influencer.password_hash)
+    assert verify_password("douyin_abc", influencer.password_hash)
 
 
 def test_default_phone_password_uses_fast_bcrypt_cost(db):
@@ -65,11 +65,21 @@ def test_influencer_without_phone_has_no_password(db):
     assert influencer.password_hash is None
 
 
-def test_seed_missing_passwords_only_fills_phone_accounts_without_hash(db):
+def test_influencer_with_douyin_id_can_receive_default_password_without_phone(db):
+    influencer = Influencer(nickname="抖音号达人", douyin_id="@douyin_login")
+
+    db.add(influencer)
+    db.commit()
+
+    assert verify_password("douyin_login", influencer.password_hash)
+
+
+def test_seed_missing_passwords_fills_accounts_with_login_identity_without_hash(db):
     from app.services.account_passwords import seed_missing_passwords
 
     missing_user = User(phone="13900005678", display_name="历史商务")
-    missing_influencer = Influencer(phone="15000004321", nickname="历史达人")
+    missing_influencer = Influencer(phone="15000004321", douyin_id="history_dy", nickname="历史达人")
+    missing_douyin_only_influencer = Influencer(douyin_id="douyin_only", nickname="仅抖音号达人")
     no_phone_influencer = Influencer(nickname="无手机号达人")
     custom_password_hash = hash_password("custom-password")
     custom_user = User(
@@ -80,6 +90,7 @@ def test_seed_missing_passwords_only_fills_phone_accounts_without_hash(db):
     db.add_all([
         missing_user,
         missing_influencer,
+        missing_douyin_only_influencer,
         no_phone_influencer,
         custom_user,
     ])
@@ -96,15 +107,21 @@ def test_seed_missing_passwords_only_fills_phone_accounts_without_hash(db):
         .where(Influencer.id == missing_influencer.id)
         .values(password_hash=None)
     )
+    db.execute(
+        update(Influencer)
+        .where(Influencer.id == missing_douyin_only_influencer.id)
+        .values(password_hash=None)
+    )
     db.commit()
 
     with patch.object(db, "commit", wraps=db.commit) as commit_spy:
         changed = seed_missing_passwords(db)
 
-    assert changed == 2
+    assert changed == 3
     assert commit_spy.call_count == 1
     assert verify_password("005678", missing_user.password_hash)
-    assert verify_password("004321", missing_influencer.password_hash)
+    assert verify_password("history_dy", missing_influencer.password_hash)
+    assert verify_password("douyin_only", missing_douyin_only_influencer.password_hash)
     assert no_phone_influencer.password_hash is None
     assert custom_user.password_hash == custom_password_hash
     assert verify_password("custom-password", custom_user.password_hash)
@@ -139,14 +156,14 @@ def test_explicit_admin_password_is_not_replaced_by_default_rule(db):
 
 
 def test_adding_phone_later_assigns_default_password(db):
-    influencer = Influencer(nickname="后补手机号达人")
+    influencer = Influencer(nickname="后补手机号达人", douyin_id="late_phone_dy")
     db.add(influencer)
     db.commit()
 
     influencer.phone = "15000007777"
     db.commit()
 
-    assert verify_password("007777", influencer.password_hash)
+    assert verify_password("late_phone_dy", influencer.password_hash)
 
 
 def test_explicit_admin_can_still_log_in_with_username(db):
@@ -179,15 +196,65 @@ def test_business_user_can_log_in_with_phone_and_default_password(db):
 
 
 def test_influencer_can_log_in_with_phone_and_default_password(db):
-    influencer = Influencer(phone="15095037973", nickname="达人")
+    influencer = Influencer(phone="15095037973", douyin_id="dy_login", nickname="达人")
     db.add(influencer)
     db.commit()
 
-    result = login(LoginIn(username="15095037973", password="037973"), db)
+    result = login(LoginIn(username="15095037973", password="dy_login"), db)
 
     assert result["kind"] == "influencer"
     assert result["user"]["role"] == "influencer"
     assert _load_token(result["token"], "influencer") == influencer.id
+
+
+def test_influencer_can_log_in_with_douyin_id_and_default_password(db):
+    influencer = Influencer(phone="15095037973", douyin_id="dy_login", nickname="达人")
+    db.add(influencer)
+    db.commit()
+
+    result = login(LoginIn(
+        username="@dy_login",
+        password="dy_login",
+        login_role="influencer",
+    ), db)
+
+    assert result["kind"] == "influencer"
+    assert result["user"]["role"] == "influencer"
+    assert _load_token(result["token"], "influencer") == influencer.id
+
+
+def test_influencer_can_log_in_when_legacy_douyin_id_kept_at_prefix(db):
+    influencer = Influencer(phone="15095037973", douyin_id="@dy_login", nickname="旧数据达人")
+    db.add(influencer)
+    db.commit()
+
+    result = login(LoginIn(
+        username="dy_login",
+        password="dy_login",
+        login_role="influencer",
+    ), db)
+
+    assert result["kind"] == "influencer"
+    assert _load_token(result["token"], "influencer") == influencer.id
+
+
+def test_historical_phone_suffix_influencer_can_log_in_with_douyin_and_upgrade(db):
+    influencer = Influencer(phone="15095037973", douyin_id="dy_login", nickname="历史达人")
+    db.add(influencer)
+    db.commit()
+    influencer.password_hash = security.bcrypt.hashpw(
+        b"037973",
+        security.bcrypt.gensalt(rounds=security.DEFAULT_PASSWORD_BCRYPT_ROUNDS),
+    ).decode()
+    db.commit()
+
+    result = login(LoginIn(username="15095037973", password="dy_login", login_role="influencer"), db)
+
+    db.refresh(influencer)
+    assert result["kind"] == "influencer"
+    assert _load_token(result["token"], "influencer") == influencer.id
+    assert verify_password("dy_login", influencer.password_hash)
+    assert not verify_password("037973", influencer.password_hash)
 
 
 def test_staff_account_wins_when_phone_matches_both_account_types(db):

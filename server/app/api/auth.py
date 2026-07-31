@@ -16,7 +16,13 @@ from ..config import settings
 from ..db import get_db
 from ..deps import current_user, make_token
 from ..models import Influencer, User
-from ..security import verify_login_password
+from ..security import (
+    default_password_from_phone,
+    hash_password,
+    verify_login_password,
+    verify_password,
+)
+from ..services.identity import normalize_douyin
 from ..services.sms import SmsError, send_code, verify_code
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -116,6 +122,55 @@ def _login_influencer_by_phone(db: Session, phone: str, create_if_missing: bool 
     return _influencer_result(inf)
 
 
+def _find_influencer_for_password_login(db: Session, username: str) -> Influencer | None:
+    """达人账号密码登录支持手机号或抖音号,手机号优先避免数字抖音号撞同号手机。"""
+    username = (username or "").strip()
+    if not username:
+        return None
+    if len(username) == 11 and username.startswith("1"):
+        inf = db.scalars(
+            select(Influencer)
+            .where(Influencer.phone == username)
+            .order_by(Influencer.id)
+        ).first()
+        if inf:
+            return inf
+    normalized_douyin = normalize_douyin(username)
+    if not normalized_douyin:
+        return None
+    douyin_candidates = {normalized_douyin, username}
+    if not normalized_douyin.startswith("@"):
+        douyin_candidates.add(f"@{normalized_douyin}")
+    return db.scalars(
+        select(Influencer)
+        .where(Influencer.douyin_id.in_(douyin_candidates))
+        .order_by(Influencer.id)
+    ).first()
+
+
+def _verify_influencer_password(influencer: Influencer | None, password: str) -> tuple[bool, str | None]:
+    """兼容历史手机号后6位默认密码,新口径优先使用抖音号作为初始密码。"""
+    matched, upgraded_hash = verify_login_password(
+        password,
+        influencer.password_hash if influencer else None,
+    )
+    if matched or not influencer:
+        return matched, upgraded_hash
+
+    douyin_default = normalize_douyin(influencer.douyin_id)
+    if not douyin_default or password != douyin_default:
+        return False, None
+
+    if not influencer.password_hash:
+        return True, hash_password(password)
+    if influencer.phone and verify_password(
+        default_password_from_phone(influencer.phone),
+        influencer.password_hash,
+    ):
+        return True, hash_password(password)
+    return False, None
+
+
 class DevSwitchIn(BaseModel):
     role: Literal["admin", "bd", "influencer"]
 
@@ -186,15 +241,8 @@ def login(body: LoginIn, db: Session = Depends(get_db)):
         verify_login_password(body.password, None)
         raise HTTPException(401, "账号或密码错误")
 
-    influencer = db.scalars(
-        select(Influencer)
-        .where(Influencer.phone == body.username)
-        .order_by(Influencer.id)
-    ).first()
-    matched, upgraded_hash = verify_login_password(
-        body.password,
-        influencer.password_hash if influencer else None,
-    )
+    influencer = _find_influencer_for_password_login(db, body.username)
+    matched, upgraded_hash = _verify_influencer_password(influencer, body.password)
     if not matched:
         raise HTTPException(401, "账号或密码错误")
     if influencer.archived:

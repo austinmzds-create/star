@@ -25,10 +25,27 @@ def default_password_from_phone(phone: str) -> str:
     return phone[-6:]
 
 
+def default_password_for_account(account) -> str | None:
+    """Business default: staff use phone suffix; influencers prefer Douyin ID."""
+    douyin_id = getattr(account, "douyin_id", None)
+    if douyin_id:
+        return str(douyin_id).strip().lstrip("@") or None
+    phone = getattr(account, "phone", None)
+    if phone:
+        return default_password_from_phone(str(phone))
+    return None
+
+
 def assign_default_password_if_missing(account) -> bool:
-    if not account.phone or account.password_hash:
+    if account.password_hash:
         return False
-    set_default_password_for_phone(account)
+    default_password = default_password_for_account(account)
+    if not default_password:
+        return False
+    account.password_hash = bcrypt.hashpw(
+        default_password.encode()[:72],
+        bcrypt.gensalt(rounds=DEFAULT_PASSWORD_BCRYPT_ROUNDS),
+    ).decode()
     return True
 
 

@@ -123,15 +123,16 @@ describe('Login', () => {
     })
     const wrapper = await openPasswordLogin()
     await chooseInfluencerRole(wrapper)
-    await wrapper.get('input[placeholder="账号或手机号"]').setValue('15095037973')
-    await wrapper.get('input[placeholder="密码"]').setValue('037973')
+    expect(wrapper.text()).toContain('达人账号可填手机号或抖音号,初始密码为抖音号')
+    await wrapper.get('input[placeholder="手机号或抖音号"]').setValue('15095037973')
+    await wrapper.get('input[placeholder="密码"]').setValue('dy_login')
 
     await wrapper.get('[data-testid="password-submit"]').trigger('click')
     await flushPromises()
 
     expect(mocks.post).toHaveBeenCalledWith('/api/auth/login', {
       username: '15095037973',
-      password: '037973',
+      password: 'dy_login',
       login_role: 'influencer',
     })
     expect(localStorage.getItem('token')).toBe('influencer-token')

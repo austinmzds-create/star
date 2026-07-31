@@ -45,7 +45,7 @@
           </template>
           <el-input
             v-model="username"
-            placeholder="账号或手机号"
+            :placeholder="accountPlaceholder"
             size="large"
             class="fld"
             @keyup.enter="passwordLogin"
@@ -97,10 +97,13 @@ const ROLE_OPTIONS = [
   { label: '商务/管理员', value: 'staff' },
   { label: '达人', value: 'influencer' },
 ]
+const accountPlaceholder = computed(() => (
+  loginRole.value === 'influencer' ? '手机号或抖音号' : '账号或手机号'
+))
 const roleHint = computed(() => (
   loginRole.value === 'staff'
     ? '管理员和商务从这里进入内部管理后台'
-    : '达人从这里进入自己的产品资料中心'
+    : '达人账号可填手机号或抖音号,初始密码为抖音号'
 ))
 
 async function send() {

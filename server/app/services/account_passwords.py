@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..models import Influencer, User
@@ -15,7 +15,7 @@ def seed_missing_passwords(db: Session) -> int:
         ),
         *db.scalars(
             select(Influencer).where(
-                Influencer.phone.is_not(None),
+                or_(Influencer.phone.is_not(None), Influencer.douyin_id.is_not(None)),
                 Influencer.password_hash.is_(None),
             )
         ),
