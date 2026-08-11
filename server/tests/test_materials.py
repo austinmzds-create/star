@@ -11,9 +11,11 @@ from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.api.h5 import (ApplyProductIn, MaterialReadIn, SubmitVideoIn,  # noqa: E402
-                        apply_product, mark_material_read, my_materials,
-                        my_products, my_videos, submit_product_video)
+from app.api.h5 import (ApplyProductIn, IntroIn, MaterialReadIn, ProfileIn,  # noqa: E402
+                        SubmitVideoIn, apply_product, log_download,
+                        mark_material_read, my_materials, my_products,
+                        my_videos, submit, submit_product_video,
+                        update_profile)
 from app.api.product_applications import (ReviewIn, list_applications,  # noqa: E402
                                           pending_count, review_application,
                                           status_counts)
@@ -210,6 +212,87 @@ def _influencer(db, owner=None, phone="15000000000", douyin_id="d"):
     db.add(inf)
     db.commit()
     return inf
+
+
+def test_h5_structured_profile_update_saves_fields_without_overwriting_login_phone(db):
+    inf = _influencer(db, phone="15000000000", douyin_id="old_dy")
+
+    result = asyncio.run(update_profile(ProfileIn(
+        nickname="达人4555",
+        douyin_id="@dy4555",
+        real_name="张三",
+        default_address="浙江省杭州市西湖区 1 号",
+        homepage_url="https://www.douyin.com/user/test",
+        category_tags=["牙膏", "口播", "牙膏"],
+    ), inf, db))
+
+    db.refresh(inf)
+    assert result["ok"] is True
+    assert inf.nickname == "达人4555"
+    assert inf.douyin_id == "dy4555"
+    assert inf.real_name == "张三"
+    assert inf.default_address == "浙江省杭州市西湖区 1 号"
+    assert inf.homepage_url == "https://www.douyin.com/user/test"
+    assert inf.category_tags == ["牙膏", "口播"]
+    assert inf.phone == "15000000000"
+
+
+def test_h5_submit_keeps_login_phone_even_when_intro_contains_receiver_phone(db):
+    inf = _influencer(db, phone="15000000000", douyin_id="old_dy")
+
+    asyncio.run(submit(IntroIn(text="收件人: 李四\n收件电话: 15905521638\n收件地址: 上海市浦东新区 2 号"), inf, db))
+
+    db.refresh(inf)
+    assert inf.real_name == "李四"
+    assert inf.default_address == "上海市浦东新区 2 号"
+    assert inf.phone == "15000000000"
+
+
+def test_h5_profile_update_rejects_duplicate_identity(db):
+    inf = _influencer(db, phone="15000000000", douyin_id="mine")
+    other = Influencer(nickname="已有达人", douyin_id="taken", phone="15000000001", source="bd")
+    db.add(other)
+    db.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_profile(ProfileIn(douyin_id="@taken"), inf, db))
+
+    assert exc.value.status_code == 409
+
+
+def test_h5_profile_update_can_clear_existing_optional_fields(db):
+    inf = _influencer(db, phone="15000000000", douyin_id="old_dy")
+    inf.real_name = "张三"
+    inf.default_address = "浙江省杭州市西湖区 1 号"
+    inf.homepage_url = "https://www.douyin.com/user/test"
+    inf.category_tags = ["牙膏", "口播"]
+    db.commit()
+
+    result = asyncio.run(update_profile(ProfileIn(
+        real_name="",
+        default_address=" ",
+        homepage_url=None,
+        category_tags=[],
+    ), inf, db))
+
+    db.refresh(inf)
+    assert result["ok"] is True
+    assert set(result["updated_fields"]) == {"real_name", "default_address", "homepage_url", "category_tags"}
+    assert inf.real_name is None
+    assert inf.default_address is None
+    assert inf.homepage_url is None
+    assert inf.category_tags is None
+    assert inf.phone == "15000000000"
+
+
+def test_h5_profile_update_rejects_clearing_required_nickname(db):
+    inf = _influencer(db, phone="15000000000", douyin_id="old_dy")
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(update_profile(ProfileIn(nickname=" "), inf, db))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "昵称不能为空"
 
 
 def test_h5_hides_unpublished_output_shows_after_publish(db, admin):
@@ -558,3 +641,17 @@ def test_h5_material_dict_hides_key(db, admin):
     mat = res["materials"][0]
     assert "oss_key" not in mat                      # 达人端不下发 key
     assert mat["url"].startswith(f"/api/material-file/{mat['id']}?")
+
+
+def test_h5_download_log_returns_preview_and_download_gateway_urls(db, admin):
+    pid = _product(db, admin)
+    m = add_material(pid, MaterialIn(type="video_ai", oss_key="video_ai/v.mp4"), admin, db)
+    inf = _grant_influencer(db, pid, admin.id)
+
+    res = log_download(m["id"], inf, db)
+
+    assert res["preview_url"].startswith(f"/api/material-file/{m['id']}?")
+    assert "dl=1" not in res["preview_url"]
+    assert res["download_url"].startswith(f"/api/material-file/{m['id']}?")
+    assert "dl=1" in res["download_url"]
+    assert res["content_type"] == "video/mp4"

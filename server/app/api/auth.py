@@ -22,14 +22,19 @@ from ..security import (
     verify_login_password,
     verify_password,
 )
-from ..services.identity import normalize_douyin
+from ..services.identity import normalize_douyin, normalize_phone
 from ..services.sms import SmsError, send_code, verify_code
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 def _admin_phones() -> set[str]:
-    return {p.strip() for p in settings.admin_phones.split(",") if p.strip()}
+    phones = set()
+    for raw in settings.admin_phones.split(","):
+        phone = normalize_phone(raw)
+        if phone:
+            phones.add(phone)
+    return phones
 
 
 class PhoneIn(BaseModel):
@@ -39,20 +44,21 @@ class PhoneIn(BaseModel):
 
 @router.post("/sms/send")
 async def sms_send(body: PhoneIn, db: Session = Depends(get_db)):
-    if len(body.phone) != 11 or not body.phone.startswith("1"):
+    phone = normalize_phone(body.phone)
+    if not phone:
         raise HTTPException(400, "手机号格式不正确")
-    if body.login_role == "staff" and body.phone not in _admin_phones():
-        user = db.scalars(select(User).where(User.phone == body.phone)).first()
+    if body.login_role == "staff" and phone not in _admin_phones():
+        user = db.scalars(select(User).where(User.phone == phone)).first()
         if not user:
             raise HTTPException(404, "该手机号不是商务/管理员账号")
         if not user.is_active:
             raise HTTPException(403, "账号已停用")
     if body.login_role == "influencer":
-        inf = db.scalars(select(Influencer).where(Influencer.phone == body.phone)).first()
+        inf = db.scalars(select(Influencer).where(Influencer.phone == phone)).first()
         if inf and inf.archived:
             raise HTTPException(403, "达人已停用")
     try:
-        await send_code(db, body.phone)
+        await send_code(db, phone)
     except SmsError as e:
         raise HTTPException(400, str(e))
     return {"ok": True}
@@ -66,17 +72,20 @@ class SmsLoginIn(BaseModel):
 
 @router.post("/sms/login")
 def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
-    if not verify_code(db, body.phone, body.code):
+    phone = normalize_phone(body.phone)
+    if not phone:
+        raise HTTPException(400, "手机号格式不正确")
+    if not verify_code(db, phone, body.code):
         raise HTTPException(400, "验证码错误或已过期")
 
     if body.login_role == "influencer":
-        return _login_influencer_by_phone(db, body.phone, create_if_missing=True)
+        return _login_influencer_by_phone(db, phone, create_if_missing=True)
 
     # 1) 管理员白名单:确保存在管理员账号
-    if body.phone in _admin_phones():
-        user = db.scalars(select(User).where(User.phone == body.phone)).first()
+    if phone in _admin_phones():
+        user = db.scalars(select(User).where(User.phone == phone)).first()
         if not user:
-            user = User(phone=body.phone, display_name="管理员", role="admin")
+            user = User(phone=phone, display_name="管理员", role="admin")
             db.add(user)
             db.commit()
         elif user.role != "admin":
@@ -85,7 +94,7 @@ def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
         return _staff_result(user)
 
     # 2) 内部账号(管理员/商务)
-    user = db.scalars(select(User).where(User.phone == body.phone)).first()
+    user = db.scalars(select(User).where(User.phone == phone)).first()
     if user:
         if not user.is_active:
             raise HTTPException(403, "账号已停用")
@@ -95,7 +104,7 @@ def sms_login(body: SmsLoginIn, db: Session = Depends(get_db)):
         raise HTTPException(404, "该手机号不是商务/管理员账号")
 
     # 3) 达人:找或建
-    return _login_influencer_by_phone(db, body.phone, create_if_missing=True)
+    return _login_influencer_by_phone(db, phone, create_if_missing=True)
 
 
 def _staff_result(user: User) -> dict:
@@ -110,7 +119,11 @@ def _influencer_result(influencer: Influencer) -> dict:
 
 
 def _login_influencer_by_phone(db: Session, phone: str, create_if_missing: bool = False) -> dict:
-    inf = db.scalars(select(Influencer).where(Influencer.phone == phone)).first()
+    inf = db.scalars(
+        select(Influencer)
+        .where(Influencer.phone == phone)
+        .order_by(Influencer.id)
+    ).first()
     if not inf and create_if_missing:
         inf = Influencer(nickname=f"达人{phone[-4:]}", phone=phone, source="h5")
         db.add(inf)
@@ -127,10 +140,11 @@ def _find_influencer_for_password_login(db: Session, username: str) -> Influence
     username = (username or "").strip()
     if not username:
         return None
-    if len(username) == 11 and username.startswith("1"):
+    phone = normalize_phone(username)
+    if phone:
         inf = db.scalars(
             select(Influencer)
-            .where(Influencer.phone == username)
+            .where(Influencer.phone == phone)
             .order_by(Influencer.id)
         ).first()
         if inf:
@@ -218,13 +232,17 @@ class LoginIn(BaseModel):
 
 @router.post("/login")
 def login(body: LoginIn, db: Session = Depends(get_db)):
-    is_phone = len(body.username) == 11 and body.username.startswith("1")
+    username = (body.username or "").strip()
+    normalized_phone = normalize_phone(username)
+    is_phone = bool(normalized_phone) or (len(username) == 11 and username.startswith("1"))
     user = None
     if body.login_role != "influencer":
-        if is_phone:
-            user = db.scalars(select(User).where(User.phone == body.username)).first()
+        if normalized_phone:
+            user = db.scalars(select(User).where(User.phone == normalized_phone)).first()
+        if not user and is_phone:
+            user = db.scalars(select(User).where(User.phone == username)).first()
         if not user:
-            user = db.scalars(select(User).where(User.username == body.username)).first()
+            user = db.scalars(select(User).where(User.username == username)).first()
     if user:
         matched, upgraded_hash = verify_login_password(
             body.password, user.password_hash

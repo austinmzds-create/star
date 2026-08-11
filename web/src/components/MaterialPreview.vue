@@ -10,7 +10,7 @@
       <span>视频文件已上传</span>
       <div class="file-actions">
         <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
-        <a :href="material.download_url || material.url" target="_blank" rel="noopener">打开/下载</a>
+        <a :href="openUrl" target="_blank" rel="noopener">打开文件</a>
       </div>
     </div>
     <el-image
@@ -33,7 +33,7 @@
       <span>报告文件已上传</span>
       <div class="file-actions">
         <el-button size="small" type="primary" plain @click="showPreview">预览</el-button>
-        <a :href="material.download_url || material.url" target="_blank" rel="noopener">打开/下载</a>
+        <a :href="openUrl" target="_blank" rel="noopener">打开文件</a>
       </div>
     </div>
     <div v-else-if="material.type === 'copy' && material.parsed_text" class="copy-preview">
@@ -94,6 +94,7 @@ const manualPreview = ref(false)
 const retryToken = ref(0)
 const imageFailed = ref(false)
 const previewUrl = computed(() => props.material.preview_url || props.material.url)
+const openUrl = computed(() => props.material.preview_url || props.material.url || props.material.download_url)
 const shouldRenderPreview = computed(() => props.material.inline_preview !== false || manualPreview.value)
 const externalSourceHref = computed(() => extractExternalUrl(props.material.source_link))
 const imageUrl = computed(() => {

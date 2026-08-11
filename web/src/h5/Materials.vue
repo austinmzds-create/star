@@ -60,7 +60,7 @@
           type="button"
           class="side-tab"
           :class="{ active: activeTab === tab.key }"
-          @click="activeTab = tab.key"
+          @click="setActiveTab(tab.key)"
         >
           <span class="tab-label">{{ tab.label }}</span>
           <span class="tab-count">{{ countOf(tab) }}</span>
@@ -203,6 +203,26 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="downloadGuideVisible" title="保存素材" width="92%" class="h5-download-dialog">
+      <div class="download-guide">
+        <div class="download-title">{{ downloadGuide.title || '素材文件' }}</div>
+        <p v-if="downloadGuide.isWechat" class="download-note">
+          微信内置浏览器不允许网页直接写入手机相册。已改为使用本站文件地址打开，避免跳到 OSS 签名链接后被微信安全页拦截。
+        </p>
+        <p v-else class="download-note">
+          如浏览器没有自动下载，请复制链接后在浏览器中打开。
+        </p>
+        <div class="download-actions">
+          <el-button type="primary" @click="openDownloadPreview">打开预览</el-button>
+          <el-button v-if="!downloadGuide.isWechat" plain @click="openDownloadFile">下载文件</el-button>
+          <el-button plain @click="copyDownloadLink">复制链接</el-button>
+        </div>
+        <p class="download-help">
+          视频打开后，可使用播放器菜单、长按视频或右上角“在浏览器打开”完成保存；不同手机系统和微信版本能力会有差异。
+        </p>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -215,6 +235,7 @@ import api from '../api'
 import MaterialPreview from '../components/MaterialPreview.vue'
 import { uploadMaterialFile } from '../services/materialUpload'
 import { formatTime as ft } from '../utils/time'
+import { MATERIAL_TABS, materialTabQuery, normalizeMaterialTab } from './materialTabs'
 import { h5store, refreshProducts, refreshVideos } from './store'
 
 const TYPE_LABEL = {
@@ -225,16 +246,7 @@ const TYPE_LABEL = {
   pdf: '质检报告',
   copy: '文案',
 }
-const tabs = [
-  { key: 'detail', label: '商品详情' },
-  { key: 'video_ai', label: 'AI视频', types: ['video_ai'] },
-  { key: 'video_hot', label: '爆款参考', types: ['video_hot'] },
-  { key: 'video_output', label: '达人成片', types: ['video_output'] },
-  { key: 'image', label: '图片', types: ['image'] },
-  { key: 'pdf', label: '质检报告', types: ['pdf'] },
-  { key: 'copy', label: '文案', types: ['copy'] },
-  { key: 'sample', label: '寄样物流' },
-]
+const tabs = MATERIAL_TABS
 const STATUS = { pending: '待审批', approved: '待发货', shipped: '已发货', in_transit: '运输中', signed: '已签收', rejected: '已拒绝' }
 const STATUS_TYPE = { pending: 'info', approved: 'warning', shipped: 'primary', in_transit: 'primary', signed: 'success', rejected: 'danger' }
 const VIDEO_STATUS_LABEL = { submitted: '审核中', approved: '已通过', rejected: '未通过', blocked: '卡审' }
@@ -246,7 +258,7 @@ const router = useRouter()
 const d = ref(null)
 const productList = ref([])
 const curId = ref(Number(route.params.id))
-const activeTab = ref('detail')
+const activeTab = ref(normalizeMaterialTab(route.query.tab))
 const expandLogi = ref(false)
 const refreshing = ref(false)
 const markingRead = ref(false)
@@ -257,6 +269,14 @@ const videoUploading = ref(false)
 const videoProgress = ref(0)
 const videoUploadStage = ref('')
 const videoForm = reactive({ dy_url: '', oss_key: '', file_name: '', url: '', note: '' })
+const downloadGuideVisible = ref(false)
+const downloadGuide = reactive({
+  title: '',
+  previewUrl: '',
+  downloadUrl: '',
+  copyUrl: '',
+  isWechat: false,
+})
 
 const matsOf = (types) => (d.value?.materials || []).filter((m) => types.includes(m.type))
 const detailItems = computed(() => [
@@ -347,12 +367,105 @@ async function copyShopLink() {
 }
 
 function goProduct(id) {
-  if (id !== Number(route.params.id)) router.push(`/h5/products/${id}`)
+  if (id !== Number(route.params.id)) {
+    router.push({ path: `/h5/products/${id}`, query: materialTabQuery(activeTab.value, route.query) })
+  }
 }
 
 async function download(m) {
-  const { url } = await api.post(`/api/h5/materials/${m.id}/download`)
-  window.open(url, '_blank')
+  const isWechat = isWechatBrowser()
+  const previewUrl = m.preview_url || m.url
+  if (isWechat) {
+    Object.assign(downloadGuide, {
+      title: m.title || TYPE_LABEL[m.type] || '素材文件',
+      previewUrl,
+      downloadUrl: m.download_url || previewUrl,
+      copyUrl: previewUrl,
+      isWechat: true,
+    })
+    downloadGuideVisible.value = true
+    try {
+      const info = await api.post(`/api/h5/materials/${m.id}/download`)
+      downloadGuide.previewUrl = info.preview_url || previewUrl
+      downloadGuide.downloadUrl = info.download_url || info.url || m.download_url || previewUrl
+      downloadGuide.copyUrl = downloadGuide.previewUrl
+    } catch (e) {
+      if (!downloadGuide.previewUrl) ElMessage.error(e.response?.data?.detail || '打开素材失败')
+    }
+    return
+  }
+  try {
+    const info = await api.post(`/api/h5/materials/${m.id}/download`)
+    openExternalUrl(info.download_url || info.url || m.download_url || previewUrl)
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '下载失败')
+  }
+}
+
+function isWechatBrowser() {
+  return /micromessenger/i.test(navigator.userAgent || '')
+}
+
+function openDownloadPreview() {
+  if (!downloadGuide.previewUrl) return
+  openExternalUrl(downloadGuide.previewUrl)
+}
+
+function openDownloadFile() {
+  if (!downloadGuide.downloadUrl) return
+  openExternalUrl(downloadGuide.downloadUrl)
+}
+
+async function copyDownloadLink() {
+  const url = downloadGuide.copyUrl || downloadGuide.previewUrl || downloadGuide.downloadUrl
+  if (!url) return
+  if (await copyText(toAbsoluteUrl(url))) ElMessage.success('链接已复制')
+  else ElMessage.info('复制失败，请点击打开预览后使用浏览器菜单保存')
+}
+
+function toAbsoluteUrl(url) {
+  try {
+    return new URL(url, window.location.origin).href
+  } catch {
+    return String(url || '')
+  }
+}
+
+function openExternalUrl(url) {
+  if (!url) return
+  const href = toAbsoluteUrl(url)
+  const opened = window.open(href, '_blank')
+  if (opened) {
+    try {
+      opened.opener = null
+    } catch {
+      // 部分移动浏览器不允许操作 opener,不影响文件打开。
+    }
+  }
+  else window.location.href = href
+}
+
+async function copyText(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+      return true
+    }
+  } catch {
+    // 继续走 textarea 兜底。
+  }
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.setAttribute('readonly', '')
+  ta.style.position = 'fixed'
+  ta.style.left = '-9999px'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    return document.execCommand?.('copy') || false
+  } finally {
+    document.body.removeChild(ta)
+  }
 }
 
 async function refreshLogi() {
@@ -449,7 +562,7 @@ async function submitVideo() {
     }, { skipBadgeRefresh: true })
     ElMessage.success('成片已提交，等待审核')
     videoSubmitVisible.value = false
-    activeTab.value = 'video_output'
+    setActiveTab('video_output')
     await Promise.all([loadDetail({ resetTab: false }), refreshVideos(), refreshProducts()])
     setTimeout(markVideoOutputRead, 300)
   } catch (e) {
@@ -461,7 +574,7 @@ async function submitVideo() {
 
 async function loadDetail({ resetTab = true } = {}) {
   expandLogi.value = false
-  if (resetTab) activeTab.value = 'detail'
+  if (resetTab) activeTab.value = normalizeMaterialTab(route.query.tab)
   d.value = await api.get(`/api/h5/products/${route.params.id}/materials`)
 }
 
@@ -497,9 +610,19 @@ watch(() => route.params.id, (id) => {
   loadDetail()
 })
 
+watch(() => route.query.tab, (tab) => {
+  activeTab.value = normalizeMaterialTab(tab)
+})
+
 watch(activeTab, () => {
   if (activeTab.value === 'video_output') setTimeout(markVideoOutputRead, 300)
 })
+
+function setActiveTab(tab) {
+  const next = normalizeMaterialTab(tab)
+  activeTab.value = next
+  router.replace({ path: route.path, query: materialTabQuery(next, route.query) })
+}
 
 onMounted(async () => {
   productList.value = await api.get('/api/h5/products')
@@ -722,6 +845,12 @@ onMounted(async () => {
 .file-name { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .submit-video { width: 100%; max-height: 240px; border-radius: 8px; background: #111; }
 .h5-video-dialog { max-width: 420px; }
+.h5-download-dialog { max-width: 420px; }
+.download-guide { display: flex; flex-direction: column; gap: 10px; }
+.download-title { font-weight: 700; color: #202431; }
+.download-note, .download-help { margin: 0; color: #606a7c; font-size: 13px; line-height: 1.6; }
+.download-help { color: #8a93a6; font-size: 12px; }
+.download-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .audit-feedback {
   margin-top: 10px;
   padding: 9px 10px;

@@ -5,14 +5,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, update
+from sqlalchemy import create_engine, select, update
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app import security  # noqa: E402
-from app.api.auth import LoginIn, PhoneIn, login, sms_send  # noqa: E402
+from app.api.auth import LoginIn, PhoneIn, SmsLoginIn, login, sms_login, sms_send  # noqa: E402
 from app.db import Base  # noqa: E402
 from app.deps import _load_token  # noqa: E402
 from app.models import Influencer, User  # noqa: E402
@@ -207,6 +207,21 @@ def test_influencer_can_log_in_with_phone_and_default_password(db):
     assert _load_token(result["token"], "influencer") == influencer.id
 
 
+def test_influencer_phone_password_login_normalizes_common_phone_noise(db):
+    influencer = Influencer(phone="15095037973", douyin_id="dy_login", nickname="达人")
+    db.add(influencer)
+    db.commit()
+
+    result = login(LoginIn(
+        username="+86 150-9503-7973",
+        password="dy_login",
+        login_role="influencer",
+    ), db)
+
+    assert result["kind"] == "influencer"
+    assert _load_token(result["token"], "influencer") == influencer.id
+
+
 def test_influencer_can_log_in_with_douyin_id_and_default_password(db):
     influencer = Influencer(phone="15095037973", douyin_id="dy_login", nickname="达人")
     db.add(influencer)
@@ -321,6 +336,39 @@ def test_staff_sms_send_allows_active_internal_phone(db):
 
     assert result == {"ok": True}
     send_spy.assert_awaited_once_with(db, "13900001234")
+
+
+def test_admin_sms_login_normalizes_configured_admin_phones(db):
+    with (
+        patch("app.api.auth.settings.admin_phones", "+86 138-0000-0000, invalid"),
+        patch("app.api.auth.verify_code", return_value=True),
+    ):
+        result = sms_login(SmsLoginIn(phone="13800000000", code="123456"), db)
+
+    admin = db.scalars(select(User).where(User.phone == "13800000000")).first()
+    assert result["kind"] == "staff"
+    assert result["user"]["role"] == "admin"
+    assert admin.phone == "13800000000"
+    assert admin.role == "admin"
+    assert _load_token(result["token"], "staff") == admin.id
+
+
+def test_influencer_sms_login_uses_smallest_id_for_duplicate_phone(db):
+    first = Influencer(phone="15095037973", nickname="首个达人")
+    second = Influencer(phone="15095037973", nickname="第二个达人")
+    db.add_all([first, second])
+    db.commit()
+
+    with patch("app.api.auth.verify_code", return_value=True):
+        result = sms_login(SmsLoginIn(
+            phone="+86 150-9503-7973",
+            code="123456",
+            login_role="influencer",
+        ), db)
+
+    assert result["kind"] == "influencer"
+    assert result["user"]["id"] == first.id
+    assert _load_token(result["token"], "influencer") == first.id
 
 
 def test_phone_login_uses_phone_owner_when_another_username_matches(db):

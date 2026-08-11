@@ -19,6 +19,7 @@ await import('./api')
 describe('API authorization interceptor', () => {
   beforeEach(() => {
     localStorage.clear()
+    window.history.pushState({}, '', '/')
   })
 
   it('preserves an explicitly supplied admin authorization header', () => {
@@ -37,5 +38,24 @@ describe('API authorization interceptor', () => {
     const config = captured.request({ headers: {} })
 
     expect(config.headers.Authorization).toBe('Bearer current-role-token')
+  })
+
+  it('uses the H5 token for H5 API requests even when a staff token exists', () => {
+    localStorage.setItem('token', 'staff-token')
+    localStorage.setItem('h5_token', 'influencer-token')
+
+    const config = captured.request({ url: '/api/h5/me', headers: {} })
+
+    expect(config.headers.Authorization).toBe('Bearer influencer-token')
+  })
+
+  it('uses the H5 token for shared upload APIs while browsing H5 pages', () => {
+    localStorage.setItem('token', 'staff-token')
+    localStorage.setItem('h5_token', 'influencer-token')
+    window.history.pushState({}, '', '/h5/products/1')
+
+    const config = captured.request({ url: '/api/upload/direct-ticket', headers: {} })
+
+    expect(config.headers.Authorization).toBe('Bearer influencer-token')
   })
 })

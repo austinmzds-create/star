@@ -3,6 +3,8 @@
 数据隔离红线:达人能看全部上架产品与公开素材;申请/寄样/物流/评论等个人流程
 只返回自己的数据,绝不返回他人手机/地址/真名或别人的带货状态。
 """
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_, select
@@ -134,7 +136,14 @@ async def me(inf: Influencer = Depends(current_influencer), db: Session = Depend
         "cooperation_code": inf.cooperation_code,
         "real_name": inf.real_name, "phone": inf.phone,
         "default_address": inf.default_address, "category_tags": inf.category_tags,
-        "has_profile": inf.raw_intro is not None,
+        "homepage_url": inf.homepage_url,
+        "douyin_uid": inf.douyin_uid,
+        "shoot_type": inf.shoot_type,
+        "has_profile": any([
+            inf.raw_intro, inf.douyin_id, inf.douyin_uid, inf.real_name,
+            inf.default_address, inf.homepage_url, inf.cooperation_code,
+            inf.category_tags, inf.shoot_type, inf.fans_count is not None,
+        ]),
         "samples": samples,
     }
 
@@ -143,23 +152,161 @@ class IntroIn(BaseModel):
     text: str
 
 
+class ProfileIn(BaseModel):
+    text: str | None = None
+    nickname: str | None = None
+    douyin_id: str | None = None
+    douyin_uid: str | None = None
+    homepage_url: str | None = None
+    fans_count: int | None = None
+    category_tags: list[str] | None = None
+    shoot_type: str | None = None
+    real_name: str | None = None
+    cooperation_code: str | None = None
+    default_address: str | None = None
+
+
+PROFILE_FIELDS = (
+    "nickname", "douyin_id", "douyin_uid", "homepage_url", "fans_count",
+    "category_tags", "shoot_type", "real_name", "cooperation_code",
+    "default_address",
+)
+
+
+def _clean_text(value, max_len: int, field_name: str) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if len(text) > max_len:
+        raise HTTPException(400, f"{field_name}不能超过{max_len}字")
+    return text
+
+
+def _clean_homepage_url(value) -> str | None:
+    text = _clean_text(value, 512, "主页链接")
+    if not text:
+        return None
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(400, "主页链接必须是 http 或 https 地址")
+    return text
+
+
+def _clean_fans_count(value) -> int | None:
+    if value is None:
+        return None
+    if value < 0:
+        raise HTTPException(400, "粉丝数不能为负数")
+    if value > 1_000_000_000:
+        raise HTTPException(400, "粉丝数过大,请检查填写是否正确")
+    return value
+
+
+def _clean_category_tags(value) -> list[str] | None:
+    if value is None:
+        return None
+    cleaned = []
+    for item in value:
+        text = _clean_text(item, 20, "内容品类")
+        if text and text not in cleaned:
+            cleaned.append(text)
+    if len(cleaned) > 20:
+        raise HTTPException(400, "内容品类最多填写20个")
+    return cleaned or None
+
+
+def _has_profile_value(value) -> bool:
+    return value not in (None, "", [])
+
+
+def _assign_cleaned(out: dict, field: str, value, clearable_fields: set[str]) -> None:
+    if _has_profile_value(value) or field in clearable_fields:
+        out[field] = value
+
+
+def _normalize_profile_fields(fields: dict, clearable_fields: set[str] | None = None) -> dict:
+    clearable_fields = clearable_fields or set()
+    out = {}
+    if "nickname" in fields:
+        nickname = _clean_text(fields.get("nickname"), 128, "昵称")
+        if nickname is None and "nickname" in clearable_fields:
+            raise HTTPException(400, "昵称不能为空")
+        _assign_cleaned(out, "nickname", nickname, clearable_fields)
+    if "douyin_id" in fields:
+        _assign_cleaned(out, "douyin_id", normalize_douyin(fields.get("douyin_id")), clearable_fields)
+    if "douyin_uid" in fields:
+        _assign_cleaned(out, "douyin_uid", _clean_text(fields.get("douyin_uid"), 64, "UID"), clearable_fields)
+    if "homepage_url" in fields:
+        _assign_cleaned(out, "homepage_url", _clean_homepage_url(fields.get("homepage_url")), clearable_fields)
+    if "fans_count" in fields:
+        _assign_cleaned(out, "fans_count", _clean_fans_count(fields.get("fans_count")), clearable_fields)
+    if "category_tags" in fields:
+        _assign_cleaned(out, "category_tags", _clean_category_tags(fields.get("category_tags")), clearable_fields)
+    if "shoot_type" in fields:
+        _assign_cleaned(out, "shoot_type", _clean_text(fields.get("shoot_type"), 16, "拍摄类型"), clearable_fields)
+    if "real_name" in fields:
+        _assign_cleaned(out, "real_name", _clean_text(fields.get("real_name"), 64, "收件人"), clearable_fields)
+    if "cooperation_code" in fields:
+        _assign_cleaned(out, "cooperation_code", _clean_text(fields.get("cooperation_code"), 64, "合作码"), clearable_fields)
+    if "default_address" in fields:
+        _assign_cleaned(out, "default_address", _clean_text(fields.get("default_address"), 255, "收件地址"), clearable_fields)
+    return out
+
+
+def _profile_changed(inf: Influencer, fields: dict) -> list[str]:
+    changed = []
+    for field, value in fields.items():
+        if getattr(inf, field, None) != value:
+            setattr(inf, field, value)
+            changed.append(field)
+    return changed
+
+
+async def _save_profile(raw_text: str | None, explicit_fields: dict,
+                        inf: Influencer, db: Session):
+    parsed = {"fields": {}, "source": {}, "raw": raw_text or ""}
+    fields = {}
+    if raw_text:
+        if len(raw_text) > 5000:
+            raise HTTPException(400, "自我介绍不能超过5000字")
+        parsed = await parse_influencer_text(raw_text)
+        fields.update(parsed["fields"])
+    fields.update(explicit_fields)
+    fields = _normalize_profile_fields(fields, clearable_fields=set(explicit_fields))
+    has_meaningful_update = any(
+        _has_profile_value(value) or _has_profile_value(getattr(inf, field, None))
+        for field, value in fields.items()
+    )
+    if not raw_text and not has_meaningful_update:
+        raise HTTPException(400, "请至少填写一项资料")
+    _assert_identity_available(db, inf, fields)
+    if raw_text:
+        inf.raw_intro = raw_text
+    changed = _profile_changed(inf, fields)
+    if changed:
+        log_op(db, influencer_id=inf.id, event_type="profile_changed", actor=inf,
+               summary=f"{inf.nickname} 更新 H5 自助资料",
+               detail={"fields": changed})
+    db.commit()
+    return {"ok": True, "parsed": parsed["fields"], "updated_fields": changed}
+
+
 @router.post("/submit")
 async def submit(body: IntroIn, inf: Influencer = Depends(current_influencer),
                  db: Session = Depends(get_db)):
-    """达人粘贴自我介绍,解析结果落到自己档案(商务后台可见并复核)"""
-    result = await parse_influencer_text(body.text)
-    f = result["fields"]
-    _assert_identity_available(db, inf, f)
-    inf.raw_intro = body.text
-    # 注意:不写 phone —— 它是 H5 登录标识,不能被解析出的"收件电话"覆盖
-    for field in ("nickname", "douyin_id", "douyin_uid", "homepage_url",
-                  "fans_count", "category_tags", "shoot_type", "real_name",
-                  "cooperation_code", "default_address"):
-        if f.get(field):
-            # 抖音号统一去前导 @,与内部端撞库口径一致,避免同一人两条档案
-            setattr(inf, field, normalize_douyin(f[field]) if field == "douyin_id" else f[field])
-    db.commit()
-    return {"ok": True, "parsed": f}
+    """兼容旧入口:达人粘贴自我介绍,解析结果落到自己档案。"""
+    return await _save_profile((body.text or "").strip(), {}, inf, db)
+
+
+@router.post("/profile")
+async def update_profile(body: ProfileIn, inf: Influencer = Depends(current_influencer),
+                         db: Session = Depends(get_db)):
+    """达人结构化维护自己的基础资料。智能识别只做辅助,关键字段可明确保存。"""
+    raw_text = (body.text or "").strip() or None
+    explicit = {field: getattr(body, field) for field in PROFILE_FIELDS if field in body.model_fields_set}
+    return await _save_profile(raw_text, explicit, inf, db)
 
 
 VIDEO_STATUS_LABEL = {
@@ -714,5 +861,11 @@ def log_download(material_id: int, inf: Influencer = Depends(current_influencer)
     _product_visible_or_404(db, m.product_id)
     db.add(MaterialDownloadLog(material_id=material_id, influencer_id=inf.id))
     db.commit()
-    # 返回 id 网关下载地址(自家域名、私有可读、302 直读不占带宽),不暴露裸 OSS URL
-    return {"url": storage.material_file_url(m.id, download=True)}
+    # 返回 id 网关地址,不暴露 bucket/key。微信内建议用 preview_url,避免 dl=1 触发 OSS 外域跳转安全页。
+    return {
+        "url": storage.material_file_url(m.id, download=True),
+        "download_url": storage.material_file_url(m.id, download=True),
+        "preview_url": storage.material_file_url(m.id),
+        "filename": m.title,
+        "content_type": storage.content_type(m.oss_key),
+    }

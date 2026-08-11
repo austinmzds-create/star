@@ -29,7 +29,7 @@ describe('MaterialPreview', () => {
 
     expect(wrapper.find('video').exists()).toBe(false)
     expect(wrapper.text()).toContain('视频文件已上传')
-    expect(wrapper.get('.file-actions a').attributes('href')).toBe('/api/material-file/1?e=1&s=test&dl=1')
+    expect(wrapper.get('.file-actions a').attributes('href')).toBe('/api/files/materials/video.mp4?e=1&s=test')
 
     await wrapper.get('.file-actions button').trigger('click')
     expect(wrapper.get('video').attributes('src')).toBe('/api/files/materials/video.mp4?e=1&s=test')

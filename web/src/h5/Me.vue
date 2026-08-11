@@ -13,9 +13,18 @@
       <div class="kv"><span class="k">收件人</span><span class="v">{{ me.real_name || '—' }} {{ me.phone || '' }}</span></div>
       <div class="kv"><span class="k">收件地址</span><span class="v">{{ me.default_address || '—' }}</span></div>
       <div v-if="editing || !me.has_profile" class="edit">
+        <div class="form-grid">
+          <el-input v-model="profileForm.nickname" placeholder="达人昵称" />
+          <el-input v-model="profileForm.douyin_id" placeholder="抖音号" />
+          <el-input v-model="profileForm.real_name" placeholder="收件人姓名" />
+          <el-input v-model="profileForm.default_address" placeholder="收件地址" />
+          <el-input v-model="profileForm.homepage_url" placeholder="主页链接（可选）" />
+          <el-input v-model="profileForm.cooperation_code" placeholder="合作码（可选）" />
+        </div>
+        <el-input v-model="profileForm.category_tags_text" placeholder="内容品类，多个用逗号隔开（可选）" />
         <el-input v-model="intro" type="textarea" :rows="4"
-          placeholder="把自我介绍粘贴到这里（抖音号、主页链接、粉丝数、收件人/电话/地址等），提交后自动识别更新" />
-        <el-button type="primary" style="width:100%;margin-top:10px" :loading="submitting" @click="submit">提交并识别</el-button>
+          placeholder="也可以把自我介绍粘贴到这里，系统会辅助识别；上面的字段会优先保存。" />
+        <el-button type="primary" style="width:100%;margin-top:10px" :loading="submitting" @click="submit">保存资料</el-button>
       </div>
     </section>
 
@@ -108,7 +117,7 @@
 <script setup>
 import { Van } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { onMounted, ref, toRefs } from 'vue'
+import { onMounted, reactive, ref, toRefs, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '../api'
 import { formatTime as fmt } from '../utils/time'
@@ -122,15 +131,25 @@ const editing = ref(false)
 const submitting = ref(false)
 const expanded = ref(null)
 const tracking = ref(null)
+const profileForm = reactive({
+  nickname: '',
+  douyin_id: '',
+  real_name: '',
+  default_address: '',
+  homepage_url: '',
+  cooperation_code: '',
+  category_tags_text: '',
+})
 
 const videoTagType = (st) => VIDEO_STATUS_TYPE[st] || 'info'
 
 async function submit() {
-  if (!intro.value.trim()) return ElMessage.warning('请先粘贴自我介绍')
+  const body = buildProfileBody()
+  if (!Object.keys(body).length) return ElMessage.warning('请至少填写一项资料')
   submitting.value = true
   try {
-    await api.post('/api/h5/submit', { text: intro.value })
-    ElMessage.success('已提交并识别，信息已更新')
+    await api.post('/api/h5/profile', body)
+    ElMessage.success('资料已保存')
     intro.value = ''
     editing.value = false
     await refreshMe()
@@ -139,6 +158,35 @@ async function submit() {
   } finally {
     submitting.value = false
   }
+}
+
+function buildProfileBody() {
+  const body = {}
+  const current = me.value || {}
+  const text = intro.value.trim()
+  if (text) body.text = text
+  for (const field of ['nickname', 'douyin_id', 'real_name', 'default_address', 'homepage_url', 'cooperation_code']) {
+    const value = String(profileForm[field] || '').trim()
+    const oldValue = String(current[field] || '').trim()
+    if (value || oldValue) body[field] = value
+  }
+  const tags = profileForm.category_tags_text
+    .split(/[,，;；、|\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+  if (tags.length || (current.category_tags || []).length) body.category_tags = [...new Set(tags)]
+  return body
+}
+
+function syncProfileForm() {
+  const current = me.value || {}
+  profileForm.nickname = current.nickname || ''
+  profileForm.douyin_id = current.douyin_id || ''
+  profileForm.real_name = current.real_name || ''
+  profileForm.default_address = current.default_address || ''
+  profileForm.homepage_url = current.homepage_url || ''
+  profileForm.cooperation_code = current.cooperation_code || ''
+  profileForm.category_tags_text = (current.category_tags || []).join('，')
 }
 
 async function refresh(s) {
@@ -165,6 +213,8 @@ function logout() {
   router.push('/h5')
 }
 
+watch(me, syncProfileForm, { immediate: true })
+
 onMounted(() => { if (!h5store.loaded) loadH5() })
 </script>
 
@@ -177,6 +227,8 @@ onMounted(() => { if (!h5store.loaded) loadH5() })
 .kv .k { color: #9aa1b1; min-width: 62px; flex-shrink: 0; }
 .kv .v { color: #2b3143; word-break: break-all; }
 .edit { margin-top: 12px; padding-top: 12px; border-top: 1px solid #f2f3f7; }
+.form-grid { display: grid; grid-template-columns: 1fr; gap: 8px; margin-bottom: 8px; }
+.edit > .el-input { margin-bottom: 8px; }
 .muted { color: #9aa1b1; }
 /* 视频 / 寄样 行 */
 .vrow, .srow { padding: 10px 0; border-top: 1px solid #f3f4f8; }
